@@ -1,5 +1,8 @@
 import { Pool } from "pg";
 import { loadInitialMigrationSql } from "./sql";
+import { loadEnvironment } from "../load-env";
+
+loadEnvironment(import.meta.url);
 
 async function run(): Promise<void> {
   const connectionString = process.env.DATABASE_URL;
