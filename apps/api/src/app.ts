@@ -1,6 +1,6 @@
 import Fastify from "fastify";
 import { ZodError } from "zod";
-import { LocalStubDataPlane, type DataPlane } from "@project-overload/dataplane";
+import { createDataPlaneFromEnv, type DataPlane } from "@project-overload/dataplane";
 import { createAnalystClientFromEnv, type AnalystClient } from "@project-overload/llm-client";
 import { createMetadataStoreFromEnv, type MetadataStore } from "./store";
 import { registerSemanticRoutes } from "./routes/semantic";
@@ -37,16 +37,18 @@ export async function buildApiApp(options: Partial<ApiDependencies> = {}) {
   const store = options.store ?? (await createMetadataStoreFromEnv());
   const dataPlane =
     options.data_plane ??
-    new LocalStubDataPlane({
-      row_provider: () =>
-        Array.from({ length: 320 }, (_, index) => ({
-          order_id: `order_${index + 1}`,
-          customer_id: `customer_${(index % 50) + 1}`,
-          customer_email: `customer_${(index % 50) + 1}@example.com`,
-          amount: (index % 25) + 10,
-          region: ["NA", "EU", "APAC"][index % 3],
-          event_time: `2025-01-${String((index % 28) + 1).padStart(2, "0")}`
-        }))
+    createDataPlaneFromEnv({
+      local_stub_options: {
+        row_provider: () =>
+          Array.from({ length: 320 }, (_, index) => ({
+            order_id: `order_${index + 1}`,
+            customer_id: `customer_${(index % 50) + 1}`,
+            customer_email: `customer_${(index % 50) + 1}@example.com`,
+            amount: (index % 25) + 10,
+            region: ["NA", "EU", "APAC"][index % 3],
+            event_time: `2025-01-${String((index % 28) + 1).padStart(2, "0")}`
+          }))
+      }
     });
   const analystClient = options.analyst_client ?? createAnalystClientFromEnv();
 

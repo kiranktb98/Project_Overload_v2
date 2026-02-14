@@ -13,7 +13,7 @@ import {
   reduceEvidence
 } from "@project-overload/evidence";
 import type { AnalystClient } from "@project-overload/llm-client";
-import { renderExecBriefHtml, renderPdfPlaceholder } from "@project-overload/report-render";
+import { renderExecBriefHtml, renderPdfFromHtml } from "@project-overload/report-render";
 import type { MetadataStore } from "../store";
 import { buildDeterministicQueryPlan } from "./planner";
 
@@ -96,7 +96,7 @@ export async function runReportContractPipeline(input: {
 
   const execBrief = aggregateBatchAnalyses(analyses, previousBrief);
   const html = renderExecBriefHtml(execBrief);
-  const pdf = renderPdfPlaceholder(html);
+  const pdf = await renderPdfFromHtml(html);
 
   const run = ReportRunSchema.parse({
     id: randomUUID(),
