@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { LocalStubDataPlane } from "@project-overload/dataplane";
+import { createStubAnalystClient } from "@project-overload/llm-client";
 import { buildApiApp } from "../src/app";
 import { InMemoryMetadataStore } from "../src/store/create-store";
 
@@ -17,7 +18,11 @@ describe("api semantic and run flow", () => {
         }))
     });
 
-    const app = await buildApiApp({ store, data_plane: dataPlane });
+    const app = await buildApiApp({
+      store,
+      data_plane: dataPlane,
+      analyst_client: createStubAnalystClient()
+    });
 
     const entityCreate = await app.inject({
       method: "POST",
@@ -93,7 +98,11 @@ describe("api semantic and run flow", () => {
         }))
     });
 
-    const app = await buildApiApp({ store, data_plane: dataPlane });
+    const app = await buildApiApp({
+      store,
+      data_plane: dataPlane,
+      analyst_client: createStubAnalystClient()
+    });
 
     const contractCreate = await app.inject({
       method: "POST",

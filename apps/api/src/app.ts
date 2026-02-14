@@ -1,6 +1,7 @@
 import Fastify from "fastify";
 import { ZodError } from "zod";
 import { LocalStubDataPlane, type DataPlane } from "@project-overload/dataplane";
+import { createAnalystClientFromEnv, type AnalystClient } from "@project-overload/llm-client";
 import { createMetadataStoreFromEnv, type MetadataStore } from "./store";
 import { registerSemanticRoutes } from "./routes/semantic";
 import { registerContractRoutes } from "./routes/contracts";
@@ -8,6 +9,7 @@ import { registerContractRoutes } from "./routes/contracts";
 export type ApiDependencies = {
   store: MetadataStore;
   data_plane: DataPlane;
+  analyst_client: AnalystClient;
 };
 
 export async function buildApiApp(options: Partial<ApiDependencies> = {}) {
@@ -46,11 +48,12 @@ export async function buildApiApp(options: Partial<ApiDependencies> = {}) {
           event_time: `2025-01-${String((index % 28) + 1).padStart(2, "0")}`
         }))
     });
+  const analystClient = options.analyst_client ?? createAnalystClientFromEnv();
 
   app.get("/health", async () => ({ status: "ok", service: "api" }));
 
   registerSemanticRoutes(app, store);
-  registerContractRoutes(app, store, dataPlane);
+  registerContractRoutes(app, store, dataPlane, analystClient);
 
   app.setErrorHandler((error: unknown, _request, reply) => {
     if (error instanceof ZodError) {

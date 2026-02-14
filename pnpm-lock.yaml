@@ -41,6 +41,9 @@ importers:
       '@project-overload/evidence':
         specifier: workspace:*
         version: link:../../packages/evidence
+      '@project-overload/llm-client':
+        specifier: workspace:*
+        version: link:../../packages/llm-client
       '@project-overload/report-render':
         specifier: workspace:*
         version: link:../../packages/report-render
@@ -86,6 +89,15 @@ importers:
 
   packages/evidence:
     dependencies:
+      '@project-overload/shared':
+        specifier: workspace:*
+        version: link:../shared
+
+  packages/llm-client:
+    dependencies:
+      '@project-overload/evidence':
+        specifier: workspace:*
+        version: link:../evidence
       '@project-overload/shared':
         specifier: workspace:*
         version: link:../shared

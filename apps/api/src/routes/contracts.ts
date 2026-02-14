@@ -2,13 +2,15 @@ import { randomUUID } from "node:crypto";
 import type { FastifyInstance } from "fastify";
 import { ReportContractSchema, ReportGuardrailsSchema } from "@project-overload/shared";
 import type { DataPlane } from "@project-overload/dataplane";
+import type { AnalystClient } from "@project-overload/llm-client";
 import type { MetadataStore } from "../store";
 import { runReportContractPipeline } from "../services/run-contract";
 
 export function registerContractRoutes(
   app: FastifyInstance,
   store: MetadataStore,
-  dataPlane: DataPlane
+  dataPlane: DataPlane,
+  analystClient: AnalystClient
 ): void {
   app.post("/report-contracts", async (request, reply) => {
     const payload = toReportContract(request.body);
@@ -42,7 +44,8 @@ export function registerContractRoutes(
     const result = await runReportContractPipeline({
       contract,
       store,
-      data_plane: dataPlane
+      data_plane: dataPlane,
+      analyst_client: analystClient
     });
 
     return reply.code(200).send({

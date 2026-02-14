@@ -1,0 +1,16 @@
+{
+  "name": "@project-overload/llm-client",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "scripts": {
+    "build": "tsc -p tsconfig.json --noEmit"
+  },
+  "dependencies": {
+    "@project-overload/evidence": "workspace:*",
+    "@project-overload/shared": "workspace:*"
+  }
+}
