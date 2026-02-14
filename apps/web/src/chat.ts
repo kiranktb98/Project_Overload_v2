@@ -94,7 +94,7 @@ const HELP_TEXT = [
 
 const COMMAND_HINT = [
   "I can draft, save, and run report contracts.",
-  "Try: set name: Weekly Revenue, then preview, then save, then run."
+  "Tell me your report in plain language, or use commands like: set name, preview, save, run."
 ].join("\n");
 
 export function createInitialChatState(): ChatState {
@@ -216,6 +216,13 @@ export async function handleChatTurn(input: {
     return runResult;
   }
 
+  if (asksForMissingDetails(command)) {
+    return {
+      assistant_message: renderMissingDetails(nextState),
+      state: nextState
+    };
+  }
+
   const setCommand = parseSetCommand(rawMessage);
   if (setCommand) {
     const applied = applySetCommand(nextState, setCommand.field, setCommand.value);
@@ -234,9 +241,67 @@ export async function handleChatTurn(input: {
     };
   }
 
+  const natural = applyNaturalLanguageDraftUpdates(rawMessage, nextState);
+  if (natural.updated_fields.length > 0) {
+    nextState = natural.state;
+
+    const action = detectConversationalAction(command);
+    if (action === "run") {
+      return runWithValidation(nextState, input.api_client);
+    }
+
+    if (action === "save") {
+      return saveWithValidation(nextState, input.api_client);
+    }
+
+    if (action === "preview") {
+      return {
+        assistant_message: renderPreview(nextState),
+        state: nextState
+      };
+    }
+
+    if (action === "list") {
+      const contracts = await input.api_client.listContracts();
+      return {
+        assistant_message: renderContractList(contracts),
+        state: nextState
+      };
+    }
+
+    return {
+      assistant_message: `Updated: ${natural.updated_fields.join(", ")}.\n${renderDraftChecklist(nextState)}`,
+      state: nextState
+    };
+  }
+
   const inferred = inferSimpleIntent(rawMessage, nextState);
   if (inferred) {
     return inferred;
+  }
+
+  const action = detectConversationalAction(command);
+  if (action === "run") {
+    return runWithValidation(nextState, input.api_client);
+  }
+
+  if (action === "save") {
+    return saveWithValidation(nextState, input.api_client);
+  }
+
+  if (action === "preview") {
+    return {
+      assistant_message: renderPreview(nextState),
+      state: nextState
+    };
+  }
+
+  if (action === "list") {
+    const contracts = await input.api_client.listContracts();
+    return {
+      assistant_message: renderContractList(contracts),
+      state: nextState
+    };
   }
 
   return {
@@ -332,7 +397,7 @@ function inferSimpleIntent(message: string, state: ChatState): ChatTurnResponse 
     };
   }
 
-  if (lowered.includes("ceo") && nextState.draft.audience === "Executive") {
+  if (lowered.includes("ceo") && !lowered.includes("name") && nextState.draft.audience === "Executive") {
     nextState.draft.audience = "CEO";
     return {
       assistant_message: "Audience set to CEO. Continue with `set name: ...` and `preview`.",
@@ -367,6 +432,18 @@ async function saveContract(state: ChatState, apiClient: WebApiClient): Promise<
   };
 }
 
+async function saveWithValidation(state: ChatState, apiClient: WebApiClient): Promise<ChatTurnResponse> {
+  const missing = getMissingDraftFields(state);
+  if (missing.length > 0) {
+    return {
+      assistant_message: `Before saving, I still need: ${missing.join(", ")}.`,
+      state
+    };
+  }
+
+  return saveContract(state, apiClient);
+}
+
 async function runContract(state: ChatState, apiClient: WebApiClient): Promise<ChatTurnResponse> {
   let nextState = parseChatState(state);
   let preface = "";
@@ -391,6 +468,18 @@ async function runContract(state: ChatState, apiClient: WebApiClient): Promise<C
     state: nextState,
     pdf_download_url: pdfDownloadUrl
   };
+}
+
+async function runWithValidation(state: ChatState, apiClient: WebApiClient): Promise<ChatTurnResponse> {
+  const missing = getMissingDraftFields(state);
+  if (missing.length > 0) {
+    return {
+      assistant_message: `Before running, I still need: ${missing.join(", ")}.`,
+      state
+    };
+  }
+
+  return runContract(state, apiClient);
 }
 
 function buildContractPayload(state: ChatState): ReportContractRecord {
@@ -453,14 +542,7 @@ function renderPreview(state: ChatState): string {
 }
 
 function renderDraftChecklist(state: ChatState): string {
-  const missing: string[] = [];
-  if (state.draft.name.trim().length === 0) {
-    missing.push("name");
-  }
-
-  if (!/^\s*select\b/i.test(state.draft.sql_template)) {
-    missing.push("sql_template (must start with SELECT)");
-  }
+  const missing = getMissingDraftFields(state);
 
   if (missing.length === 0) {
     return state.contract_id
@@ -543,7 +625,7 @@ function answerConversationalPrompt(command: string, state: ChatState): ChatTurn
 
 function isGreeting(command: string): boolean {
   const normalized = command.trim();
-  return ["hi", "hello", "hey", "yo", "good morning", "good evening"].includes(normalized);
+  return /\b(hi|hello|hey|yo|good morning|good evening)\b/.test(normalized);
 }
 
 function asksForFindings(command: string): boolean {
@@ -551,6 +633,9 @@ function asksForFindings(command: string): boolean {
     "what did you find",
     "what did it find",
     "what did you analyze",
+    "tell me what you found",
+    "tell me what it found",
+    "what did you learn",
     "summary",
     "insights",
     "findings",
@@ -574,6 +659,170 @@ function summarizeExecBrief(execBrief: ExecBriefRecord): string {
     `Recommended action: ${top(execBrief.what_to_do)}`,
     `Confidence: ${execBrief.confidence.score.toFixed(2)} (${execBrief.confidence.rationale})`
   ].join("\n");
+}
+
+function detectConversationalAction(command: string): "run" | "save" | "preview" | "list" | null {
+  if (/\b(run|execute|start now|run now|launch)\b/.test(command)) {
+    return "run";
+  }
+
+  if (/\b(save|store|persist)\b/.test(command)) {
+    return "save";
+  }
+
+  if (/\b(preview|show draft|show contract|what do you have)\b/.test(command)) {
+    return "preview";
+  }
+
+  if (/\b(list contracts|show contracts|list reports|list)\b/.test(command)) {
+    return "list";
+  }
+
+  return null;
+}
+
+function asksForMissingDetails(command: string): boolean {
+  return /\b(what do you still need|what else do you need|anything missing|what is missing)\b/.test(command);
+}
+
+function renderMissingDetails(state: ChatState): string {
+  const missing = getMissingDraftFields(state);
+  if (missing.length === 0) {
+    return 'You already gave enough to run. Say "run it now" when ready.';
+  }
+
+  return `To continue, I still need: ${missing.join(", ")}.`;
+}
+
+function getMissingDraftFields(state: ChatState): string[] {
+  const missing: string[] = [];
+  if (state.draft.name.trim().length === 0) {
+    missing.push("name");
+  }
+
+  if (!/^\s*select\b/i.test(state.draft.sql_template)) {
+    missing.push("sql_template (must start with SELECT)");
+  }
+
+  return missing;
+}
+
+function applyNaturalLanguageDraftUpdates(
+  message: string,
+  state: ChatState
+): { state: ChatState; updated_fields: string[] } {
+  const next = parseChatState(state);
+  const updated = new Set<string>();
+  const lower = message.toLowerCase();
+
+  const explicitNameMatch =
+    message.match(/(?:name\s+(?:to|as|is)\s+|call\s+(?:it|this)\s+)([^.?!]+)/i) ??
+    message.match(/(?:called|named)\s+["']?([^"'.?!]+)["']?/i);
+
+  if (explicitNameMatch) {
+    const parsedName = explicitNameMatch[1].trim();
+    if (parsedName.length > 0) {
+      next.draft.name = parsedName;
+      next.contract_id = null;
+      updated.add("name");
+    }
+  }
+
+  if (lower.includes("ceo")) {
+    if (next.draft.audience !== "CEO") {
+      next.draft.audience = "CEO";
+      next.contract_id = null;
+      updated.add("audience");
+    }
+  } else if (lower.includes("cfo")) {
+    if (next.draft.audience !== "CFO") {
+      next.draft.audience = "CFO";
+      next.contract_id = null;
+      updated.add("audience");
+    }
+  } else if (lower.includes("ops")) {
+    if (next.draft.audience !== "Ops") {
+      next.draft.audience = "Ops";
+      next.contract_id = null;
+      updated.add("audience");
+    }
+  }
+
+  const timezoneMatch = message.match(/\btimezone(?:\s*(?:to|as|is))?\s*([A-Za-z_/+-]+)/i);
+  if (timezoneMatch) {
+    const timezone = timezoneMatch[1].trim();
+    if (timezone.length > 0) {
+      next.draft.timezone = timezone;
+      next.contract_id = null;
+      updated.add("timezone");
+    }
+  }
+
+  if (lower.includes("weekly") || lower.includes("every friday")) {
+    if (next.draft.schedule_cron !== "0 18 * * 5") {
+      next.draft.schedule_cron = "0 18 * * 5";
+      next.contract_id = null;
+      updated.add("schedule_cron");
+    }
+  } else if (lower.includes("daily")) {
+    if (next.draft.schedule_cron !== "0 9 * * *") {
+      next.draft.schedule_cron = "0 9 * * *";
+      next.contract_id = null;
+      updated.add("schedule_cron");
+    }
+  } else if (lower.includes("monthly")) {
+    if (next.draft.schedule_cron !== "0 9 1 * *") {
+      next.draft.schedule_cron = "0 9 1 * *";
+      next.contract_id = null;
+      updated.add("schedule_cron");
+    }
+  }
+
+  if (lower.includes("by region") && !next.draft.dimension_ids.includes("region")) {
+    next.draft.dimension_ids = Array.from(new Set([...next.draft.dimension_ids, "region"]));
+    next.contract_id = null;
+    updated.add("dimension_ids");
+  }
+
+  if (lower.includes("by channel") && !next.draft.dimension_ids.includes("channel")) {
+    next.draft.dimension_ids = Array.from(new Set([...next.draft.dimension_ids, "channel"]));
+    next.contract_id = null;
+    updated.add("dimension_ids");
+  }
+
+  if (lower.includes("revenue") && !next.draft.metric_ids.includes("metric_revenue")) {
+    next.draft.metric_ids = Array.from(new Set([...next.draft.metric_ids, "metric_revenue"]));
+    next.contract_id = null;
+    updated.add("metric_ids");
+  }
+
+  if (lower.includes("orders") && !next.draft.metric_ids.includes("metric_orders")) {
+    next.draft.metric_ids = Array.from(new Set([...next.draft.metric_ids, "metric_orders"]));
+    next.contract_id = null;
+    updated.add("metric_ids");
+  }
+
+  if (lower.includes("sales_enriched")) {
+    next.draft.allowed_relations = Array.from(new Set([...next.draft.allowed_relations, "analytics.sales_enriched"]));
+    next.draft.allowed_schemas = Array.from(new Set([...next.draft.allowed_schemas, "analytics"]));
+    next.contract_id = null;
+    updated.add("allowed_relations");
+  }
+
+  if (
+    lower.includes("revenue by region") &&
+    next.draft.sql_template.trim().toLowerCase() === "select * from analytics.sales"
+  ) {
+    next.draft.sql_template =
+      "SELECT region, SUM(amount) AS amount, MIN(event_time) AS event_time FROM analytics.sales GROUP BY region";
+    next.contract_id = null;
+    updated.add("sql_template");
+  }
+
+  return {
+    state: next,
+    updated_fields: [...updated]
+  };
 }
 
 async function parseJsonResponse<TSchema extends z.ZodTypeAny>(
