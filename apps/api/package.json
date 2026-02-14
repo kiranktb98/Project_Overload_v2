@@ -1,0 +1,19 @@
+{
+  "name": "@project-overload/api",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "tsx watch src/index.ts",
+    "build": "tsc -p tsconfig.json --noEmit",
+    "db:migrate": "tsx src/db/migrate.ts"
+  },
+  "dependencies": {
+    "@project-overload/report-render": "workspace:*",
+    "@project-overload/shared": "workspace:*",
+    "@project-overload/sql-guard": "workspace:*",
+    "fastify": "^5.2.1",
+    "pg": "^8.13.3",
+    "zod": "^3.24.1"
+  }
+}
