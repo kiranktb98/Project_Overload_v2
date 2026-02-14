@@ -248,7 +248,7 @@ export function renderChatPage(): string {
         <section class="messages" id="messages"></section>
         <section class="composer">
           <form id="composer-form">
-            <input id="composer-input" autocomplete="off" placeholder="Type a command. Example: set name: Weekly CEO report" />
+            <input id="composer-input" autocomplete="off" placeholder="Describe the report you want. Example: I need a weekly CEO revenue report by region." />
             <button id="composer-send" type="submit">Send</button>
           </form>
           <div class="hint">All commands run through server-side <code>/api/chat</code> and existing API contracts.</div>

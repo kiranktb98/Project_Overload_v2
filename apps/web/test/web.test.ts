@@ -44,6 +44,36 @@ describe("web chat interface", () => {
     await app.close();
   });
 
+  it("responds naturally to small talk and open-ended report intent", async () => {
+    const app = buildWebApp();
+
+    const wellbeing = await app.inject({
+      method: "POST",
+      url: "/api/chat",
+      payload: {
+        message: "how are you doing?"
+      }
+    });
+
+    expect(wellbeing.statusCode).toBe(200);
+    const wellbeingBody = wellbeing.json();
+    expect(wellbeingBody.assistant_message.toLowerCase()).toContain("doing well");
+
+    const openEnded = await app.inject({
+      method: "POST",
+      url: "/api/chat",
+      payload: {
+        message: "i need a report",
+        state: wellbeingBody.state
+      }
+    });
+
+    expect(openEnded.statusCode).toBe(200);
+    expect(openEnded.json().assistant_message).toContain("Great, let's build your report.");
+
+    await app.close();
+  });
+
   it("saves and runs a contract through the api bridge", async () => {
     const requests: Array<{ url: string; method: string }> = [];
     const fetchImpl: typeof fetch = async (input, init) => {
@@ -282,7 +312,7 @@ describe("web chat interface", () => {
       }
     });
     expect(turn1.statusCode).toBe(200);
-    expect(turn1.json().assistant_message).toContain("chat naturally");
+    expect(turn1.json().assistant_message).toContain("define a report contract");
 
     const turn2 = await app.inject({
       method: "POST",
