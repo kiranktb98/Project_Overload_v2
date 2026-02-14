@@ -1,17 +1,28 @@
 import type { ScheduledJob } from "./scheduler";
 
-export class InMemoryRunQueue {
+export interface RunQueue {
+  enqueue(job: ScheduledJob): Promise<void>;
+  dequeue(): Promise<ScheduledJob | undefined>;
+  size(): Promise<number>;
+  close(): Promise<void>;
+}
+
+export class InMemoryRunQueue implements RunQueue {
   private readonly jobs: ScheduledJob[] = [];
 
-  enqueue(job: ScheduledJob): void {
+  async enqueue(job: ScheduledJob): Promise<void> {
     this.jobs.push(job);
   }
 
-  dequeue(): ScheduledJob | undefined {
+  async dequeue(): Promise<ScheduledJob | undefined> {
     return this.jobs.shift();
   }
 
-  size(): number {
+  async size(): Promise<number> {
     return this.jobs.length;
+  }
+
+  async close(): Promise<void> {
+    this.jobs.length = 0;
   }
 }

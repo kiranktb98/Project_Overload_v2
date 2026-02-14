@@ -1,5 +1,5 @@
 {
-  "name": "@project-overload/report-render",
+  "name": "@project-overload/llm-client",
   "version": "0.1.0",
   "private": true,
   "type": "module",
@@ -10,7 +10,7 @@
     "build": "tsc -p tsconfig.json --noEmit"
   },
   "dependencies": {
-    "@project-overload/shared": "workspace:*",
-    "pdf-lib": "^1.17.1"
+    "@project-overload/evidence": "workspace:*",
+    "@project-overload/shared": "workspace:*"
   }
 }

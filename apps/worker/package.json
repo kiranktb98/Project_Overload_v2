@@ -9,6 +9,7 @@
   },
   "dependencies": {
     "@project-overload/shared": "workspace:*",
-    "cron-parser": "^5.4.0"
+    "cron-parser": "^5.4.0",
+    "redis": "^4.7.0"
   }
 }

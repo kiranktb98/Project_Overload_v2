@@ -11,6 +11,7 @@
   "dependencies": {
     "@project-overload/dataplane": "workspace:*",
     "@project-overload/evidence": "workspace:*",
+    "@project-overload/llm-client": "workspace:*",
     "@project-overload/report-render": "workspace:*",
     "@project-overload/shared": "workspace:*",
     "@project-overload/sql-guard": "workspace:*",

@@ -9,11 +9,11 @@ import {
 import type { DataPlane } from "@project-overload/dataplane";
 import {
   aggregateBatchAnalyses,
-  analyzeBatch,
   materializeBatches,
   reduceEvidence
 } from "@project-overload/evidence";
-import { renderExecBriefHtml, renderPdfPlaceholder } from "@project-overload/report-render";
+import type { AnalystClient } from "@project-overload/llm-client";
+import { renderExecBriefHtml, renderPdfFromHtml } from "@project-overload/report-render";
 import type { MetadataStore } from "../store";
 import { buildDeterministicQueryPlan } from "./planner";
 
@@ -28,6 +28,7 @@ export async function runReportContractPipeline(input: {
   contract: ReportContract;
   store: MetadataStore;
   data_plane: DataPlane;
+  analyst_client: AnalystClient;
 }): Promise<RunReportContractResult> {
   const startedAt = new Date().toISOString();
   const queryPlan = buildDeterministicQueryPlan(input.contract);
@@ -62,7 +63,7 @@ export async function runReportContractPipeline(input: {
 
     if (reduction.kind === "packet") {
       analyses.push(
-        analyzeBatch({
+        await input.analyst_client.analyzeBatch({
           request_id: evidenceRequest.id,
           batch_index: 0,
           total_batches: 1,
@@ -82,7 +83,7 @@ export async function runReportContractPipeline(input: {
 
     for (const packet of packets) {
       analyses.push(
-        analyzeBatch({
+        await input.analyst_client.analyzeBatch({
           request_id: evidenceRequest.id,
           batch_index: packet.batch_index,
           total_batches: packet.total_batches,
@@ -95,7 +96,7 @@ export async function runReportContractPipeline(input: {
 
   const execBrief = aggregateBatchAnalyses(analyses, previousBrief);
   const html = renderExecBriefHtml(execBrief);
-  const pdf = renderPdfPlaceholder(html);
+  const pdf = await renderPdfFromHtml(html);
 
   const run = ReportRunSchema.parse({
     id: randomUUID(),
