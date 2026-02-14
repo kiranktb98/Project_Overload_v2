@@ -13,6 +13,12 @@ AI Data Architect + Scheduled Narrative Reports (PDF) + KT
 4. Start runtime:
    - `pnpm dev`
 
+If you want every chat turn to require a live AI provider response, set:
+- `WEB_CHAT_REQUIRE_PROVIDER=true`
+- `WEB_CHAT_FALLBACK_TO_DETERMINISTIC=false`
+- `LLM_PROVIDER=openrouter` (or `openai`)
+- corresponding API key env vars in local `.env`
+
 Seeded dataset includes:
 - `analytics.customers` (~12,000 rows)
 - `analytics.sales` (~75,000 rows)

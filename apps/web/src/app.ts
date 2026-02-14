@@ -6,11 +6,16 @@ import {
   handleChatTurn,
   parseChatState
 } from "./chat";
+import {
+  createConversationClientFromEnv,
+  type ConversationClient
+} from "./conversation";
 import { renderChatPage } from "./page";
 
 export type WebAppDependencies = {
   api_base_url?: string;
   fetch_impl?: typeof fetch;
+  conversation_client?: ConversationClient;
 };
 
 export function buildWebApp(options: WebAppDependencies = {}) {
@@ -21,6 +26,8 @@ export function buildWebApp(options: WebAppDependencies = {}) {
     base_url: apiBaseUrl,
     fetch_impl: options.fetch_impl
   });
+  const conversationClient =
+    options.conversation_client ?? createConversationClientFromEnv({ fetch_impl: options.fetch_impl });
 
   app.get("/health", async () => ({ status: "ok", service: "web" }));
   app.get("/", async (_request, reply) => {
@@ -44,8 +51,16 @@ export function buildWebApp(options: WebAppDependencies = {}) {
         state,
         api_client: apiClient
       });
+      const aiMessage = await conversationClient.respond({
+        user_message: parsed.data.message,
+        deterministic_response: response.assistant_message,
+        state: response.state
+      });
 
-      return reply.code(200).send(response);
+      return reply.code(200).send({
+        ...response,
+        assistant_message: aiMessage
+      });
     } catch (error) {
       if (error instanceof z.ZodError) {
         return reply.code(400).send({
