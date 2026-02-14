@@ -21,6 +21,7 @@ export class InMemoryMetadataStore implements MetadataStore {
   private readonly semantic = new Map<SemanticCollectionName, Map<string, SemanticEntity | SemanticField | SemanticRelationship | Metric | Dimension>>();
   private readonly reportContracts = new Map<string, ReportContract>();
   private readonly reportRuns = new Map<string, ReportRun[]>();
+  private readonly reportRunsById = new Map<string, ReportRun>();
   private readonly auditLogs: Array<{ event_type: string; payload: Record<string, unknown> }> = [];
 
   constructor() {
@@ -65,6 +66,7 @@ export class InMemoryMetadataStore implements MetadataStore {
     const existing = this.reportRuns.get(payload.contract_id) ?? [];
     existing.push(payload);
     this.reportRuns.set(payload.contract_id, existing);
+    this.reportRunsById.set(payload.id, payload);
     return payload;
   }
 
@@ -77,6 +79,10 @@ export class InMemoryMetadataStore implements MetadataStore {
     return runs.length > 0 ? runs[runs.length - 1] : null;
   }
 
+  async getReportRunById(runId: string): Promise<ReportRun | null> {
+    return this.reportRunsById.get(runId) ?? null;
+  }
+
   async appendAuditLog(eventType: string, payload: Record<string, unknown>): Promise<void> {
     this.auditLogs.push({ event_type: eventType, payload });
   }
@@ -85,6 +91,7 @@ export class InMemoryMetadataStore implements MetadataStore {
     this.semantic.clear();
     this.reportContracts.clear();
     this.reportRuns.clear();
+    this.reportRunsById.clear();
     this.auditLogs.length = 0;
   }
 }

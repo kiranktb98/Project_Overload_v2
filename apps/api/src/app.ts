@@ -5,6 +5,7 @@ import { createAnalystClientFromEnv, type AnalystClient } from "@project-overloa
 import { createMetadataStoreFromEnv, type MetadataStore } from "./store";
 import { registerSemanticRoutes } from "./routes/semantic";
 import { registerContractRoutes } from "./routes/contracts";
+import { createLocalRowProviderFromEnv } from "./dataplane/local-row-provider";
 
 export type ApiDependencies = {
   store: MetadataStore;
@@ -35,19 +36,12 @@ export async function buildApiApp(options: Partial<ApiDependencies> = {}) {
   );
 
   const store = options.store ?? (await createMetadataStoreFromEnv());
+  const localRowProvider = options.data_plane ? null : createLocalRowProviderFromEnv();
   const dataPlane =
     options.data_plane ??
     createDataPlaneFromEnv({
       local_stub_options: {
-        row_provider: () =>
-          Array.from({ length: 320 }, (_, index) => ({
-            order_id: `order_${index + 1}`,
-            customer_id: `customer_${(index % 50) + 1}`,
-            customer_email: `customer_${(index % 50) + 1}@example.com`,
-            amount: (index % 25) + 10,
-            region: ["NA", "EU", "APAC"][index % 3],
-            event_time: `2025-01-${String((index % 28) + 1).padStart(2, "0")}`
-          }))
+        row_provider: localRowProvider?.row_provider
       }
     });
   const analystClient = options.analyst_client ?? createAnalystClientFromEnv();
@@ -74,6 +68,7 @@ export async function buildApiApp(options: Partial<ApiDependencies> = {}) {
 
   app.addHook("onClose", async () => {
     await store.close();
+    await localRowProvider?.close();
   });
 
   return app;

@@ -70,6 +70,7 @@ describe("web chat interface", () => {
         return new Response(
           JSON.stringify({
             run_id: "run_web_test",
+            pdf_path: "/report-runs/run_web_test/pdf",
             exec_brief: {
               what_changed: ["Revenue up 12%"],
               why: ["Higher order frequency"],
@@ -89,6 +90,16 @@ describe("web chat interface", () => {
             headers: { "content-type": "application/json" }
           }
         );
+      }
+
+      if (url.endsWith("/report-runs/run_web_test/pdf") && method === "GET") {
+        return new Response(new Uint8Array([0x25, 0x50, 0x44, 0x46]), {
+          status: 200,
+          headers: {
+            "content-type": "application/pdf",
+            "content-disposition": "attachment; filename=\"exec-brief-run_web_test.pdf\""
+          }
+        });
       }
 
       if (url.endsWith("/report-contracts") && method === "GET") {
@@ -146,7 +157,28 @@ describe("web chat interface", () => {
     expect(run.statusCode).toBe(200);
     const runBody = run.json();
     expect(runBody.assistant_message).toContain("Run complete.");
+    expect(runBody.pdf_download_url).toBe("/api/runs/run_web_test/pdf");
     expect(runBody.state.last_run_id).toBe("run_web_test");
+    expect(runBody.state.last_exec_brief).toBeTruthy();
+
+    const insights = await app.inject({
+      method: "POST",
+      url: "/api/chat",
+      payload: {
+        message: "What did you find from the data?",
+        state: runBody.state
+      }
+    });
+    expect(insights.statusCode).toBe(200);
+    expect(insights.json().assistant_message).toContain("Top finding");
+
+    const pdf = await app.inject({
+      method: "GET",
+      url: "/api/runs/run_web_test/pdf"
+    });
+    expect(pdf.statusCode).toBe(200);
+    expect(pdf.headers["content-type"]).toContain("application/pdf");
+
     expect(
       requests.some((request) => request.method === "POST" && request.url.endsWith("/report-contracts"))
     ).toBe(true);
@@ -154,6 +186,165 @@ describe("web chat interface", () => {
       requests.some(
         (request) => request.method === "POST" && request.url.endsWith("/report-contracts/contract_web_test/run")
       )
+    ).toBe(true);
+    expect(
+      requests.some((request) => request.method === "GET" && request.url.endsWith("/report-runs/run_web_test/pdf"))
+    ).toBe(true);
+
+    await app.close();
+  });
+
+  it("supports natural-language multi-turn conversation", async () => {
+    const requests: Array<{ url: string; method: string }> = [];
+    const fetchImpl: typeof fetch = async (input, init) => {
+      const url = typeof input === "string" ? input : input instanceof URL ? input.toString() : input.url;
+      const method = init?.method?.toUpperCase() ?? "GET";
+      requests.push({ url, method });
+
+      if (url.endsWith("/report-contracts") && method === "POST") {
+        const rawBody = typeof init?.body === "string" ? init.body : "{}";
+        const payload = JSON.parse(rawBody) as Record<string, unknown>;
+        return new Response(
+          JSON.stringify({
+            ...payload,
+            id: "contract_nl_test"
+          }),
+          {
+            status: 201,
+            headers: { "content-type": "application/json" }
+          }
+        );
+      }
+
+      if (url.endsWith("/report-contracts/contract_nl_test/run") && method === "POST") {
+        return new Response(
+          JSON.stringify({
+            run_id: "run_nl_test",
+            pdf_path: "/report-runs/run_nl_test/pdf",
+            exec_brief: {
+              what_changed: ["Revenue increased 11% week-over-week in NA and EU."],
+              why: ["Higher online conversion and larger enterprise deals."],
+              so_what: ["Quarter target risk reduced."],
+              what_to_do: ["Shift 10% budget to online in EU."],
+              confidence: {
+                score: 0.82,
+                rationale: "Trend is consistent across regions."
+              },
+              appendix_refs: ["evidence_nl_1"],
+              deltas_vs_last_run: ["NA +8%, EU +14%"],
+              generated_at: "2026-01-01T00:00:00.000Z"
+            }
+          }),
+          {
+            status: 200,
+            headers: { "content-type": "application/json" }
+          }
+        );
+      }
+
+      if (url.endsWith("/report-runs/run_nl_test/pdf") && method === "GET") {
+        return new Response(new Uint8Array([0x25, 0x50, 0x44, 0x46]), {
+          status: 200,
+          headers: {
+            "content-type": "application/pdf"
+          }
+        });
+      }
+
+      if (url.endsWith("/report-contracts") && method === "GET") {
+        return new Response("[]", {
+          status: 200,
+          headers: { "content-type": "application/json" }
+        });
+      }
+
+      return new Response(
+        JSON.stringify({
+          message: `Unhandled request: ${method} ${url}`
+        }),
+        {
+          status: 404,
+          headers: { "content-type": "application/json" }
+        }
+      );
+    };
+
+    const app = buildWebApp({
+      api_base_url: "http://api.local",
+      fetch_impl: fetchImpl
+    });
+
+    const turn1 = await app.inject({
+      method: "POST",
+      url: "/api/chat",
+      payload: {
+        message: "Hi"
+      }
+    });
+    expect(turn1.statusCode).toBe(200);
+    expect(turn1.json().assistant_message).toContain("chat naturally");
+
+    const turn2 = await app.inject({
+      method: "POST",
+      url: "/api/chat",
+      payload: {
+        message: "I need a weekly CEO report by region. Call it Weekly CEO Revenue Report.",
+        state: turn1.json().state
+      }
+    });
+    expect(turn2.statusCode).toBe(200);
+    expect(turn2.json().assistant_message).toContain("Updated:");
+
+    const turn3 = await app.inject({
+      method: "POST",
+      url: "/api/chat",
+      payload: {
+        message: "What do you still need from me?",
+        state: turn2.json().state
+      }
+    });
+    expect(turn3.statusCode).toBe(200);
+    expect(turn3.json().assistant_message).toContain("already gave enough");
+
+    const turn4 = await app.inject({
+      method: "POST",
+      url: "/api/chat",
+      payload: {
+        message: "Run it now",
+        state: turn3.json().state
+      }
+    });
+    expect(turn4.statusCode).toBe(200);
+    expect(turn4.json().assistant_message).toContain("Run complete.");
+    expect(turn4.json().state.last_run_id).toBe("run_nl_test");
+
+    const turn5 = await app.inject({
+      method: "POST",
+      url: "/api/chat",
+      payload: {
+        message: "Tell me what you found from the data.",
+        state: turn4.json().state
+      }
+    });
+    expect(turn5.statusCode).toBe(200);
+    expect(turn5.json().assistant_message).toContain("Top finding:");
+
+    const turn6 = await app.inject({
+      method: "POST",
+      url: "/api/chat",
+      payload: {
+        message: "Can I download the PDF?",
+        state: turn5.json().state
+      }
+    });
+    expect(turn6.statusCode).toBe(200);
+    expect(turn6.json().pdf_download_url).toBe("/api/runs/run_nl_test/pdf");
+
+    expect(
+      requests.some((request) => request.method === "POST" && request.url.endsWith("/report-contracts"))
+    ).toBe(true);
+    expect(
+      requests.some((request) => request.method === "POST" && request.url.endsWith("/report-contracts/contract_nl_test/run"))
     ).toBe(true);
 
     await app.close();

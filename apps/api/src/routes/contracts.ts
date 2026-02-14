@@ -1,8 +1,9 @@
 import { randomUUID } from "node:crypto";
 import type { FastifyInstance } from "fastify";
-import { ReportContractSchema, ReportGuardrailsSchema } from "@project-overload/shared";
+import { ExecBriefSchema, ReportContractSchema, ReportGuardrailsSchema } from "@project-overload/shared";
 import type { DataPlane } from "@project-overload/dataplane";
 import type { AnalystClient } from "@project-overload/llm-client";
+import { renderExecBriefHtml, renderPdfFromHtml } from "@project-overload/report-render";
 import type { MetadataStore } from "../store";
 import { runReportContractPipeline } from "../services/run-contract";
 
@@ -51,8 +52,39 @@ export function registerContractRoutes(
     return reply.code(200).send({
       run_id: result.run.id,
       contract_id: id,
-      exec_brief: result.exec_brief
+      exec_brief: result.exec_brief,
+      pdf_path: `/report-runs/${result.run.id}/pdf`
     });
+  });
+
+  app.get("/report-runs/:runId", async (request, reply) => {
+    const { runId } = request.params as { runId: string };
+    const run = await store.getReportRunById(runId);
+
+    if (!run) {
+      return reply.code(404).send({ message: "Report run not found" });
+    }
+
+    return reply.code(200).send(run);
+  });
+
+  app.get("/report-runs/:runId/pdf", async (request, reply) => {
+    const { runId } = request.params as { runId: string };
+    const run = await store.getReportRunById(runId);
+
+    if (!run) {
+      return reply.code(404).send({ message: "Report run not found" });
+    }
+
+    const execBrief = ExecBriefSchema.parse(run.exec_brief);
+    const html = renderExecBriefHtml(execBrief);
+    const pdf = await renderPdfFromHtml(html);
+
+    return reply
+      .code(200)
+      .header("content-type", "application/pdf")
+      .header("content-disposition", `attachment; filename="exec-brief-${run.id}.pdf"`)
+      .send(pdf.bytes);
   });
 }
 

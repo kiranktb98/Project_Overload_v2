@@ -76,11 +76,20 @@ describe("api semantic and run flow", () => {
     expect(runContract.statusCode).toBe(200);
 
     const body = runContract.json();
+    expect(typeof body.pdf_path).toBe("string");
     expect(body.exec_brief.what_changed.length).toBeGreaterThan(0);
     expect(body.exec_brief.why.length).toBeGreaterThan(0);
     expect(body.exec_brief.so_what.length).toBeGreaterThan(0);
     expect(body.exec_brief.what_to_do.length).toBeGreaterThan(0);
     expect(Array.isArray(body.exec_brief.appendix_refs)).toBe(true);
+
+    const runPdf = await app.inject({
+      method: "GET",
+      url: `/report-runs/${body.run_id}/pdf`
+    });
+
+    expect(runPdf.statusCode).toBe(200);
+    expect(runPdf.headers["content-type"]).toContain("application/pdf");
 
     await app.close();
   });
