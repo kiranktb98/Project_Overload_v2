@@ -1,6 +1,9 @@
 import { WorkerLoop } from "./loop";
 import { createRunQueueFromEnv } from "./queue-factory";
 import { DeterministicScheduler } from "./scheduler";
+import { loadEnvironment } from "./load-env";
+
+loadEnvironment(import.meta.url);
 
 const intervalMs = Number.parseInt(process.env.WORKER_TICK_MS ?? "30000", 10);
 const appTimezone = process.env.APP_TZ ?? "UTC";
