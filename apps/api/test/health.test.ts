@@ -1,9 +1,12 @@
 import { describe, expect, it } from "vitest";
 import { buildApiApp } from "../src/app";
+import { InMemoryMetadataStore } from "../src/store/create-store";
 
 describe("api health", () => {
   it("returns ok", async () => {
-    const app = buildApiApp();
+    const app = await buildApiApp({
+      store: new InMemoryMetadataStore()
+    });
 
     const response = await app.inject({
       method: "GET",

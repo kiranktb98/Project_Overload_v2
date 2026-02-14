@@ -1,14 +1,16 @@
 {
-  "name": "@project-overload/worker",
+  "name": "@project-overload/dataplane",
   "version": "0.1.0",
   "private": true,
   "type": "module",
+  "exports": {
+    ".": "./src/index.ts"
+  },
   "scripts": {
-    "dev": "tsx watch src/index.ts",
     "build": "tsc -p tsconfig.json --noEmit"
   },
   "dependencies": {
     "@project-overload/shared": "workspace:*",
-    "cron-parser": "^5.4.0"
+    "@project-overload/sql-guard": "workspace:*"
   }
 }
