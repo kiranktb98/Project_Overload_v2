@@ -13,6 +13,25 @@ export type ApiDependencies = {
 export async function buildApiApp(options: Partial<ApiDependencies> = {}) {
   const app = Fastify({ logger: false });
 
+  app.addContentTypeParser(
+    "application/json",
+    { parseAs: "string" },
+    (_request, body, done) => {
+      const rawBody = (typeof body === "string" ? body : body.toString("utf8")).trim();
+
+      if (rawBody.length === 0) {
+        done(null, {});
+        return;
+      }
+
+      try {
+        done(null, JSON.parse(rawBody));
+      } catch (error) {
+        done(error as Error);
+      }
+    }
+  );
+
   const store = options.store ?? (await createMetadataStoreFromEnv());
   const dataPlane =
     options.data_plane ??

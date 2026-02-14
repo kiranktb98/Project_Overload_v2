@@ -79,4 +79,58 @@ describe("api semantic and run flow", () => {
 
     await app.close();
   });
+
+  it("accepts manual run request with empty JSON body", async () => {
+    const store = new InMemoryMetadataStore();
+    const dataPlane = new LocalStubDataPlane({
+      row_provider: () =>
+        Array.from({ length: 220 }, (_, index) => ({
+          customer_id: `c_${(index % 8) + 1}`,
+          customer_email: `c_${(index % 8) + 1}@example.com`,
+          amount: (index % 15) + 1,
+          region: ["NA", "EU", "APAC"][index % 3],
+          order_id: `o_${index + 1}`
+        }))
+    });
+
+    const app = await buildApiApp({ store, data_plane: dataPlane });
+
+    const contractCreate = await app.inject({
+      method: "POST",
+      url: "/report-contracts",
+      payload: {
+        id: "contract_empty_json_body",
+        name: "Empty JSON body run test",
+        audience: "Ops",
+        timezone: "UTC",
+        schedule_cron: null,
+        sql_template: "SELECT * FROM analytics.sales",
+        guardrails: {
+          evidence_row_cap: 200,
+          max_batches: 5,
+          allowed_relations: ["analytics.sales"],
+          allowed_schemas: ["analytics"],
+          timeout_ms: 10000,
+          deny_write: true
+        }
+      }
+    });
+
+    expect(contractCreate.statusCode).toBe(201);
+
+    const runContract = await app.inject({
+      method: "POST",
+      url: "/report-contracts/contract_empty_json_body/run",
+      headers: {
+        "content-type": "application/json"
+      }
+    });
+
+    expect(runContract.statusCode).toBe(200);
+    const body = runContract.json();
+    expect(body.run_id).toBeDefined();
+    expect(body.exec_brief.what_changed.length).toBeGreaterThan(0);
+
+    await app.close();
+  });
 });
