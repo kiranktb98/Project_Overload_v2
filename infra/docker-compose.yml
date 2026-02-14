@@ -1,0 +1,21 @@
+services:
+  postgres:
+    image: postgres:16
+    container_name: po_v2_postgres
+    environment:
+      POSTGRES_USER: po
+      POSTGRES_PASSWORD: po
+      POSTGRES_DB: po_v2
+    ports:
+      - "54321:5432"
+    volumes:
+      - po_v2_pgdata:/var/lib/postgresql/data
+
+  redis:
+    image: redis:7
+    container_name: po_v2_redis
+    ports:
+      - "63791:6379"
+
+volumes:
+  po_v2_pgdata:
