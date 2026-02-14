@@ -1,0 +1,161 @@
+import { describe, expect, it } from "vitest";
+import { buildWebApp } from "../src/app";
+
+describe("web chat interface", () => {
+  it("serves health and chat html routes", async () => {
+    const app = buildWebApp();
+
+    const health = await app.inject({
+      method: "GET",
+      url: "/health"
+    });
+
+    expect(health.statusCode).toBe(200);
+    expect(health.json()).toEqual({ status: "ok", service: "web" });
+
+    const page = await app.inject({
+      method: "GET",
+      url: "/"
+    });
+
+    expect(page.statusCode).toBe(200);
+    expect(page.headers["content-type"]).toContain("text/html");
+    expect(page.body).toContain("Report Contract Chat");
+
+    await app.close();
+  });
+
+  it("accepts set commands and persists chat state", async () => {
+    const app = buildWebApp();
+
+    const response = await app.inject({
+      method: "POST",
+      url: "/api/chat",
+      payload: {
+        message: "set name: Weekly CEO Revenue"
+      }
+    });
+
+    expect(response.statusCode).toBe(200);
+    const body = response.json();
+    expect(body.state.draft.name).toBe("Weekly CEO Revenue");
+    expect(body.assistant_message).toContain("Updated name");
+
+    await app.close();
+  });
+
+  it("saves and runs a contract through the api bridge", async () => {
+    const requests: Array<{ url: string; method: string }> = [];
+    const fetchImpl: typeof fetch = async (input, init) => {
+      const url = typeof input === "string" ? input : input instanceof URL ? input.toString() : input.url;
+      const method = init?.method?.toUpperCase() ?? "GET";
+      requests.push({ url, method });
+
+      if (url.endsWith("/report-contracts") && method === "POST") {
+        const rawBody = typeof init?.body === "string" ? init.body : "{}";
+        const payload = JSON.parse(rawBody) as Record<string, unknown>;
+        return new Response(
+          JSON.stringify({
+            ...payload,
+            id: "contract_web_test"
+          }),
+          {
+            status: 201,
+            headers: { "content-type": "application/json" }
+          }
+        );
+      }
+
+      if (url.endsWith("/report-contracts/contract_web_test/run") && method === "POST") {
+        return new Response(
+          JSON.stringify({
+            run_id: "run_web_test",
+            exec_brief: {
+              what_changed: ["Revenue up 12%"],
+              why: ["Higher order frequency"],
+              so_what: ["Growth target is on track"],
+              what_to_do: ["Increase top-performing channel budget"],
+              confidence: {
+                score: 0.84,
+                rationale: "Coverage includes all top regions."
+              },
+              appendix_refs: ["evidence_contract_web_test_1"],
+              deltas_vs_last_run: ["NA revenue +8%"],
+              generated_at: "2026-01-01T00:00:00.000Z"
+            }
+          }),
+          {
+            status: 200,
+            headers: { "content-type": "application/json" }
+          }
+        );
+      }
+
+      if (url.endsWith("/report-contracts") && method === "GET") {
+        return new Response("[]", {
+          status: 200,
+          headers: { "content-type": "application/json" }
+        });
+      }
+
+      return new Response(
+        JSON.stringify({
+          message: `Unhandled request: ${method} ${url}`
+        }),
+        {
+          status: 404,
+          headers: { "content-type": "application/json" }
+        }
+      );
+    };
+
+    const app = buildWebApp({
+      api_base_url: "http://api.local",
+      fetch_impl: fetchImpl
+    });
+
+    const setName = await app.inject({
+      method: "POST",
+      url: "/api/chat",
+      payload: {
+        message: "set name: Weekly CEO Revenue"
+      }
+    });
+    expect(setName.statusCode).toBe(200);
+
+    const save = await app.inject({
+      method: "POST",
+      url: "/api/chat",
+      payload: {
+        message: "save",
+        state: setName.json().state
+      }
+    });
+    expect(save.statusCode).toBe(200);
+    expect(save.json().state.contract_id).toBe("contract_web_test");
+
+    const run = await app.inject({
+      method: "POST",
+      url: "/api/chat",
+      payload: {
+        message: "run",
+        state: save.json().state
+      }
+    });
+
+    expect(run.statusCode).toBe(200);
+    const runBody = run.json();
+    expect(runBody.assistant_message).toContain("Run complete.");
+    expect(runBody.state.last_run_id).toBe("run_web_test");
+    expect(
+      requests.some((request) => request.method === "POST" && request.url.endsWith("/report-contracts"))
+    ).toBe(true);
+    expect(
+      requests.some(
+        (request) => request.method === "POST" && request.url.endsWith("/report-contracts/contract_web_test/run")
+      )
+    ).toBe(true);
+
+    await app.close();
+  });
+});

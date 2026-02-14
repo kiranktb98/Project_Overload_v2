@@ -65,9 +65,15 @@ importers:
 
   apps/web:
     dependencies:
+      '@project-overload/shared':
+        specifier: workspace:*
+        version: link:../../packages/shared
       fastify:
         specifier: ^5.2.1
         version: 5.7.4
+      zod:
+        specifier: ^3.24.1
+        version: 3.25.76
 
   apps/worker:
     dependencies:
