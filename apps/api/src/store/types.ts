@@ -36,6 +36,7 @@ export interface MetadataStore {
   createReportRun(payload: ReportRun): Promise<ReportRun>;
   listReportRuns(contractId: string): Promise<ReportRun[]>;
   getLatestReportRun(contractId: string): Promise<ReportRun | null>;
+  getReportRunById(runId: string): Promise<ReportRun | null>;
 
   appendAuditLog(eventType: string, payload: Record<string, unknown>): Promise<void>;
   close(): Promise<void>;

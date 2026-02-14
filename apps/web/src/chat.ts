@@ -22,7 +22,8 @@ export const ChatDraftSchema = z.object({
 export const ChatStateSchema = z.object({
   draft: ChatDraftSchema,
   contract_id: z.string().nullable(),
-  last_run_id: z.string().nullable()
+  last_run_id: z.string().nullable(),
+  last_exec_brief: ExecBriefSchema.nullable()
 });
 
 export const ChatTurnRequestSchema = z.object({
@@ -36,6 +37,7 @@ export type ChatState = z.infer<typeof ChatStateSchema>;
 export type ChatTurnResponse = {
   assistant_message: string;
   state: ChatState;
+  pdf_download_url?: string;
 };
 
 type ReportContractRecord = z.output<typeof ReportContractSchema>;
@@ -49,12 +51,18 @@ export type CreateWebApiClientOptions = {
 export interface WebApiClient {
   createContract(payload: ReportContractRecord): Promise<ReportContractRecord>;
   listContracts(): Promise<ReportContractRecord[]>;
-  runContract(contractId: string): Promise<{ run_id: string; exec_brief: ExecBriefRecord }>;
+  runContract(contractId: string): Promise<{
+    run_id: string;
+    exec_brief: ExecBriefRecord;
+    pdf_path?: string;
+  }>;
+  downloadRunPdf(runId: string): Promise<Response>;
 }
 
 const RunContractResponseSchema = z.object({
   run_id: z.string().min(1),
-  exec_brief: ExecBriefSchema
+  exec_brief: ExecBriefSchema,
+  pdf_path: z.string().min(1).optional()
 });
 
 const DEFAULT_DRAFT: ChatDraft = {
@@ -99,7 +107,8 @@ export function createInitialChatState(): ChatState {
       allowed_schemas: [...DEFAULT_DRAFT.allowed_schemas]
     },
     contract_id: null,
-    last_run_id: null
+    last_run_id: null,
+    last_exec_brief: null
   };
 }
 
@@ -118,7 +127,8 @@ export function parseChatState(value: unknown): ChatState {
       allowed_schemas: [...parsed.data.draft.allowed_schemas]
     },
     contract_id: parsed.data.contract_id,
-    last_run_id: parsed.data.last_run_id
+    last_run_id: parsed.data.last_run_id,
+    last_exec_brief: parsed.data.last_exec_brief
   };
 }
 
@@ -151,6 +161,18 @@ export function createWebApiClient(options: CreateWebApiClientOptions): WebApiCl
       });
 
       return parseJsonResponse(response, RunContractResponseSchema);
+    },
+    async downloadRunPdf(runId) {
+      const response = await fetcher(`${baseUrl}/report-runs/${encodeURIComponent(runId)}/pdf`, {
+        method: "GET"
+      });
+
+      if (!response.ok) {
+        const text = await response.text();
+        throw new Error(text.length > 0 ? text : `Failed to download PDF (${response.status})`);
+      }
+
+      return response;
     }
   };
 }
@@ -163,6 +185,10 @@ export async function handleChatTurn(input: {
   const rawMessage = input.message.trim();
   const command = rawMessage.toLowerCase();
   let nextState = parseChatState(input.state);
+  const conversational = answerConversationalPrompt(command, nextState);
+  if (conversational) {
+    return conversational;
+  }
 
   if (command === "help" || command === "/help" || command === "?") {
     return { assistant_message: HELP_TEXT, state: nextState };
@@ -357,10 +383,13 @@ async function runContract(state: ChatState, apiClient: WebApiClient): Promise<C
 
   const run = await apiClient.runContract(nextState.contract_id);
   nextState.last_run_id = run.run_id;
+  nextState.last_exec_brief = run.exec_brief;
+  const pdfDownloadUrl = `/api/runs/${run.run_id}/pdf`;
 
   return {
-    assistant_message: `${preface}Run complete.\nRun ID: ${run.run_id}\n\n${renderExecBrief(run.exec_brief)}`,
-    state: nextState
+    assistant_message: `${preface}Run complete.\nRun ID: ${run.run_id}\nDownload PDF: ${pdfDownloadUrl}\n\n${renderExecBrief(run.exec_brief)}`,
+    state: nextState,
+    pdf_download_url: pdfDownloadUrl
   };
 }
 
@@ -416,7 +445,8 @@ function renderPreview(state: ChatState): string {
   const preview = {
     ...draft,
     contract_id: state.contract_id,
-    last_run_id: state.last_run_id
+    last_run_id: state.last_run_id,
+    has_exec_brief: state.last_exec_brief !== null
   };
 
   return `Current draft\n${JSON.stringify(preview, null, 2)}\n\n${renderDraftChecklist(state)}`;
@@ -467,6 +497,82 @@ function renderExecBrief(execBrief: ExecBriefRecord): string {
     `Confidence rationale: ${execBrief.confidence.rationale}`,
     section("Deltas vs last run", execBrief.deltas_vs_last_run),
     `Appendix refs: ${execBrief.appendix_refs.join(", ")}`
+  ].join("\n");
+}
+
+function answerConversationalPrompt(command: string, state: ChatState): ChatTurnResponse | null {
+  if (isGreeting(command)) {
+    return {
+      assistant_message:
+        "I can help you define a report contract, run it, and explain findings. You can chat naturally or use commands like `preview`, `save`, and `run`.",
+      state
+    };
+  }
+
+  if (asksForFindings(command)) {
+    if (!state.last_exec_brief) {
+      return {
+        assistant_message: "I do not have analyzed results yet. Run the report first by sending `run`.",
+        state
+      };
+    }
+
+    return {
+      assistant_message: summarizeExecBrief(state.last_exec_brief),
+      state
+    };
+  }
+
+  if (asksForPdf(command)) {
+    if (!state.last_run_id) {
+      return {
+        assistant_message: "No run is available yet. Send `run` first, then I will provide a PDF link.",
+        state
+      };
+    }
+
+    return {
+      assistant_message: `You can download the latest PDF here: /api/runs/${state.last_run_id}/pdf`,
+      state,
+      pdf_download_url: `/api/runs/${state.last_run_id}/pdf`
+    };
+  }
+
+  return null;
+}
+
+function isGreeting(command: string): boolean {
+  const normalized = command.trim();
+  return ["hi", "hello", "hey", "yo", "good morning", "good evening"].includes(normalized);
+}
+
+function asksForFindings(command: string): boolean {
+  const patterns = [
+    "what did you find",
+    "what did it find",
+    "what did you analyze",
+    "summary",
+    "insights",
+    "findings",
+    "what changed"
+  ];
+
+  return patterns.some((pattern) => command.includes(pattern));
+}
+
+function asksForPdf(command: string): boolean {
+  return command.includes("pdf") || command.includes("download");
+}
+
+function summarizeExecBrief(execBrief: ExecBriefRecord): string {
+  const top = (items: string[]) => (items.length > 0 ? items[0] : "No item");
+
+  return [
+    `Top finding: ${top(execBrief.what_changed)}`,
+    `Primary driver: ${top(execBrief.why)}`,
+    `Business impact: ${top(execBrief.so_what)}`,
+    `Recommended action: ${top(execBrief.what_to_do)}`,
+    `Confidence: ${execBrief.confidence.score.toFixed(2)} (${execBrief.confidence.rationale})`
   ].join("\n");
 }
 

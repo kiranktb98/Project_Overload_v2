@@ -61,5 +61,28 @@ export function buildWebApp(options: WebAppDependencies = {}) {
     }
   });
 
+  app.get("/api/runs/:runId/pdf", async (request, reply) => {
+    const { runId } = request.params as { runId: string };
+
+    try {
+      const response = await apiClient.downloadRunPdf(runId);
+      const arrayBuffer = await response.arrayBuffer();
+      const contentDisposition = response.headers.get("content-disposition");
+
+      if (contentDisposition) {
+        reply.header("content-disposition", contentDisposition);
+      }
+
+      return reply
+        .code(200)
+        .header("content-type", response.headers.get("content-type") ?? "application/pdf")
+        .send(Buffer.from(arrayBuffer));
+    } catch (error) {
+      return reply.code(400).send({
+        message: error instanceof Error ? error.message : "Unable to fetch PDF"
+      });
+    }
+  });
+
   return app;
 }

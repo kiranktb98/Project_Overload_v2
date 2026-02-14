@@ -149,6 +149,11 @@ export function renderChatPage(): string {
         border: 1px solid rgba(15, 23, 42, 0.12);
       }
 
+      .bubble.assistant a {
+        color: #0369a1;
+        font-weight: 700;
+      }
+
       .composer {
         border-top: 1px solid var(--line);
         padding: 14px 18px 18px;
@@ -267,10 +272,24 @@ export function renderChatPage(): string {
           inputEl.disabled = isBusy;
         }
 
-        function appendMessage(role, text) {
+        function appendMessage(role, text, downloadUrl) {
           const bubble = document.createElement("div");
           bubble.className = "bubble " + role;
-          bubble.textContent = text;
+
+          const content = document.createElement("div");
+          content.textContent = text;
+          bubble.appendChild(content);
+
+          if (role === "assistant" && typeof downloadUrl === "string" && downloadUrl.length > 0) {
+            const link = document.createElement("a");
+            link.href = downloadUrl;
+            link.textContent = "Download PDF";
+            link.target = "_blank";
+            link.rel = "noopener noreferrer";
+            bubble.appendChild(document.createElement("br"));
+            bubble.appendChild(link);
+          }
+
           messagesEl.appendChild(bubble);
           messagesEl.scrollTop = messagesEl.scrollHeight;
         }
@@ -302,7 +321,7 @@ export function renderChatPage(): string {
             }
 
             stateRef.value = payload.state;
-            appendMessage("assistant", payload.assistant_message);
+            appendMessage("assistant", payload.assistant_message, payload.pdf_download_url);
           } catch (error) {
             const errorText = error instanceof Error ? error.message : "Unknown error";
             appendMessage("assistant", "Network error: " + errorText);
@@ -334,7 +353,7 @@ export function renderChatPage(): string {
 
         appendMessage(
           "assistant",
-          "Report Contract chat is ready. Start with 'set name: ...', then 'preview', 'save', and 'run'."
+          "Chat is ready. Tell me what report you want, or use commands. After a run, ask: what did you find?"
         );
         inputEl.focus();
       })();

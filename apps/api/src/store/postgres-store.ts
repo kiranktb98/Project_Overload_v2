@@ -109,6 +109,20 @@ export class PostgresMetadataStore implements MetadataStore {
     return result.rows.length > 0 ? result.rows[0].payload : null;
   }
 
+  async getReportRunById(runId: string): Promise<ReportRun | null> {
+    const result = await this.pool.query<{ payload: ReportRun }>(
+      `
+      SELECT payload
+      FROM report_runs
+      WHERE id = $1
+      LIMIT 1
+      `,
+      [runId]
+    );
+
+    return result.rows.length > 0 ? result.rows[0].payload : null;
+  }
+
   async appendAuditLog(eventType: string, payload: Record<string, unknown>): Promise<void> {
     await this.pool.query(
       `

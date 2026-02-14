@@ -70,6 +70,7 @@ describe("web chat interface", () => {
         return new Response(
           JSON.stringify({
             run_id: "run_web_test",
+            pdf_path: "/report-runs/run_web_test/pdf",
             exec_brief: {
               what_changed: ["Revenue up 12%"],
               why: ["Higher order frequency"],
@@ -89,6 +90,16 @@ describe("web chat interface", () => {
             headers: { "content-type": "application/json" }
           }
         );
+      }
+
+      if (url.endsWith("/report-runs/run_web_test/pdf") && method === "GET") {
+        return new Response(new Uint8Array([0x25, 0x50, 0x44, 0x46]), {
+          status: 200,
+          headers: {
+            "content-type": "application/pdf",
+            "content-disposition": "attachment; filename=\"exec-brief-run_web_test.pdf\""
+          }
+        });
       }
 
       if (url.endsWith("/report-contracts") && method === "GET") {
@@ -146,7 +157,28 @@ describe("web chat interface", () => {
     expect(run.statusCode).toBe(200);
     const runBody = run.json();
     expect(runBody.assistant_message).toContain("Run complete.");
+    expect(runBody.pdf_download_url).toBe("/api/runs/run_web_test/pdf");
     expect(runBody.state.last_run_id).toBe("run_web_test");
+    expect(runBody.state.last_exec_brief).toBeTruthy();
+
+    const insights = await app.inject({
+      method: "POST",
+      url: "/api/chat",
+      payload: {
+        message: "What did you find from the data?",
+        state: runBody.state
+      }
+    });
+    expect(insights.statusCode).toBe(200);
+    expect(insights.json().assistant_message).toContain("Top finding");
+
+    const pdf = await app.inject({
+      method: "GET",
+      url: "/api/runs/run_web_test/pdf"
+    });
+    expect(pdf.statusCode).toBe(200);
+    expect(pdf.headers["content-type"]).toContain("application/pdf");
+
     expect(
       requests.some((request) => request.method === "POST" && request.url.endsWith("/report-contracts"))
     ).toBe(true);
@@ -154,6 +186,9 @@ describe("web chat interface", () => {
       requests.some(
         (request) => request.method === "POST" && request.url.endsWith("/report-contracts/contract_web_test/run")
       )
+    ).toBe(true);
+    expect(
+      requests.some((request) => request.method === "GET" && request.url.endsWith("/report-runs/run_web_test/pdf"))
     ).toBe(true);
 
     await app.close();
