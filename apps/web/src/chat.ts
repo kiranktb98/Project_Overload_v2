@@ -93,8 +93,8 @@ const HELP_TEXT = [
 ].join("\n");
 
 const COMMAND_HINT = [
-  "I can draft, save, and run report contracts.",
-  "Tell me your report in plain language, or use commands like: set name, preview, save, run."
+  "I can help define a report, run it, summarize findings, and give you the PDF.",
+  "Tell me the audience and what you want to track, and I will build the draft."
 ].join("\n");
 
 export function createInitialChatState(): ChatState {
@@ -304,8 +304,15 @@ export async function handleChatTurn(input: {
     };
   }
 
+  if (expressesReportIntent(command)) {
+    return {
+      assistant_message: renderReportDiscoveryPrompt(nextState),
+      state: nextState
+    };
+  }
+
   return {
-    assistant_message: `${COMMAND_HINT}\n\n${renderDraftChecklist(nextState)}`,
+    assistant_message: renderOpenEndedFallback(nextState),
     state: nextState
   };
 }
@@ -436,7 +443,7 @@ async function saveWithValidation(state: ChatState, apiClient: WebApiClient): Pr
   const missing = getMissingDraftFields(state);
   if (missing.length > 0) {
     return {
-      assistant_message: `Before saving, I still need: ${missing.join(", ")}.`,
+      assistant_message: `I can save it once I have: ${missing.join(", ")}.\nTry: "Call it ${suggestReportName(state)}".`,
       state
     };
   }
@@ -474,7 +481,7 @@ async function runWithValidation(state: ChatState, apiClient: WebApiClient): Pro
   const missing = getMissingDraftFields(state);
   if (missing.length > 0) {
     return {
-      assistant_message: `Before running, I still need: ${missing.join(", ")}.`,
+      assistant_message: `I can run it right away once I have: ${missing.join(", ")}.\nTry: "Call it ${suggestReportName(state)}".`,
       state
     };
   }
@@ -583,10 +590,33 @@ function renderExecBrief(execBrief: ExecBriefRecord): string {
 }
 
 function answerConversationalPrompt(command: string, state: ChatState): ChatTurnResponse | null {
+  if (isWellbeingQuestion(command)) {
+    return {
+      assistant_message:
+        "Doing well and ready to help. Tell me what report you want, for whom, and the main KPI, and I will draft it.",
+      state
+    };
+  }
+
   if (isGreeting(command)) {
     return {
       assistant_message:
-        "I can help you define a report contract, run it, and explain findings. You can chat naturally or use commands like `preview`, `save`, and `run`.",
+        "Hi. I can help you define a report contract, run it, explain findings, and generate the PDF.",
+      state
+    };
+  }
+
+  if (isThanks(command)) {
+    return {
+      assistant_message: "Anytime. Share the report goal and I will continue from here.",
+      state
+    };
+  }
+
+  if (asksForCapabilities(command)) {
+    return {
+      assistant_message:
+        "I can gather your report requirements in chat, save the contract, run governed SQL, summarize insights, and provide a PDF link.",
       state
     };
   }
@@ -626,6 +656,18 @@ function answerConversationalPrompt(command: string, state: ChatState): ChatTurn
 function isGreeting(command: string): boolean {
   const normalized = command.trim();
   return /\b(hi|hello|hey|yo|good morning|good evening)\b/.test(normalized);
+}
+
+function isWellbeingQuestion(command: string): boolean {
+  return /\b(how are you|how are you doing|how's it going|how is it going|how do you do)\b/.test(command);
+}
+
+function isThanks(command: string): boolean {
+  return /\b(thanks|thank you|thx)\b/.test(command);
+}
+
+function asksForCapabilities(command: string): boolean {
+  return /\b(what can you do|help me|how does this work|what do you do)\b/.test(command);
 }
 
 function asksForFindings(command: string): boolean {
@@ -694,6 +736,48 @@ function renderMissingDetails(state: ChatState): string {
   return `To continue, I still need: ${missing.join(", ")}.`;
 }
 
+function renderOpenEndedFallback(state: ChatState): string {
+  const missing = getMissingDraftFields(state);
+  if (missing.length > 0) {
+    return [
+      COMMAND_HINT,
+      `I still need: ${missing.join(", ")}.`,
+      `Example: "Call it ${suggestReportName(state)} and run it now."`
+    ].join("\n");
+  }
+
+  return [
+    COMMAND_HINT,
+    'You can say things like "run it now", "what did you find?", or "download the pdf".'
+  ].join("\n");
+}
+
+function renderReportDiscoveryPrompt(state: ChatState): string {
+  const draft = state.draft;
+
+  return [
+    "Great, let's build your report.",
+    `Audience: ${draft.audience}`,
+    `Current focus: ${draft.metric_ids.join(", ")} by ${draft.dimension_ids.join(", ")}`,
+    `Suggested name: ${suggestReportName(state)}`,
+    "Tell me any edits in plain English, or say 'run it now'."
+  ].join("\n");
+}
+
+function suggestsWeeklyCadence(state: ChatState): boolean {
+  return state.draft.schedule_cron === "0 18 * * 5";
+}
+
+function suggestReportName(state: ChatState): string {
+  if (state.draft.name.trim().length > 0) {
+    return state.draft.name.trim();
+  }
+
+  const audience = state.draft.audience.trim().length > 0 ? state.draft.audience : "Executive";
+  const cadence = suggestsWeeklyCadence(state) ? "Weekly" : "Performance";
+  return `${cadence} ${audience} Report`;
+}
+
 function getMissingDraftFields(state: ChatState): string[] {
   const missing: string[] = [];
   if (state.draft.name.trim().length === 0) {
@@ -705,6 +789,12 @@ function getMissingDraftFields(state: ChatState): string[] {
   }
 
   return missing;
+}
+
+function expressesReportIntent(command: string): boolean {
+  const hasReportWord = /\b(report|brief|dashboard|analysis)\b/.test(command);
+  const hasIntentWord = /\b(need|want|create|build|make|prepare|generate)\b/.test(command);
+  return hasReportWord && hasIntentWord;
 }
 
 function applyNaturalLanguageDraftUpdates(

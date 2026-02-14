@@ -1,9 +1,15 @@
 import { describe, expect, it } from "vitest";
 import { buildWebApp } from "../src/app";
+import {
+  createPassthroughConversationClient,
+  type ConversationClient
+} from "../src/conversation";
 
 describe("web chat interface", () => {
   it("serves health and chat html routes", async () => {
-    const app = buildWebApp();
+    const app = buildWebApp({
+      conversation_client: createPassthroughConversationClient()
+    });
 
     const health = await app.inject({
       method: "GET",
@@ -26,7 +32,9 @@ describe("web chat interface", () => {
   });
 
   it("accepts set commands and persists chat state", async () => {
-    const app = buildWebApp();
+    const app = buildWebApp({
+      conversation_client: createPassthroughConversationClient()
+    });
 
     const response = await app.inject({
       method: "POST",
@@ -40,6 +48,38 @@ describe("web chat interface", () => {
     const body = response.json();
     expect(body.state.draft.name).toBe("Weekly CEO Revenue");
     expect(body.assistant_message).toContain("Updated name");
+
+    await app.close();
+  });
+
+  it("responds naturally to small talk and open-ended report intent", async () => {
+    const app = buildWebApp({
+      conversation_client: createPassthroughConversationClient()
+    });
+
+    const wellbeing = await app.inject({
+      method: "POST",
+      url: "/api/chat",
+      payload: {
+        message: "how are you doing?"
+      }
+    });
+
+    expect(wellbeing.statusCode).toBe(200);
+    const wellbeingBody = wellbeing.json();
+    expect(wellbeingBody.assistant_message.toLowerCase()).toContain("doing well");
+
+    const openEnded = await app.inject({
+      method: "POST",
+      url: "/api/chat",
+      payload: {
+        message: "i need a report",
+        state: wellbeingBody.state
+      }
+    });
+
+    expect(openEnded.statusCode).toBe(200);
+    expect(openEnded.json().assistant_message).toContain("Great, let's build your report.");
 
     await app.close();
   });
@@ -122,7 +162,8 @@ describe("web chat interface", () => {
 
     const app = buildWebApp({
       api_base_url: "http://api.local",
-      fetch_impl: fetchImpl
+      fetch_impl: fetchImpl,
+      conversation_client: createPassthroughConversationClient()
     });
 
     const setName = await app.inject({
@@ -271,7 +312,8 @@ describe("web chat interface", () => {
 
     const app = buildWebApp({
       api_base_url: "http://api.local",
-      fetch_impl: fetchImpl
+      fetch_impl: fetchImpl,
+      conversation_client: createPassthroughConversationClient()
     });
 
     const turn1 = await app.inject({
@@ -282,7 +324,7 @@ describe("web chat interface", () => {
       }
     });
     expect(turn1.statusCode).toBe(200);
-    expect(turn1.json().assistant_message).toContain("chat naturally");
+    expect(turn1.json().assistant_message).toContain("define a report contract");
 
     const turn2 = await app.inject({
       method: "POST",
@@ -346,6 +388,47 @@ describe("web chat interface", () => {
     expect(
       requests.some((request) => request.method === "POST" && request.url.endsWith("/report-contracts/contract_nl_test/run"))
     ).toBe(true);
+
+    await app.close();
+  });
+
+  it("routes every chat turn through conversation client", async () => {
+    const seen: string[] = [];
+    const conversationClient: ConversationClient = {
+      provider: "stub" as const,
+      async respond(input) {
+        seen.push(input.user_message);
+        return `[AI] ${input.deterministic_response}`;
+      }
+    };
+
+    const app = buildWebApp({
+      conversation_client: conversationClient
+    });
+
+    const first = await app.inject({
+      method: "POST",
+      url: "/api/chat",
+      payload: {
+        message: "hello"
+      }
+    });
+
+    expect(first.statusCode).toBe(200);
+    expect(first.json().assistant_message.startsWith("[AI]")).toBe(true);
+
+    const second = await app.inject({
+      method: "POST",
+      url: "/api/chat",
+      payload: {
+        message: "i need a report",
+        state: first.json().state
+      }
+    });
+
+    expect(second.statusCode).toBe(200);
+    expect(second.json().assistant_message.startsWith("[AI]")).toBe(true);
+    expect(seen).toEqual(["hello", "i need a report"]);
 
     await app.close();
   });
