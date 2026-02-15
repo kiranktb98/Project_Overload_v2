@@ -1,4 +1,5 @@
 import { createCipheriv, createHash, randomBytes, randomUUID } from "node:crypto";
+import * as tls from "node:tls";
 import { Pool, type PoolClient } from "pg";
 import {
   assertAllowlistedRelations,
@@ -179,7 +180,8 @@ export class RuntimeConnectionManager {
     const parsed = safeParsePgUrl(normalized.normalized_connection_string);
     const pool = new Pool({
       connectionString: normalized.normalized_connection_string,
-      max: 2
+      max: 2,
+      ssl: buildSslOptions(normalized.normalized_connection_string)
     });
 
     const warnings = [...normalized.warnings];
@@ -241,7 +243,8 @@ export class RuntimeConnectionManager {
     const parsed = safeParsePgUrl(normalized.normalized_connection_string);
     const pool = new Pool({
       connectionString: normalized.normalized_connection_string,
-      max: 5
+      max: 5,
+      ssl: buildSslOptions(normalized.normalized_connection_string)
     });
 
     try {
@@ -948,7 +951,8 @@ function formatConnectionError(
   error: unknown,
   parsed: { host?: string; port?: string; hostname?: string }
 ): string {
-  const host = parsed.host || parsed.hostname || "unknown-host";
+  const rawHost = parsed.hostname || parsed.host || "unknown-host";
+  const formattedHost = rawHost.includes(":") && !rawHost.startsWith("[") ? `[${rawHost}]` : rawHost;
   const port = parsed.port ? `:${parsed.port}` : "";
   const rawMessage = error instanceof Error ? error.message : "Unknown connection error";
   const anyErr = error as { code?: string; syscall?: string; hostname?: string } | null;
@@ -960,15 +964,15 @@ function formatConnectionError(
       ? "Supabase direct host detected (db.<ref>.supabase.co). This endpoint is often IPv6-only; on IPv4-only networks it can fail to resolve. Use Supabase Connection Pooling -> Transaction mode (host *.pooler.supabase.com) on port 6543 instead."
       : "Check the hostname spelling and your DNS/VPN/network. Try switching DNS to 1.1.1.1 or 8.8.8.8, or try a different network (phone hotspot).";
 
-    return `DNS lookup failed for ${host}${port}. ${supabaseHint}`;
+    return `DNS lookup failed for ${formattedHost}${port}. ${supabaseHint}`;
   }
 
   if (code === "ECONNREFUSED") {
-    return `Connection refused by ${host}${port}. Check host/port, outbound firewall rules, and that Postgres is reachable. For Supabase: direct is usually 5432; pooler is 6543.`;
+    return `Connection refused by ${formattedHost}${port}. Check host/port, outbound firewall rules, and that Postgres is reachable. For Supabase: direct is usually 5432; pooler is 6543.`;
   }
 
   if (code === "ETIMEDOUT") {
-    return `Timed out connecting to ${host}${port}. Check network/firewall/VPN restrictions and that the database is reachable.`;
+    return `Timed out connecting to ${formattedHost}${port}. Check network/firewall/VPN restrictions and that the database is reachable.`;
   }
 
   if (
@@ -987,7 +991,7 @@ function formatConnectionError(
       : "";
 
     return [
-      `TLS certificate validation failed for ${host}${port}.`,
+      `TLS certificate validation failed for ${formattedHost}${port}.`,
       "This usually means your network is intercepting TLS (corporate SSL inspection) or the DB uses a self-signed certificate.",
       supabaseHint,
       "Fix options: use a network without SSL inspection, or add your org/DB CA to Node via NODE_EXTRA_CA_CERTS and restart the server.",
@@ -1001,7 +1005,7 @@ function formatConnectionError(
     code === "ERR_TLS_CERT_ALTNAME_INVALID" ||
     rawMessage.toLowerCase().includes("hostname/ip does not match certificate")
   ) {
-    return `TLS hostname mismatch for ${host}${port}. Ensure you are connecting via the exact host name issued on the certificate (avoid raw IPs).`;
+    return `TLS hostname mismatch for ${formattedHost}${port}. Ensure you are connecting via the exact host name issued on the certificate (avoid raw IPs).`;
   }
 
   if (code === "28P01") {
@@ -1013,4 +1017,75 @@ function formatConnectionError(
   }
 
   return rawMessage;
+}
+
+function buildSslOptions(connectionString: string): false | tls.ConnectionOptions | undefined {
+  let url: URL;
+  try {
+    url = new URL(connectionString);
+  } catch {
+    return undefined;
+  }
+
+  const sslmode = (url.searchParams.get("sslmode") ?? "").trim().toLowerCase();
+  if (sslmode === "disable") {
+    return false;
+  }
+
+  if (sslmode === "no-verify") {
+    return { rejectUnauthorized: false };
+  }
+
+  const hasCustomSslInputs =
+    url.searchParams.has("sslrootcert") ||
+    url.searchParams.has("sslcert") ||
+    url.searchParams.has("sslkey") ||
+    url.searchParams.has("sslca");
+
+  // If user provided explicit SSL inputs, let pg-connection-string handle it.
+  if (hasCustomSslInputs) {
+    return undefined;
+  }
+
+  // Use system trust store (plus bundled) so corporate TLS inspection roots installed on the OS are trusted.
+  // This preserves rejectUnauthorized=true while improving compatibility for pilots.
+  return {
+    ca: dedupePem([
+      ...safeGetCaCertificates("system"),
+      ...safeGetCaCertificates("bundled")
+    ])
+  };
+}
+
+function safeGetCaCertificates(type: "default" | "system" | "bundled"): string[] {
+  if (typeof tls.getCACertificates !== "function") {
+    return Array.from(tls.rootCertificates);
+  }
+
+  try {
+    return Array.from(tls.getCACertificates(type));
+  } catch {
+    return Array.from(tls.rootCertificates);
+  }
+}
+
+function dedupePem(pems: string[]): string[] {
+  const seen = new Set<string>();
+  const output: string[] = [];
+
+  for (const pem of pems) {
+    const value = pem.trim();
+    if (!value) {
+      continue;
+    }
+
+    if (seen.has(value)) {
+      continue;
+    }
+
+    seen.add(value);
+    output.push(value);
+  }
+
+  return output;
 }
