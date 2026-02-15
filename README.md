@@ -56,6 +56,28 @@ Use the Database Connector module (separate page from chat):
 
 Connection settings are runtime memory for now (not persisted across service restarts).
 
+### TLS / Corporate SSL Inspection (Pilot-Friendly Fix)
+**Problem:** some pilot users see errors like `self-signed certificate in certificate chain` when testing a Postgres/Supabase connection. This typically happens when a corporate network is doing TLS inspection and re-signing certificates with an internal corporate root CA. Your browser trusts it (because the root CA is installed in the OS), but Node may not (because Node historically relied on its bundled CA list).
+
+**What we changed:** the API now builds Postgres TLS trust using the **system CA store** (plus Node bundled CAs) while keeping TLS verification on. This means corporate roots installed on the OS are trusted without disabling TLS verification.
+
+**If it still fails:** open **Advanced TLS** on `http://localhost:3000/connect` and paste your org/DB **root CA** in PEM format into **Custom CA (PEM)**, then retry `Test Connection`.
+
+**Dev-only workaround:** you can append `sslmode=no-verify` to a connection string, but do not use this in production.
+
+### Supabase Notes (DNS / Pooler)
+Some Supabase direct DB hosts can fail to resolve on certain networks (for example when only an AAAA/IPv6 record is available). For best compatibility, use Supabase **Connection Pooling -> Transaction mode** host (`*.pooler.supabase.com`) on **port 6543**.
+
+### Production Guidance (Avoiding TLS Issues for All Users)
+For production deployments, do not rely on users switching networks.
+
+Recommended options (in order):
+1. **Hybrid mode:** run a Data Plane Agent inside the customer's network so it uses their local trust store and network path to the DB.
+2. **Install the corporate/root CA in the runtime environment** where the API/agent runs:
+   - VM/bare metal: install CA into the OS trust store.
+   - Docker/Kubernetes: bake/mount the CA into the image and set `NODE_EXTRA_CA_CERTS=/path/to/ca.pem` (or install into the OS trust store inside the container) and restart.
+3. **Per-connection CA support:** allow a customer admin to provide a CA chain for that specific connection and store it securely server-side (do not make it a global CA for all tenants).
+
 ## Worker scheduling
 - Worker refreshes contracts from API and registers only contracts with `schedule_cron`.
 - Due jobs are computed deterministically from cron + timezone.
