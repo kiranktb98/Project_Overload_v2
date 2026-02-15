@@ -34,7 +34,7 @@ describe("web chat interface", () => {
     });
 
     expect(connectPage.statusCode).toBe(200);
-    expect(connectPage.body).toContain("Database Connector + Safe Query Module");
+    expect(connectPage.body).toContain("1-Click Database Connection Wizard");
 
     await app.close();
   }, 15000);
@@ -486,6 +486,25 @@ describe("web chat interface", () => {
         );
       }
 
+      if (url.endsWith("/connections/fix-script") && method === "POST") {
+        return new Response(
+          JSON.stringify({
+            ok: true,
+            script: "BEGIN; -- fix script\nCOMMIT;"
+          }),
+          { status: 200, headers: { "content-type": "application/json" } }
+        );
+      }
+
+      if (url.endsWith("/connections/query-logs") && method === "GET") {
+        return new Response(
+          JSON.stringify({
+            logs: []
+          }),
+          { status: 200, headers: { "content-type": "application/json" } }
+        );
+      }
+
       if (url.endsWith("/connections/query") && method === "POST") {
         return new Response(
           JSON.stringify({
@@ -531,6 +550,23 @@ describe("web chat interface", () => {
 
     expect(query.statusCode).toBe(200);
     expect(query.json().row_count).toBe(1);
+
+    const fix = await app.inject({
+      method: "POST",
+      url: "/api/db/fix-script",
+      payload: {
+        allowlisted_relations: ["public.sales"]
+      }
+    });
+    expect(fix.statusCode).toBe(200);
+    expect(typeof fix.json().script).toBe("string");
+
+    const logs = await app.inject({
+      method: "GET",
+      url: "/api/db/query-logs"
+    });
+    expect(logs.statusCode).toBe(200);
+    expect(Array.isArray(logs.json().logs)).toBe(true);
 
     await app.close();
   });

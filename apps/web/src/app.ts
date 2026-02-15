@@ -166,6 +166,27 @@ export function buildWebApp(options: WebAppDependencies = {}) {
     });
   });
 
+  app.post("/api/db/fix-script", async (request, reply) => {
+    return proxyToApi({
+      fetch_impl: options.fetch_impl,
+      api_base_url: apiBaseUrl,
+      method: "POST",
+      path: "/connections/fix-script",
+      body: request.body,
+      reply
+    });
+  });
+
+  app.get("/api/db/query-logs", async (_request, reply) => {
+    return proxyToApi({
+      fetch_impl: options.fetch_impl,
+      api_base_url: apiBaseUrl,
+      method: "GET",
+      path: "/connections/query-logs",
+      reply
+    });
+  });
+
   app.post("/api/db/query", async (request, reply) => {
     return proxyToApi({
       fetch_impl: options.fetch_impl,

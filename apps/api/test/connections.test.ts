@@ -33,6 +33,25 @@ describe("api connection routes", () => {
     expect(body.governed_sql.toLowerCase()).toContain("limit 25");
     expect(Array.isArray(body.rows)).toBe(true);
 
+    const logs = await app.inject({
+      method: "GET",
+      url: "/connections/query-logs"
+    });
+    expect(logs.statusCode).toBe(200);
+    expect(Array.isArray(logs.json().logs)).toBe(true);
+    expect(logs.json().logs.length).toBeGreaterThan(0);
+
+    const fix = await app.inject({
+      method: "POST",
+      url: "/connections/fix-script",
+      payload: {
+        allowlisted_relations: ["analytics.sales"]
+      }
+    });
+    expect(fix.statusCode).toBe(200);
+    expect(typeof fix.json().script).toBe("string");
+    expect(fix.json().script.toLowerCase()).toContain("grant select");
+
     await app.close();
   });
 
