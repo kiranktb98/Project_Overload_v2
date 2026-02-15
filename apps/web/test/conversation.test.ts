@@ -8,6 +8,7 @@ import {
 const TURN_INPUT: ConversationTurnInput = {
   user_message: "hello",
   deterministic_response: "Base response",
+  history: [],
   state: {
     draft: {
       name: "",
@@ -22,7 +23,8 @@ const TURN_INPUT: ConversationTurnInput = {
     },
     contract_id: null,
     last_run_id: null,
-    last_exec_brief: null
+    last_exec_brief: null,
+    conversation_history: []
   }
 };
 
@@ -34,12 +36,15 @@ describe("conversation client", () => {
   });
 
   it("uses provider response text when available", async () => {
+    const calls: Array<{ input: RequestInfo | URL; init?: RequestInit }> = [];
     const client = createConversationClient({
       provider: "openrouter",
       openrouter_api_key: "key",
       fallback_to_deterministic: false,
-      fetch_impl: async () =>
-        new Response(
+      fetch_impl: async (input, init) => {
+        calls.push({ input, init });
+
+        return new Response(
           JSON.stringify({
             choices: [
               {
@@ -53,11 +58,16 @@ describe("conversation client", () => {
             status: 200,
             headers: { "content-type": "application/json" }
           }
-        )
+        );
+      }
     });
 
     const response = await client.respond(TURN_INPUT);
     expect(response).toBe("Natural AI response");
+
+    const rawBody = typeof calls[0].init?.body === "string" ? calls[0].init?.body : "{}";
+    expect(rawBody).toContain("Conversation context:");
+    expect(rawBody).toContain("Latest user message:");
   });
 
   it("falls back to deterministic when provider call fails and fallback is enabled", async () => {

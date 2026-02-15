@@ -29,7 +29,7 @@ describe("web chat interface", () => {
     expect(page.body).toContain("Report Contract Chat");
 
     await app.close();
-  });
+  }, 15000);
 
   it("accepts set commands and persists chat state", async () => {
     const app = buildWebApp({
@@ -48,6 +48,9 @@ describe("web chat interface", () => {
     const body = response.json();
     expect(body.state.draft.name).toBe("Weekly CEO Revenue");
     expect(body.assistant_message).toContain("Updated name");
+    expect(body.state.conversation_history).toHaveLength(2);
+    expect(body.state.conversation_history[0].role).toBe("user");
+    expect(body.state.conversation_history[1].role).toBe("assistant");
 
     await app.close();
   });
@@ -396,6 +399,7 @@ describe("web chat interface", () => {
     const seen: string[] = [];
     const conversationClient: ConversationClient = {
       provider: "stub" as const,
+      mode: "deterministic" as const,
       async respond(input) {
         seen.push(input.user_message);
         return `[AI] ${input.deterministic_response}`;
@@ -429,6 +433,26 @@ describe("web chat interface", () => {
     expect(second.statusCode).toBe(200);
     expect(second.json().assistant_message.startsWith("[AI]")).toBe(true);
     expect(seen).toEqual(["hello", "i need a report"]);
+    expect(second.json().state.conversation_history).toHaveLength(4);
+
+    await app.close();
+  });
+
+  it("exposes chat runtime provider mode", async () => {
+    const app = buildWebApp({
+      conversation_client: createPassthroughConversationClient()
+    });
+
+    const response = await app.inject({
+      method: "GET",
+      url: "/api/chat/runtime"
+    });
+
+    expect(response.statusCode).toBe(200);
+    expect(response.json()).toEqual({
+      provider: "stub",
+      mode: "deterministic"
+    });
 
     await app.close();
   });

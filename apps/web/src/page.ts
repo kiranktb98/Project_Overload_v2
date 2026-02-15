@@ -243,7 +243,7 @@ export function renderChatPage(): string {
       <main class="chat-shell">
         <header class="chat-head">
           <strong>Planner + Guardrails Chat</strong>
-          <span class="status" id="status">idle</span>
+          <span class="status" id="status">starting</span>
         </header>
         <section class="messages" id="messages"></section>
         <section class="composer">
@@ -265,11 +265,18 @@ export function renderChatPage(): string {
         const sendButtonEl = document.getElementById("composer-send");
         const formEl = document.getElementById("composer-form");
         const chipsEl = document.getElementById("chips");
+        const runtimeStatusRef = { mode: "checking provider", busy: false };
 
         function setBusy(isBusy) {
-          statusEl.textContent = isBusy ? "processing" : "idle";
+          runtimeStatusRef.busy = isBusy;
+          renderStatus();
           sendButtonEl.disabled = isBusy;
           inputEl.disabled = isBusy;
+        }
+
+        function renderStatus() {
+          const activity = runtimeStatusRef.busy ? "processing" : "idle";
+          statusEl.textContent = runtimeStatusRef.mode + " | " + activity;
         }
 
         function appendMessage(role, text, downloadUrl) {
@@ -331,6 +338,27 @@ export function renderChatPage(): string {
           }
         }
 
+        async function loadRuntimeStatus() {
+          try {
+            const response = await fetch("/api/chat/runtime", { method: "GET" });
+            const payload = await response.json();
+            if (!response.ok) {
+              runtimeStatusRef.mode = "provider unavailable";
+              renderStatus();
+              return;
+            }
+
+            const provider =
+              payload && typeof payload.provider === "string" ? payload.provider : "unknown";
+            const mode = payload && typeof payload.mode === "string" ? payload.mode : "unknown";
+            runtimeStatusRef.mode = provider + " (" + mode + ")";
+          } catch (_error) {
+            runtimeStatusRef.mode = "provider unavailable";
+          }
+
+          renderStatus();
+        }
+
         formEl.addEventListener("submit", (event) => {
           event.preventDefault();
           const value = inputEl.value;
@@ -355,6 +383,8 @@ export function renderChatPage(): string {
           "assistant",
           "Chat is ready. Tell me what report you want, or use commands. After a run, ask: what did you find?"
         );
+        renderStatus();
+        loadRuntimeStatus();
         inputEl.focus();
       })();
     </script>

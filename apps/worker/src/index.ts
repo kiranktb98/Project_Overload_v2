@@ -1,5 +1,7 @@
 import { WorkerLoop } from "./loop";
 import { createRunQueueFromEnv } from "./queue-factory";
+import { createWorkerApiClientFromEnv } from "./api-client";
+import { WorkerRuntime } from "./runtime";
 import { DeterministicScheduler } from "./scheduler";
 import { loadEnvironment } from "./load-env";
 
@@ -11,6 +13,13 @@ const enableDemoSchedule = parseBoolean(process.env.WORKER_ENABLE_DEMO_SCHEDULE 
 
 const scheduler = new DeterministicScheduler();
 const queue = createRunQueueFromEnv();
+const apiClient = createWorkerApiClientFromEnv();
+const runtime = new WorkerRuntime({
+  api_client: apiClient,
+  scheduler,
+  queue,
+  logger: (message) => console.log(message)
+});
 
 if (enableDemoSchedule) {
   scheduler.registerContract(
@@ -21,24 +30,7 @@ if (enableDemoSchedule) {
   );
 }
 
-const loop = new WorkerLoop(intervalMs, (now) => {
-  return processTick(now);
-});
-
-async function processTick(now: Date): Promise<void> {
-  const dueJobs = scheduler.collectDueJobs(now);
-
-  for (const job of dueJobs) {
-    await queue.enqueue(job);
-  }
-
-  let job = await queue.dequeue();
-  while (job) {
-    // Placeholder dispatch for run execution wiring.
-    console.log(`[worker] dispatch contract=${job.contract_id} scheduled_for=${job.scheduled_for}`);
-    job = await queue.dequeue();
-  }
-}
+const loop = new WorkerLoop(intervalMs, (now) => runtime.tick(now));
 
 loop.start();
 

@@ -19,11 +19,18 @@ export const ChatDraftSchema = z.object({
   allowed_schemas: z.array(z.string())
 });
 
+export const ChatHistoryTurnSchema = z.object({
+  role: z.enum(["user", "assistant"]),
+  content: z.string().trim().min(1),
+  at: z.string().datetime().optional()
+});
+
 export const ChatStateSchema = z.object({
   draft: ChatDraftSchema,
   contract_id: z.string().nullable(),
   last_run_id: z.string().nullable(),
-  last_exec_brief: ExecBriefSchema.nullable()
+  last_exec_brief: ExecBriefSchema.nullable(),
+  conversation_history: z.array(ChatHistoryTurnSchema).max(40).default([])
 });
 
 export const ChatTurnRequestSchema = z.object({
@@ -32,6 +39,7 @@ export const ChatTurnRequestSchema = z.object({
 });
 
 export type ChatDraft = z.infer<typeof ChatDraftSchema>;
+export type ChatHistoryTurn = z.infer<typeof ChatHistoryTurnSchema>;
 export type ChatState = z.infer<typeof ChatStateSchema>;
 
 export type ChatTurnResponse = {
@@ -97,6 +105,8 @@ const COMMAND_HINT = [
   "Tell me the audience and what you want to track, and I will build the draft."
 ].join("\n");
 
+export const MAX_CONVERSATION_TURNS = 12;
+
 export function createInitialChatState(): ChatState {
   return {
     draft: {
@@ -108,7 +118,8 @@ export function createInitialChatState(): ChatState {
     },
     contract_id: null,
     last_run_id: null,
-    last_exec_brief: null
+    last_exec_brief: null,
+    conversation_history: []
   };
 }
 
@@ -128,8 +139,39 @@ export function parseChatState(value: unknown): ChatState {
     },
     contract_id: parsed.data.contract_id,
     last_run_id: parsed.data.last_run_id,
-    last_exec_brief: parsed.data.last_exec_brief
+    last_exec_brief: parsed.data.last_exec_brief,
+    conversation_history: [...parsed.data.conversation_history]
   };
+}
+
+export function appendConversationTurn(
+  state: ChatState,
+  userMessage: string,
+  assistantMessage: string
+): ChatState {
+  const next = parseChatState(state);
+  const now = new Date().toISOString();
+  const entries: ChatHistoryTurn[] = [];
+
+  if (userMessage.trim().length > 0) {
+    entries.push({
+      role: "user",
+      content: userMessage.trim(),
+      at: now
+    });
+  }
+
+  if (assistantMessage.trim().length > 0) {
+    entries.push({
+      role: "assistant",
+      content: assistantMessage.trim(),
+      at: now
+    });
+  }
+
+  const maxEntries = MAX_CONVERSATION_TURNS * 2;
+  next.conversation_history = [...next.conversation_history, ...entries].slice(-maxEntries);
+  return next;
 }
 
 export function createWebApiClient(options: CreateWebApiClientOptions): WebApiClient {

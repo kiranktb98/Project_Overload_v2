@@ -107,6 +107,10 @@ export class DeterministicScheduler {
 
     return dueJobs;
   }
+
+  unregisterContract(contractId: string): void {
+    this.schedules.delete(contractId);
+  }
 }
 
 function compileFieldMatcher(field: string, min: number, max: number): CronFieldMatcher {

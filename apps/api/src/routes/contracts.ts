@@ -57,6 +57,18 @@ export function registerContractRoutes(
     });
   });
 
+  app.get("/report-contracts/:id/runs", async (request, reply) => {
+    const { id } = request.params as { id: string };
+    const contract = await store.getReportContract(id);
+
+    if (!contract) {
+      return reply.code(404).send({ message: "Report contract not found" });
+    }
+
+    const runs = await store.listReportRuns(id);
+    return reply.code(200).send(runs);
+  });
+
   app.get("/report-runs/:runId", async (request, reply) => {
     const { runId } = request.params as { runId: string };
     const run = await store.getReportRunById(runId);

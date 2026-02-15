@@ -1,6 +1,7 @@
 import Fastify from "fastify";
 import { z } from "zod";
 import {
+  appendConversationTurn,
   ChatTurnRequestSchema,
   createWebApiClient,
   handleChatTurn,
@@ -30,6 +31,11 @@ export function buildWebApp(options: WebAppDependencies = {}) {
     options.conversation_client ?? createConversationClientFromEnv({ fetch_impl: options.fetch_impl });
 
   app.get("/health", async () => ({ status: "ok", service: "web" }));
+  app.get("/api/chat/runtime", async () => ({
+    provider: conversationClient.provider,
+    mode: conversationClient.mode
+  }));
+
   app.get("/", async (_request, reply) => {
     return reply.type("text/html; charset=utf-8").send(renderChatPage());
   });
@@ -54,11 +60,14 @@ export function buildWebApp(options: WebAppDependencies = {}) {
       const aiMessage = await conversationClient.respond({
         user_message: parsed.data.message,
         deterministic_response: response.assistant_message,
-        state: response.state
+        state: response.state,
+        history: state.conversation_history
       });
+      const nextState = appendConversationTurn(response.state, parsed.data.message, aiMessage);
 
       return reply.code(200).send({
         ...response,
+        state: nextState,
         assistant_message: aiMessage
       });
     } catch (error) {
