@@ -3,12 +3,14 @@ import { z } from "zod";
 import type { RuntimeConnectionManager } from "../dataplane/connection-manager";
 
 const TestConnectionPayloadSchema = z.object({
-  connection_string: z.string().trim().min(1)
+  connection_string: z.string().trim().min(1),
+  tls_ca_pem: z.string().trim().min(1).optional()
 });
 
 const ConnectPayloadSchema = z.object({
   name: z.string().trim().min(1).optional(),
   connection_string: z.string().trim().min(1),
+  tls_ca_pem: z.string().trim().min(1).optional(),
   allowed_relations: z.array(z.string().trim().min(1)).default([])
 });
 
@@ -41,7 +43,7 @@ export function registerConnectionRoutes(app: FastifyInstance, manager: RuntimeC
   app.post("/connections/test", async (request, reply) => {
     const payload = TestConnectionPayloadSchema.parse(request.body);
     try {
-      const result = await manager.testConnection(payload.connection_string);
+      const result = await manager.testConnection(payload.connection_string, payload.tls_ca_pem);
       return reply.code(200).send(result);
     } catch (error) {
       return reply.code(400).send({
@@ -57,6 +59,7 @@ export function registerConnectionRoutes(app: FastifyInstance, manager: RuntimeC
       const context = await manager.connect({
         name: payload.name,
         connection_string: payload.connection_string,
+        tls_ca_pem: payload.tls_ca_pem,
         allowed_relations: payload.allowed_relations
       });
 

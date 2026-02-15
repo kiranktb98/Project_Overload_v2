@@ -351,6 +351,15 @@ export function renderConnectionPage(): string {
           <p class="muted">Credentials never run in the browser. This string is sent to the server, stored encrypted, and used for governed SELECT-only execution.</p>
         </div>
 
+        <details style="margin-top: 10px;">
+          <summary class="muted" style="cursor: pointer;"><strong>Advanced TLS</strong> (optional)</summary>
+          <div style="margin-top: 10px;">
+            <label for="tls-ca-pem">Custom CA (PEM)</label>
+            <textarea id="tls-ca-pem" placeholder="-----BEGIN CERTIFICATE-----\n..."></textarea>
+            <p class="muted">If you see TLS errors like “self-signed certificate in certificate chain”, paste your org/DB root CA here (PEM). This is used only for this session.</p>
+          </div>
+        </details>
+
         <div class="actions">
           <button class="secondary" id="test-connection">Test Connection</button>
           <button class="primary" id="connect-connection">Connect</button>
@@ -429,6 +438,7 @@ export function renderConnectionPage(): string {
           status: document.getElementById("connection-status"),
           name: document.getElementById("connection-name"),
           connectionString: document.getElementById("connection-string"),
+          tlsCaPem: document.getElementById("tls-ca-pem"),
           queryLimit: document.getElementById("query-limit"),
           schemaFilter: document.getElementById("schema-filter"),
           searchFilter: document.getElementById("search-filter"),
@@ -722,9 +732,15 @@ export function renderConnectionPage(): string {
               throw new Error("Connection string is required.");
             }
 
-            const result = await request("/api/db/test", "POST", {
+            const tlsCaPem = String(elements.tlsCaPem.value || "").trim();
+            const body = {
               connection_string: connectionString
-            });
+            };
+            if (tlsCaPem) {
+              body.tls_ca_pem = tlsCaPem;
+            }
+
+            const result = await request("/api/db/test", "POST", body);
 
             state.testResult = result;
             state.relations = Array.isArray(result.relations) ? result.relations : [];
@@ -760,11 +776,17 @@ export function renderConnectionPage(): string {
               throw new Error("Select at least one table/view for your allowlist.");
             }
 
-            const context = await request("/api/db/connect", "POST", {
+            const tlsCaPem = String(elements.tlsCaPem.value || "").trim();
+            const body = {
               name: String(elements.name.value || "").trim() || undefined,
               connection_string: connectionString,
               allowed_relations: Array.from(state.selected)
-            });
+            };
+            if (tlsCaPem) {
+              body.tls_ca_pem = tlsCaPem;
+            }
+
+            const context = await request("/api/db/connect", "POST", body);
 
             setConnectionStatus(context);
             const tables = await request("/api/db/tables", "GET").catch(() => null);
@@ -906,10 +928,15 @@ export function renderConnectionPage(): string {
               throw new Error("Re-enter the connection string (we don't store it in the browser).");
             }
 
+            const tlsCaPem = String(elements.tlsCaPem.value || "").trim();
             elements.fixStatus.textContent = "Re-testing...";
-            const result = await request("/api/db/test", "POST", {
+            const body = {
               connection_string: connectionString
-            });
+            };
+            if (tlsCaPem) {
+              body.tls_ca_pem = tlsCaPem;
+            }
+            const result = await request("/api/db/test", "POST", body);
 
             state.testResult = result;
             state.relations = Array.isArray(result.relations) ? result.relations : [];

@@ -94,6 +94,7 @@ export type FixScriptInput = {
 
 export type ConnectInput = {
   connection_string: string;
+  tls_ca_pem?: string;
   name?: string;
   allowed_relations?: string[];
 };
@@ -175,13 +176,14 @@ export class RuntimeConnectionManager {
     }
   }
 
-  async testConnection(rawConnectionString: string): Promise<ConnectionTestResult> {
+  async testConnection(rawConnectionString: string, tlsCaPem?: string): Promise<ConnectionTestResult> {
     const normalized = normalizeConnectionString(rawConnectionString);
     const parsed = safeParsePgUrl(normalized.normalized_connection_string);
+    const ssl = buildSslOptions(normalized.normalized_connection_string, tlsCaPem);
     const pool = new Pool({
       connectionString: normalized.normalized_connection_string,
       max: 2,
-      ssl: buildSslOptions(normalized.normalized_connection_string)
+      ssl
     });
 
     const warnings = [...normalized.warnings];
@@ -241,10 +243,11 @@ export class RuntimeConnectionManager {
   async connect(input: ConnectInput, source: "runtime" | "env" = "runtime"): Promise<ConnectionContext> {
     const normalized = normalizeConnectionString(input.connection_string);
     const parsed = safeParsePgUrl(normalized.normalized_connection_string);
+    const ssl = buildSslOptions(normalized.normalized_connection_string, input.tls_ca_pem);
     const pool = new Pool({
       connectionString: normalized.normalized_connection_string,
       max: 5,
-      ssl: buildSslOptions(normalized.normalized_connection_string)
+      ssl
     });
 
     try {
@@ -994,7 +997,7 @@ function formatConnectionError(
       `TLS certificate validation failed for ${formattedHost}${port}.`,
       "This usually means your network is intercepting TLS (corporate SSL inspection) or the DB uses a self-signed certificate.",
       supabaseHint,
-      "Fix options: use a network without SSL inspection, or add your org/DB CA to Node via NODE_EXTRA_CA_CERTS and restart the server.",
+      "Fix options: paste your org/DB CA (PEM) into Advanced TLS in the /connect wizard, or add your org/DB CA to Node via NODE_EXTRA_CA_CERTS and restart the server.",
       "Dev-only workaround: append sslmode=no-verify to the connection string."
     ]
       .filter((chunk) => chunk.length > 0)
@@ -1019,7 +1022,7 @@ function formatConnectionError(
   return rawMessage;
 }
 
-function buildSslOptions(connectionString: string): false | tls.ConnectionOptions | undefined {
+function buildSslOptions(connectionString: string, tlsCaPem?: string): false | tls.ConnectionOptions | undefined {
   let url: URL;
   try {
     url = new URL(connectionString);
@@ -1027,6 +1030,7 @@ function buildSslOptions(connectionString: string): false | tls.ConnectionOption
     return undefined;
   }
 
+  const extraCaPem = sanitizeTlsCaPem(tlsCaPem);
   const sslmode = (url.searchParams.get("sslmode") ?? "").trim().toLowerCase();
   if (sslmode === "disable") {
     return false;
@@ -1052,7 +1056,8 @@ function buildSslOptions(connectionString: string): false | tls.ConnectionOption
   return {
     ca: dedupePem([
       ...safeGetCaCertificates("system"),
-      ...safeGetCaCertificates("bundled")
+      ...safeGetCaCertificates("bundled"),
+      ...(extraCaPem ? [extraCaPem] : [])
     ])
   };
 }
@@ -1088,4 +1093,17 @@ function dedupePem(pems: string[]): string[] {
   }
 
   return output;
+}
+
+function sanitizeTlsCaPem(value?: string): string | undefined {
+  const pem = (value ?? "").trim();
+  if (!pem) {
+    return undefined;
+  }
+
+  if (!/-----BEGIN CERTIFICATE-----/i.test(pem)) {
+    throw new Error("Advanced TLS CA must be PEM encoded (include a BEGIN CERTIFICATE block).");
+  }
+
+  return pem;
 }
