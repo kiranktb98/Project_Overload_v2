@@ -176,6 +176,7 @@ export class RuntimeConnectionManager {
 
   async testConnection(rawConnectionString: string): Promise<ConnectionTestResult> {
     const normalized = normalizeConnectionString(rawConnectionString);
+    const parsed = safeParsePgUrl(normalized.normalized_connection_string);
     const pool = new Pool({
       connectionString: normalized.normalized_connection_string,
       max: 2
@@ -228,6 +229,8 @@ export class RuntimeConnectionManager {
       };
 
       return result;
+    } catch (error) {
+      throw new Error(formatConnectionError(error, parsed));
     } finally {
       await pool.end();
     }
@@ -235,6 +238,7 @@ export class RuntimeConnectionManager {
 
   async connect(input: ConnectInput, source: "runtime" | "env" = "runtime"): Promise<ConnectionContext> {
     const normalized = normalizeConnectionString(input.connection_string);
+    const parsed = safeParsePgUrl(normalized.normalized_connection_string);
     const pool = new Pool({
       connectionString: normalized.normalized_connection_string,
       max: 5
@@ -283,7 +287,7 @@ export class RuntimeConnectionManager {
       return this.getContext();
     } catch (error) {
       await pool.end();
-      throw error;
+      throw new Error(formatConnectionError(error, parsed));
     }
   }
 
@@ -925,4 +929,55 @@ async function withTimeout<T>(promise: Promise<T>, timeoutMs: number): Promise<T
         reject(error);
       });
   });
+}
+
+function safeParsePgUrl(connectionString: string): { host?: string; port?: string; hostname?: string } {
+  try {
+    const url = new URL(connectionString);
+    return {
+      host: url.host,
+      port: url.port,
+      hostname: url.hostname
+    };
+  } catch {
+    return {};
+  }
+}
+
+function formatConnectionError(
+  error: unknown,
+  parsed: { host?: string; port?: string; hostname?: string }
+): string {
+  const host = parsed.host || parsed.hostname || "unknown-host";
+  const port = parsed.port ? `:${parsed.port}` : "";
+  const rawMessage = error instanceof Error ? error.message : "Unknown connection error";
+  const anyErr = error as { code?: string; syscall?: string; hostname?: string } | null;
+  const code = anyErr?.code;
+
+  if (code === "ENOTFOUND" || /ENOTFOUND/i.test(rawMessage)) {
+    const maybeSupabaseDirect = Boolean(parsed.hostname && /^db\\./i.test(parsed.hostname) && /\\.supabase\\.co$/i.test(parsed.hostname));
+    const supabaseHint = maybeSupabaseDirect
+      ? "Supabase direct host detected (db.<ref>.supabase.co). This endpoint is often IPv6-only; on IPv4-only networks it can fail to resolve. Use Supabase Connection Pooling -> Transaction mode (host *.pooler.supabase.com) on port 6543 instead."
+      : "Check the hostname spelling and your DNS/VPN/network. Try switching DNS to 1.1.1.1 or 8.8.8.8, or try a different network (phone hotspot).";
+
+    return `DNS lookup failed for ${host}${port}. ${supabaseHint}`;
+  }
+
+  if (code === "ECONNREFUSED") {
+    return `Connection refused by ${host}${port}. Check host/port, outbound firewall rules, and that Postgres is reachable. For Supabase: direct is usually 5432; pooler is 6543.`;
+  }
+
+  if (code === "ETIMEDOUT") {
+    return `Timed out connecting to ${host}${port}. Check network/firewall/VPN restrictions and that the database is reachable.`;
+  }
+
+  if (code === "28P01") {
+    return "Authentication failed (28P01). Verify username/password in your connection string.";
+  }
+
+  if (code === "3D000") {
+    return "Database does not exist (3D000). Verify the database name in your connection string path.";
+  }
+
+  return rawMessage;
 }
