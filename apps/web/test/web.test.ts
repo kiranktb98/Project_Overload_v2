@@ -28,6 +28,14 @@ describe("web chat interface", () => {
     expect(page.headers["content-type"]).toContain("text/html");
     expect(page.body).toContain("Report Contract Chat");
 
+    const connectPage = await app.inject({
+      method: "GET",
+      url: "/connect"
+    });
+
+    expect(connectPage.statusCode).toBe(200);
+    expect(connectPage.body).toContain("Database Connector + Safe Query Module");
+
     await app.close();
   }, 15000);
 
@@ -453,6 +461,156 @@ describe("web chat interface", () => {
       provider: "stub",
       mode: "deterministic"
     });
+
+    await app.close();
+  });
+
+  it("proxies database connector endpoints", async () => {
+    const fetchImpl: typeof fetch = async (input, init) => {
+      const url = typeof input === "string" ? input : input instanceof URL ? input.toString() : input.url;
+      const method = init?.method?.toUpperCase() ?? "GET";
+
+      if (url.endsWith("/connections/active") && method === "GET") {
+        return new Response(
+          JSON.stringify({
+            connected: true,
+            name: "test-db",
+            database: "test-db",
+            connected_at: "2026-01-01T00:00:00.000Z",
+            allowed_relations: ["public.sales"],
+            allowed_schemas: ["public"],
+            available_relations: ["public.sales", "public.customers"],
+            source: "runtime"
+          }),
+          { status: 200, headers: { "content-type": "application/json" } }
+        );
+      }
+
+      if (url.endsWith("/connections/query") && method === "POST") {
+        return new Response(
+          JSON.stringify({
+            rows: [{ id: 1, amount: 100 }],
+            row_count: 1,
+            governed_sql: "SELECT * FROM public.sales LIMIT 10",
+            warnings: []
+          }),
+          { status: 200, headers: { "content-type": "application/json" } }
+        );
+      }
+
+      return new Response(
+        JSON.stringify({
+          message: `Unhandled request: ${method} ${url}`
+        }),
+        { status: 404, headers: { "content-type": "application/json" } }
+      );
+    };
+
+    const app = buildWebApp({
+      api_base_url: "http://api.local",
+      fetch_impl: fetchImpl,
+      conversation_client: createPassthroughConversationClient()
+    });
+
+    const context = await app.inject({
+      method: "GET",
+      url: "/api/db/context"
+    });
+
+    expect(context.statusCode).toBe(200);
+    expect(context.json().connected).toBe(true);
+
+    const query = await app.inject({
+      method: "POST",
+      url: "/api/db/query",
+      payload: {
+        sql: "SELECT * FROM public.sales",
+        limit: 10
+      }
+    });
+
+    expect(query.statusCode).toBe(200);
+    expect(query.json().row_count).toBe(1);
+
+    await app.close();
+  });
+
+  it("lets chat run safe query and sync connected tables", async () => {
+    const fetchImpl: typeof fetch = async (input, init) => {
+      const url = typeof input === "string" ? input : input instanceof URL ? input.toString() : input.url;
+      const method = init?.method?.toUpperCase() ?? "GET";
+
+      if (url.endsWith("/connections/active") && method === "GET") {
+        return new Response(
+          JSON.stringify({
+            connected: true,
+            database: "analytics-db",
+            allowed_relations: ["public.sales", "public.customers"],
+            allowed_schemas: ["public"],
+            available_relations: ["public.sales", "public.customers"],
+            source: "runtime"
+          }),
+          { status: 200, headers: { "content-type": "application/json" } }
+        );
+      }
+
+      if (url.endsWith("/connections/query") && method === "POST") {
+        return new Response(
+          JSON.stringify({
+            rows: [{ id: 1, amount: 42 }],
+            row_count: 1,
+            governed_sql: "SELECT id, amount FROM public.sales LIMIT 20",
+            warnings: []
+          }),
+          { status: 200, headers: { "content-type": "application/json" } }
+        );
+      }
+
+      if (url.endsWith("/report-contracts") && method === "GET") {
+        return new Response("[]", {
+          status: 200,
+          headers: { "content-type": "application/json" }
+        });
+      }
+
+      return new Response(
+        JSON.stringify({
+          message: `Unhandled request: ${method} ${url}`
+        }),
+        { status: 404, headers: { "content-type": "application/json" } }
+      );
+    };
+
+    const app = buildWebApp({
+      api_base_url: "http://api.local",
+      fetch_impl: fetchImpl,
+      conversation_client: createPassthroughConversationClient()
+    });
+
+    const sync = await app.inject({
+      method: "POST",
+      url: "/api/chat",
+      payload: {
+        message: "use connected tables"
+      }
+    });
+
+    expect(sync.statusCode).toBe(200);
+    expect(sync.json().assistant_message).toContain("Synced");
+    expect(sync.json().state.draft.allowed_relations).toContain("public.sales");
+
+    const query = await app.inject({
+      method: "POST",
+      url: "/api/chat",
+      payload: {
+        message: "query: SELECT id, amount FROM public.sales LIMIT 20",
+        state: sync.json().state
+      }
+    });
+
+    expect(query.statusCode).toBe(200);
+    expect(query.json().assistant_message).toContain("Safe query executed.");
+    expect(query.json().assistant_message).toContain("Rows returned: 1");
 
     await app.close();
   });

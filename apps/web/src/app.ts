@@ -12,6 +12,7 @@ import {
   type ConversationClient
 } from "./conversation";
 import { renderChatPage } from "./page";
+import { renderConnectionPage } from "./connect-page";
 
 export type WebAppDependencies = {
   api_base_url?: string;
@@ -38,6 +39,10 @@ export function buildWebApp(options: WebAppDependencies = {}) {
 
   app.get("/", async (_request, reply) => {
     return reply.type("text/html; charset=utf-8").send(renderChatPage());
+  });
+
+  app.get("/connect", async (_request, reply) => {
+    return reply.type("text/html; charset=utf-8").send(renderConnectionPage());
   });
 
   app.post("/api/chat", async (request, reply) => {
@@ -108,5 +113,101 @@ export function buildWebApp(options: WebAppDependencies = {}) {
     }
   });
 
+  app.get("/api/db/context", async (_request, reply) => {
+    return proxyToApi({
+      fetch_impl: options.fetch_impl,
+      api_base_url: apiBaseUrl,
+      method: "GET",
+      path: "/connections/active",
+      reply
+    });
+  });
+
+  app.get("/api/db/tables", async (_request, reply) => {
+    return proxyToApi({
+      fetch_impl: options.fetch_impl,
+      api_base_url: apiBaseUrl,
+      method: "GET",
+      path: "/connections/tables",
+      reply
+    });
+  });
+
+  app.post("/api/db/test", async (request, reply) => {
+    return proxyToApi({
+      fetch_impl: options.fetch_impl,
+      api_base_url: apiBaseUrl,
+      method: "POST",
+      path: "/connections/test",
+      body: request.body,
+      reply
+    });
+  });
+
+  app.post("/api/db/connect", async (request, reply) => {
+    return proxyToApi({
+      fetch_impl: options.fetch_impl,
+      api_base_url: apiBaseUrl,
+      method: "POST",
+      path: "/connections/connect",
+      body: request.body,
+      reply
+    });
+  });
+
+  app.post("/api/db/allowlist", async (request, reply) => {
+    return proxyToApi({
+      fetch_impl: options.fetch_impl,
+      api_base_url: apiBaseUrl,
+      method: "POST",
+      path: "/connections/allowlist",
+      body: request.body,
+      reply
+    });
+  });
+
+  app.post("/api/db/query", async (request, reply) => {
+    return proxyToApi({
+      fetch_impl: options.fetch_impl,
+      api_base_url: apiBaseUrl,
+      method: "POST",
+      path: "/connections/query",
+      body: request.body,
+      reply
+    });
+  });
+
+  app.post("/api/db/disconnect", async (_request, reply) => {
+    return proxyToApi({
+      fetch_impl: options.fetch_impl,
+      api_base_url: apiBaseUrl,
+      method: "POST",
+      path: "/connections/disconnect",
+      reply
+    });
+  });
+
   return app;
+}
+
+async function proxyToApi(input: {
+  fetch_impl?: typeof fetch;
+  api_base_url: string;
+  method: "GET" | "POST";
+  path: string;
+  reply: { code: (statusCode: number) => { send: (payload: unknown) => unknown } };
+  body?: unknown;
+}) {
+  const fetcher = input.fetch_impl ?? fetch;
+  const response = await fetcher(`${input.api_base_url}${input.path}`, {
+    method: input.method,
+    headers: {
+      "content-type": "application/json"
+    },
+    body: input.body === undefined ? undefined : JSON.stringify(input.body)
+  });
+
+  const text = await response.text();
+  const payload = text.length > 0 ? JSON.parse(text) : {};
+  return input.reply.code(response.status).send(payload);
 }

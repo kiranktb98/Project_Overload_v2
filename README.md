@@ -5,6 +5,7 @@ AI Data Architect + Scheduled Narrative Reports (PDF) + KT
 - Agent map: `docs/AGENT_MAP.md`
 - API health: `GET /health` on `http://localhost:4000`
 - Web chat: `http://localhost:3000`
+- DB connector UI: `http://localhost:3000/connect`
 - Worker loop: `apps/worker` (scheduler + queue + run dispatcher)
 
 ## Quick start
@@ -39,6 +40,21 @@ If you want every chat turn to require a live AI provider response, set:
 - corresponding API key env vars in local `.env`
 
 The web header shows provider mode at runtime (`stub/openai/openrouter` + `deterministic/provider`).
+
+## UI database connection (Postgres/Supabase)
+Use the Database Connector module (separate page from chat):
+1. Open `http://localhost:3000/connect`
+2. Paste Postgres connection string
+3. Click `Test Connection`
+4. Select allowlisted tables
+5. Click `Connect + Save Allowlist`
+6. Run a safe query (`SELECT` only) from the same page
+7. Open chat (`/`) and run:
+   - `use connected tables`
+   - `query: SELECT * FROM your_schema.your_table LIMIT 20`
+   - then draft/save/run report contracts
+
+Connection settings are runtime memory for now (not persisted across service restarts).
 
 ## Worker scheduling
 - Worker refreshes contracts from API and registers only contracts with `schedule_cron`.

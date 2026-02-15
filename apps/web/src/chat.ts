@@ -50,6 +50,8 @@ export type ChatTurnResponse = {
 
 type ReportContractRecord = z.output<typeof ReportContractSchema>;
 type ExecBriefRecord = z.output<typeof ExecBriefSchema>;
+type ConnectionContextRecord = z.output<typeof ConnectionContextSchema>;
+type SafeQueryResponseRecord = z.output<typeof SafeQueryResponseSchema>;
 
 export type CreateWebApiClientOptions = {
   base_url: string;
@@ -65,12 +67,32 @@ export interface WebApiClient {
     pdf_path?: string;
   }>;
   downloadRunPdf(runId: string): Promise<Response>;
+  getConnectionContext(): Promise<ConnectionContextRecord>;
+  runSafeQuery(sql: string, limit?: number): Promise<SafeQueryResponseRecord>;
 }
 
 const RunContractResponseSchema = z.object({
   run_id: z.string().min(1),
   exec_brief: ExecBriefSchema,
   pdf_path: z.string().min(1).optional()
+});
+
+const ConnectionContextSchema = z.object({
+  connected: z.boolean(),
+  name: z.string().nullable().optional(),
+  database: z.string().nullable().optional(),
+  connected_at: z.string().nullable().optional(),
+  allowed_relations: z.array(z.string()).default([]),
+  allowed_schemas: z.array(z.string()).default([]),
+  available_relations: z.array(z.string()).default([]),
+  source: z.enum(["runtime", "env", "fallback", "none"]).optional()
+});
+
+const SafeQueryResponseSchema = z.object({
+  rows: z.array(z.record(z.string(), z.unknown())),
+  row_count: z.number().int().min(0),
+  governed_sql: z.string().min(1),
+  warnings: z.array(z.string()).default([])
 });
 
 const DEFAULT_DRAFT: ChatDraft = {
@@ -97,11 +119,14 @@ const HELP_TEXT = [
   "preview",
   "save",
   "run",
-  "list contracts"
+  "list contracts",
+  "list tables",
+  "use connected tables",
+  "query: SELECT * FROM your_schema.your_table LIMIT 20"
 ].join("\n");
 
 const COMMAND_HINT = [
-  "I can help define a report, run it, summarize findings, and give you the PDF.",
+  "I can help define a report, run it, summarize findings, run safe SELECT queries, and give you the PDF.",
   "Tell me the audience and what you want to track, and I will build the draft."
 ].join("\n");
 
@@ -215,6 +240,25 @@ export function createWebApiClient(options: CreateWebApiClientOptions): WebApiCl
       }
 
       return response;
+    },
+    async getConnectionContext() {
+      const response = await fetcher(`${baseUrl}/connections/active`, {
+        method: "GET"
+      });
+
+      return parseJsonResponse(response, ConnectionContextSchema);
+    },
+    async runSafeQuery(sql, limit) {
+      const response = await fetcher(`${baseUrl}/connections/query`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({
+          sql,
+          limit
+        })
+      });
+
+      return parseJsonResponse(response, SafeQueryResponseSchema);
     }
   };
 }
@@ -238,6 +282,39 @@ export async function handleChatTurn(input: {
 
   if (command === "preview" || command === "/preview") {
     return { assistant_message: renderPreview(nextState), state: nextState };
+  }
+
+  if (asksToUseConnectedTables(command)) {
+    return syncConnectedTables(nextState, input.api_client);
+  }
+
+  if (asksForConnectedTables(command)) {
+    const context = await input.api_client.getConnectionContext();
+    return {
+      assistant_message: renderConnectedTables(context),
+      state: nextState
+    };
+  }
+
+  if (command === "list tables" || command === "show tables" || command === "tables") {
+    const context = await input.api_client.getConnectionContext();
+    return {
+      assistant_message: renderConnectedTables(context),
+      state: nextState
+    };
+  }
+
+  if (command === "use connected tables" || command === "sync connected tables") {
+    return syncConnectedTables(nextState, input.api_client);
+  }
+
+  const queryCommand = parseQueryCommand(rawMessage);
+  if (queryCommand) {
+    const result = await input.api_client.runSafeQuery(queryCommand.sql, queryCommand.limit);
+    return {
+      assistant_message: renderSafeQueryResult(result),
+      state: nextState
+    };
   }
 
   if (command === "list contracts" || command === "list") {
@@ -368,6 +445,22 @@ function parseSetCommand(raw: string): { field: string; value: string } | null {
   return {
     field: match[1].trim().toLowerCase().replace(/\s+/g, "_"),
     value: match[2].trim()
+  };
+}
+
+function parseQueryCommand(raw: string): { sql: string; limit?: number } | null {
+  const match = raw.match(/^(?:\/?query|\/?sql|\/?run query)\s*[:=]\s*([\s\S]+)$/i);
+  if (!match) {
+    return null;
+  }
+
+  const sql = match[1].trim();
+  if (sql.length === 0) {
+    return null;
+  }
+
+  return {
+    sql
   };
 }
 
@@ -615,6 +708,36 @@ function renderContractList(contracts: ReportContractRecord[]): string {
   return `Contracts\n${lines.join("\n")}`;
 }
 
+function renderConnectedTables(context: ConnectionContextRecord): string {
+  if (!context.connected) {
+    return "No active connected database. Open /connect to attach a Postgres source.";
+  }
+
+  const tables = context.allowed_relations.length > 0 ? context.allowed_relations : context.available_relations;
+  if (tables.length === 0) {
+    return "Database is connected but no tables are allowlisted yet. Use /connect to select tables.";
+  }
+
+  const lines = tables.slice(0, 40).map((table) => `- ${table}`);
+  return [
+    `Connected database: ${context.database ?? context.name ?? "unknown"}`,
+    `Allowlisted tables (${tables.length}):`,
+    lines.join("\n")
+  ].join("\n");
+}
+
+function renderSafeQueryResult(result: SafeQueryResponseRecord): string {
+  const preview = result.rows.slice(0, 10);
+
+  return [
+    "Safe query executed.",
+    `Rows returned: ${result.row_count}`,
+    `Governed SQL: ${result.governed_sql}`,
+    result.warnings.length > 0 ? `Warnings: ${result.warnings.join(" | ")}` : "Warnings: none",
+    `Preview:\n${JSON.stringify(preview, null, 2)}`
+  ].join("\n");
+}
+
 function renderExecBrief(execBrief: ExecBriefRecord): string {
   const section = (title: string, values: string[]) =>
     `${title}: ${values.length > 0 ? values.join(" | ") : "No insights."}`;
@@ -658,7 +781,7 @@ function answerConversationalPrompt(command: string, state: ChatState): ChatTurn
   if (asksForCapabilities(command)) {
     return {
       assistant_message:
-        "I can gather your report requirements in chat, save the contract, run governed SQL, summarize insights, and provide a PDF link.",
+        "I can gather report requirements, run safe SELECT queries on connected tables, save contracts, execute governed report runs, summarize insights, and provide a PDF link.",
       state
     };
   }
@@ -731,6 +854,48 @@ function asksForFindings(command: string): boolean {
 
 function asksForPdf(command: string): boolean {
   return command.includes("pdf") || command.includes("download");
+}
+
+function asksForConnectedTables(command: string): boolean {
+  return /\b(connected tables|which tables|show tables|list tables|what tables)\b/.test(command);
+}
+
+function asksToUseConnectedTables(command: string): boolean {
+  return /\b(use connected tables|sync connected tables|use connected db|use database tables)\b/.test(command);
+}
+
+async function syncConnectedTables(state: ChatState, apiClient: WebApiClient): Promise<ChatTurnResponse> {
+  const context = await apiClient.getConnectionContext();
+
+  if (!context.connected || context.allowed_relations.length === 0) {
+    return {
+      assistant_message:
+        "No connected allowlisted tables found. Open /connect, connect your Postgres database, and select tables first.",
+      state
+    };
+  }
+
+  const nextState = parseChatState(state);
+  nextState.draft.allowed_relations = [...context.allowed_relations];
+  nextState.draft.allowed_schemas = [...context.allowed_schemas];
+
+  const firstRelation = context.allowed_relations[0];
+  if (
+    nextState.draft.sql_template.trim().toLowerCase() === "select * from analytics.sales" ||
+    nextState.draft.sql_template.trim().length === 0
+  ) {
+    nextState.draft.sql_template = `SELECT * FROM ${firstRelation}`;
+  }
+
+  nextState.contract_id = null;
+
+  return {
+    assistant_message:
+      `Synced ${context.allowed_relations.length} connected tables into guardrails.\n` +
+      `Default SQL updated to: ${nextState.draft.sql_template}\n` +
+      renderDraftChecklist(nextState),
+    state: nextState
+  };
 }
 
 function summarizeExecBrief(execBrief: ExecBriefRecord): string {
