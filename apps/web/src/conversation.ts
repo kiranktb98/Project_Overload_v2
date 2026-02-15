@@ -1,4 +1,4 @@
-import type { ChatState } from "./chat";
+import type { ChatHistoryTurn, ChatState } from "./chat";
 
 export type ConversationProvider = "stub" | "openai" | "openrouter";
 
@@ -6,10 +6,12 @@ export type ConversationTurnInput = {
   user_message: string;
   deterministic_response: string;
   state: ChatState;
+  history: ChatHistoryTurn[];
 };
 
 export interface ConversationClient {
   provider: ConversationProvider;
+  mode: "provider" | "deterministic";
   respond(input: ConversationTurnInput): Promise<string>;
 }
 
@@ -44,6 +46,7 @@ const DEFAULT_OPENROUTER_BASE_URL = "https://openrouter.ai/api/v1";
 export function createPassthroughConversationClient(): ConversationClient {
   return {
     provider: "stub",
+    mode: "deterministic",
     async respond(input: ConversationTurnInput): Promise<string> {
       return input.deterministic_response;
     }
@@ -142,6 +145,7 @@ function createRemoteConversationClient(
 ): ConversationClient {
   return {
     provider: options.provider,
+    mode: "provider",
     async respond(input: ConversationTurnInput): Promise<string> {
       const request = options.request_factory(input);
 
@@ -178,6 +182,7 @@ function withDeterministicFallback(
 ): ConversationClient {
   return {
     provider: remote.provider,
+    mode: remote.mode,
     async respond(input: ConversationTurnInput): Promise<string> {
       try {
         return await remote.respond(input);
@@ -274,8 +279,13 @@ function conversationalUserPrompt(input: ConversationTurnInput): string {
     has_exec_brief: input.state.last_exec_brief !== null
   };
 
+  const history = serializeHistory(input.history);
+
   return [
-    "User message:",
+    "Conversation context:",
+    history.length > 0 ? history : "(no prior turns)",
+    "",
+    "Latest user message:",
     input.user_message,
     "",
     "Deterministic assistant response (must stay semantically true):",
@@ -380,4 +390,15 @@ function extractTextPayload(payload: unknown): string | null {
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null;
+}
+
+function serializeHistory(history: ChatHistoryTurn[]): string {
+  const recent = history.slice(-8);
+  if (recent.length === 0) {
+    return "";
+  }
+
+  return recent
+    .map((turn) => `${turn.role}: ${turn.content}`)
+    .join("\n");
 }

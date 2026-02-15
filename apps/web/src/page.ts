@@ -74,6 +74,13 @@ export function renderChatPage(): string {
         gap: 8px;
       }
 
+      .panel .nav-link {
+        display: inline-block;
+        margin-top: 10px;
+        color: #075985;
+        font-size: 0.8rem;
+      }
+
       .chip {
         appearance: none;
         border: 1px solid rgba(14, 165, 233, 0.35);
@@ -227,6 +234,7 @@ export function renderChatPage(): string {
           Define one contract with guardrails, then save and run it. This UI keeps the workflow deterministic:
           set fields, preview, save, run.
         </p>
+        <a class="nav-link" href="/connect">Open Database Connector</a>
         <div class="chips" id="chips">
           <button class="chip" data-command="set name: Weekly CEO Revenue">set name</button>
           <button class="chip" data-command="set audience: CEO">set audience</button>
@@ -243,7 +251,7 @@ export function renderChatPage(): string {
       <main class="chat-shell">
         <header class="chat-head">
           <strong>Planner + Guardrails Chat</strong>
-          <span class="status" id="status">idle</span>
+          <span class="status" id="status">starting</span>
         </header>
         <section class="messages" id="messages"></section>
         <section class="composer">
@@ -265,11 +273,18 @@ export function renderChatPage(): string {
         const sendButtonEl = document.getElementById("composer-send");
         const formEl = document.getElementById("composer-form");
         const chipsEl = document.getElementById("chips");
+        const runtimeStatusRef = { mode: "checking provider", busy: false };
 
         function setBusy(isBusy) {
-          statusEl.textContent = isBusy ? "processing" : "idle";
+          runtimeStatusRef.busy = isBusy;
+          renderStatus();
           sendButtonEl.disabled = isBusy;
           inputEl.disabled = isBusy;
+        }
+
+        function renderStatus() {
+          const activity = runtimeStatusRef.busy ? "processing" : "idle";
+          statusEl.textContent = runtimeStatusRef.mode + " | " + activity;
         }
 
         function appendMessage(role, text, downloadUrl) {
@@ -331,6 +346,67 @@ export function renderChatPage(): string {
           }
         }
 
+        async function loadRuntimeStatus() {
+          try {
+            const response = await fetch("/api/chat/runtime", { method: "GET" });
+            const payload = await response.json();
+            if (!response.ok) {
+              runtimeStatusRef.mode = "provider unavailable";
+              renderStatus();
+              return;
+            }
+
+            const provider =
+              payload && typeof payload.provider === "string" ? payload.provider : "unknown";
+            const mode = payload && typeof payload.mode === "string" ? payload.mode : "unknown";
+            runtimeStatusRef.mode = provider + " (" + mode + ")";
+          } catch (_error) {
+            runtimeStatusRef.mode = "provider unavailable";
+          }
+
+          renderStatus();
+        }
+
+        async function loadDbContextForChat() {
+          try {
+            const response = await fetch("/api/db/context", { method: "GET" });
+            const payload = await response.json();
+
+            if (!response.ok || !payload || payload.connected !== true) {
+              return;
+            }
+
+            const allowedRelations = Array.isArray(payload.allowed_relations) ? payload.allowed_relations : [];
+            const allowedSchemas = Array.isArray(payload.allowed_schemas) ? payload.allowed_schemas : [];
+            const defaultRelation = allowedRelations.length > 0 ? allowedRelations[0] : null;
+
+            stateRef.value = {
+              draft: {
+                name: "",
+                audience: "Executive",
+                timezone: "UTC",
+                schedule_cron: null,
+                sql_template: defaultRelation ? "SELECT * FROM " + defaultRelation : "SELECT 1",
+                metric_ids: ["metric_revenue"],
+                dimension_ids: ["region"],
+                allowed_relations: allowedRelations,
+                allowed_schemas: allowedSchemas
+              },
+              contract_id: null,
+              last_run_id: null,
+              last_exec_brief: null,
+              conversation_history: []
+            };
+
+            appendMessage(
+              "assistant",
+              "Connected database detected. I will use your allowlisted tables by default. You can ask for a quick data check with: query: SELECT * FROM " + (defaultRelation || "your_schema.your_table")
+            );
+          } catch (_error) {
+            // Ignore optional context bootstrap failures.
+          }
+        }
+
         formEl.addEventListener("submit", (event) => {
           event.preventDefault();
           const value = inputEl.value;
@@ -355,6 +431,9 @@ export function renderChatPage(): string {
           "assistant",
           "Chat is ready. Tell me what report you want, or use commands. After a run, ask: what did you find?"
         );
+        renderStatus();
+        loadRuntimeStatus();
+        loadDbContextForChat();
         inputEl.focus();
       })();
     </script>

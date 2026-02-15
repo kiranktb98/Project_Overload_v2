@@ -2,15 +2,19 @@ import Fastify from "fastify";
 import { ZodError } from "zod";
 import { createDataPlaneFromEnv, type DataPlane } from "@project-overload/dataplane";
 import { createAnalystClientFromEnv, type AnalystClient } from "@project-overload/llm-client";
+import { SqlGuardError } from "@project-overload/sql-guard";
 import { createMetadataStoreFromEnv, type MetadataStore } from "./store";
 import { registerSemanticRoutes } from "./routes/semantic";
 import { registerContractRoutes } from "./routes/contracts";
 import { createLocalRowProviderFromEnv } from "./dataplane/local-row-provider";
+import { registerConnectionRoutes } from "./routes/connections";
+import { RuntimeConnectionManager } from "./dataplane/connection-manager";
 
 export type ApiDependencies = {
   store: MetadataStore;
   data_plane: DataPlane;
   analyst_client: AnalystClient;
+  connection_manager: RuntimeConnectionManager;
 };
 
 export async function buildApiApp(options: Partial<ApiDependencies> = {}) {
@@ -36,12 +40,22 @@ export async function buildApiApp(options: Partial<ApiDependencies> = {}) {
   );
 
   const store = options.store ?? (await createMetadataStoreFromEnv());
-  const localRowProvider = options.data_plane ? null : createLocalRowProviderFromEnv();
+  const localRowProviderRuntime = createLocalRowProviderFromEnv();
+  const connectionManager =
+    options.connection_manager ??
+    new RuntimeConnectionManager({
+      fallback_row_provider: localRowProviderRuntime.row_provider,
+      fallback_source: localRowProviderRuntime.source,
+      default_timeout_ms: Number.parseInt(process.env.DEFAULT_QUERY_TIMEOUT_MS ?? "15000", 10),
+      default_limit: Number.parseInt(process.env.DEFAULT_QUERY_ROW_LIMIT ?? "200", 10)
+    });
+  await connectionManager.initFromEnv();
+
   const dataPlane =
     options.data_plane ??
     createDataPlaneFromEnv({
       local_stub_options: {
-        row_provider: localRowProvider?.row_provider
+        row_provider: (sql) => connectionManager.rowProvider(sql)
       }
     });
   const analystClient = options.analyst_client ?? createAnalystClientFromEnv();
@@ -50,6 +64,7 @@ export async function buildApiApp(options: Partial<ApiDependencies> = {}) {
 
   registerSemanticRoutes(app, store);
   registerContractRoutes(app, store, dataPlane, analystClient);
+  registerConnectionRoutes(app, connectionManager);
 
   app.setErrorHandler((error: unknown, _request, reply) => {
     if (error instanceof ZodError) {
@@ -57,6 +72,10 @@ export async function buildApiApp(options: Partial<ApiDependencies> = {}) {
         message: "Validation failed",
         issues: error.issues
       });
+    }
+
+    if (error instanceof SqlGuardError) {
+      return reply.code(400).send({ message: error.message });
     }
 
     if (error instanceof Error) {
@@ -68,7 +87,8 @@ export async function buildApiApp(options: Partial<ApiDependencies> = {}) {
 
   app.addHook("onClose", async () => {
     await store.close();
-    await localRowProvider?.close();
+    await connectionManager.close();
+    await localRowProviderRuntime.close();
   });
 
   return app;

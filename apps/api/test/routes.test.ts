@@ -91,6 +91,13 @@ describe("api semantic and run flow", () => {
     expect(runPdf.statusCode).toBe(200);
     expect(runPdf.headers["content-type"]).toContain("application/pdf");
 
+    const contractRuns = await app.inject({
+      method: "GET",
+      url: "/report-contracts/contract_weekly_ceo/runs"
+    });
+    expect(contractRuns.statusCode).toBe(200);
+    expect(contractRuns.json()).toHaveLength(1);
+
     await app.close();
   });
 
