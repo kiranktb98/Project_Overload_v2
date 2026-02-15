@@ -1,57 +1,49 @@
-# Agent Map (Runtime)
+# Agent Map
 
-This runtime uses a fixed multi-agent flow with strict guardrails:
+## Agent A - Contract Builder
+- Path: `apps/api/src/agents/pipeline.ts`
+- Function: `agentA_buildContractDraft`
+- Role: chat/user intent -> validated `ReportContractDraft`.
 
-1. Planner agent (`apps/api/src/services/planner.ts`)
-- Input: approved `ReportContract`.
-- Output: deterministic `QueryPlan` with budgets (`evidence_row_cap <= 200`, `max_batches <= 5`).
+## Agent B - Semantic Mapper
+- Path: `apps/api/src/agents/pipeline.ts`
+- Function: `agentB_mapMetadataToSemantic`
+- Role: DB metadata -> semantic entities, fields, relationships.
 
-2. Data Plane agent boundary (`packages/dataplane/src/index.ts`)
-- Input: evidence SQL from plan.
-- Enforces: SELECT-only, allowlisted schemas/tables, forced limit, timeout, PII masking, audit event.
-- Modes:
-  - `local`: in-process stub executor.
-  - `hybrid/saas`: remote Data Plane Agent over HTTP (same policy contract).
+## Agent C - Planner / Data Architect
+- Path: `apps/api/src/agents/pipeline.ts`
+- Function: `agentC_buildQueryPlan`
+- Role: contract + semantic context -> deterministic `ContractQueryPlan`.
 
-3. Evidence reducer (`packages/evidence/src/index.ts`)
-- Input: governed query rows.
-- Performs: aggregate-first, top-k, stratified sampling, deterministic batch planning.
-- Output: `EvidencePacket <= 200` rows or `BatchPlan <= 5` batches.
+## Tool T1 - SQL Policy Engine (deterministic)
+- Path: `packages/sql-guard/src/index.ts`
+- Role: SELECT-only enforcement, allowlist checks, limit enforcement.
 
-4. Analyst agent (`packages/llm-client/src/index.ts`)
-- Input: `AnalystInput` for each batch (`total_batches` and `batch_index` always required).
-- Output: strict `BatchAnalysis` JSON.
+## Tool T2 - Data Plane Executor
+- Path: `packages/dataplane/src/index.ts`
+- Role: governed query execution boundary (local/hybrid/saas mode).
 
-5. Aggregator agent (`packages/evidence/src/index.ts`)
-- Input: all batch analyses + previous run brief.
-- Output: fixed `ExecBrief` sections:
-  - `what_changed`
-  - `why`
-  - `so_what`
-  - `what_to_do`
-  - `confidence`
-  - `appendix_refs`
-  - `deltas_vs_last_run`
+## Agent D - Evidence Reducer & Batch Controller
+- Path: `apps/api/src/agents/pipeline.ts`
+- Function: `agentD_reduceEvidence`
+- Role: apply reduction and batching rules (`<=200` rows, `<=5` batches).
 
-6. Renderer (`packages/report-render/src/index.ts`)
-- Input: `ExecBrief`.
-- Output: deterministic HTML and generated PDF.
+## Agent E - Batch Analyst
+- Path: `apps/api/src/agents/pipeline.ts`
+- Function: `agentE_analyzeBatch`
+- Role: per `EvidencePacket` -> `BatchAnalysis`.
 
-## Chat Interface Flow
+## Agent F - Aggregator
+- Path: `apps/api/src/agents/pipeline.ts`
+- Function: `agentF_aggregate`
+- Role: all `BatchAnalysis` -> `ExecBrief`.
 
-1. Web chat receives each user turn at `POST /api/chat`.
-2. Deterministic contract handler updates state and run actions (`apps/web/src/chat.ts`).
-3. Conversation adapter sends every turn to selected provider (`apps/web/src/conversation.ts`) with:
-- user message
-- deterministic response to preserve guardrails
-- recent conversation history
-- current draft state snapshot
-4. Final assistant message is stored in chat state history and returned to UI.
-5. UI can download generated report PDFs from `/api/runs/:runId/pdf`.
+## Agent G - Renderer
+- Path: `apps/api/src/agents/pipeline.ts`, `packages/report-render/src/index.ts`
+- Function: `agentG_renderExecBrief`
+- Role: `ExecBrief` -> HTML -> PDF bytes.
 
-## Scheduling Flow
-
-1. Worker periodically refreshes scheduled contracts from API.
-2. Deterministic scheduler computes due runs by cron + timezone.
-3. Due jobs are enqueued (memory/redis queue).
-4. Worker dispatches each due job to `POST /report-contracts/:id/run`.
+## Agent H - QA / Judge
+- Path: `apps/api/src/agents/pipeline.ts`
+- Function: `agentH_evaluateExecBrief`
+- Role: score final output and return `QualityEval` with fix instructions.
