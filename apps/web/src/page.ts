@@ -400,7 +400,7 @@ export function renderChatPage(): string {
 
             appendMessage(
               "assistant",
-              "Connected database detected. I will use your allowlisted tables by default. You can ask for a quick data check with: query: SELECT * FROM " + (defaultRelation || "your_schema.your_table")
+              "I see you have a database connected - I'll use your tables by default. Want a quick look at the data? Try:\\n  query: SELECT * FROM " + (defaultRelation || "your_schema.your_table") + " LIMIT 20"
             );
           } catch (_error) {
             // Ignore optional context bootstrap failures.
@@ -429,7 +429,7 @@ export function renderChatPage(): string {
 
         appendMessage(
           "assistant",
-          "Chat is ready. Tell me what report you want, or use commands. After a run, ask: what did you find?"
+          "Hey! Tell me what report you'd like to build - who's the audience and what metric matters most? I'll handle the rest.\\n\\nYou can also type 'help' to see all available commands."
         );
         renderStatus();
         loadRuntimeStatus();

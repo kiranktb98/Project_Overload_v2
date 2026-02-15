@@ -2,6 +2,7 @@ import { randomUUID } from "node:crypto";
 import {
   type ContractBatchAnalysis,
   ContractExecBriefSchema,
+  DEFAULT_PII_FIELDS,
   ExecBriefSchema,
   type ExecBrief,
   ReportRunSchema,
@@ -80,7 +81,7 @@ export async function runReportContractPipeline(input: {
           allowed_schemas: input.contract.guardrails.allowed_schemas,
           timeout_ms: input.contract.guardrails.timeout_ms,
           row_cap: input.contract.guardrails.evidence_row_cap,
-          pii_fields: ["customer_email", "email", "phone", "ssn"]
+          pii_fields: DEFAULT_PII_FIELDS
         }
       });
 

@@ -21,7 +21,11 @@ export type WebAppDependencies = {
 };
 
 export function buildWebApp(options: WebAppDependencies = {}) {
-  const app = Fastify({ logger: false });
+  const app = Fastify({
+    logger: {
+      level: process.env.LOG_LEVEL ?? "info"
+    }
+  });
   const apiBaseUrl =
     options.api_base_url ?? process.env.WEB_API_BASE_URL ?? process.env.NEXT_PUBLIC_API_URL ?? "http://127.0.0.1:4000";
   const apiClient = createWebApiClient({
@@ -162,6 +166,27 @@ export function buildWebApp(options: WebAppDependencies = {}) {
       method: "POST",
       path: "/connections/allowlist",
       body: request.body,
+      reply
+    });
+  });
+
+  app.post("/api/db/fix-script", async (request, reply) => {
+    return proxyToApi({
+      fetch_impl: options.fetch_impl,
+      api_base_url: apiBaseUrl,
+      method: "POST",
+      path: "/connections/fix-script",
+      body: request.body,
+      reply
+    });
+  });
+
+  app.get("/api/db/query-logs", async (_request, reply) => {
+    return proxyToApi({
+      fetch_impl: options.fetch_impl,
+      api_base_url: apiBaseUrl,
+      method: "GET",
+      path: "/connections/query-logs",
       reply
     });
   });

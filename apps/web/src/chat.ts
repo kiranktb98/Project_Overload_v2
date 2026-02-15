@@ -108,26 +108,23 @@ const DEFAULT_DRAFT: ChatDraft = {
 };
 
 const HELP_TEXT = [
-  "Use one command per message.",
-  "set name: Weekly CEO report",
-  "set audience: CEO",
-  "set timezone: Asia/Kolkata",
-  "set schedule: 0 18 * * 5",
-  "set sql: SELECT region, SUM(amount) AS revenue FROM analytics.sales GROUP BY region",
-  "set metrics: metric_revenue, metric_orders",
-  "set dimensions: region",
-  "preview",
-  "save",
-  "run",
-  "list contracts",
-  "list tables",
-  "use connected tables",
-  "query: SELECT * FROM your_schema.your_table LIMIT 20"
-].join("\n");
-
-const COMMAND_HINT = [
-  "I can help define a report, run it, summarize findings, run safe SELECT queries, and give you the PDF.",
-  "Tell me the audience and what you want to track, and I will build the draft."
+  "Here's what I can do:\n",
+  "To build a report, just tell me who it's for and what you want to track. For example:",
+  '  "I need a weekly revenue report for the CEO, broken down by region"',
+  "",
+  "You can also tweak things step by step:",
+  "  set name: Weekly CEO report",
+  "  set audience: CEO",
+  "  set timezone: Asia/Kolkata",
+  "  set schedule: 0 18 * * 5",
+  "  set sql: SELECT region, SUM(amount) AS revenue FROM analytics.sales GROUP BY region",
+  "",
+  "Other things I can help with:",
+  "  preview      - see the current draft",
+  "  save         - save the contract",
+  "  run          - save and execute now",
+  "  list tables  - see connected database tables",
+  "  query: SELECT ... - run a safe read-only query"
 ].join("\n");
 
 export const MAX_CONVERSATION_TURNS = 12;
@@ -355,7 +352,7 @@ export async function handleChatTurn(input: {
 
     nextState = applied.state;
     return {
-      assistant_message: `Updated ${setCommand.field}.\n${renderDraftChecklist(nextState)}`,
+      assistant_message: `Got it, ${setCommand.field} updated.\n${renderDraftChecklist(nextState)}`,
       state: nextState
     };
   }
@@ -389,7 +386,7 @@ export async function handleChatTurn(input: {
     }
 
     return {
-      assistant_message: `Updated: ${natural.updated_fields.join(", ")}.\n${renderDraftChecklist(nextState)}`,
+      assistant_message: `Updated ${natural.updated_fields.join(", ")}.\n${renderDraftChecklist(nextState)}`,
       state: nextState
     };
   }
@@ -534,7 +531,7 @@ function inferSimpleIntent(message: string, state: ChatState): ChatTurnResponse 
     nextState.draft.schedule_cron = "0 18 * * 5";
     return {
       assistant_message:
-        "Detected a weekly cadence. I set `schedule_cron` to `0 18 * * 5` (Friday 18:00).\nUse `set timezone: <IANA timezone>` if needed.",
+        "I've set this up as a weekly report (Fridays at 18:00). You can adjust the timezone with \"set timezone: Asia/Kolkata\" or similar.",
       state: nextState
     };
   }
@@ -542,7 +539,7 @@ function inferSimpleIntent(message: string, state: ChatState): ChatTurnResponse 
   if (lowered.includes("ceo") && !lowered.includes("name") && nextState.draft.audience === "Executive") {
     nextState.draft.audience = "CEO";
     return {
-      assistant_message: "Audience set to CEO. Continue with `set name: ...` and `preview`.",
+      assistant_message: "Audience set to CEO. What should we call this report? And what's the key metric you want to track?",
       state: nextState
     };
   }
@@ -553,7 +550,7 @@ function inferSimpleIntent(message: string, state: ChatState): ChatTurnResponse 
       nextState.draft.name = guessedName;
       nextState.contract_id = null;
       return {
-        assistant_message: `Draft name set to "${guessedName}".\n${renderDraftChecklist(nextState)}`,
+        assistant_message: `Named it "${guessedName}".\n${renderDraftChecklist(nextState)}`,
         state: nextState
       };
     }
@@ -569,7 +566,7 @@ async function saveContract(state: ChatState, apiClient: WebApiClient): Promise<
   nextState.contract_id = created.id;
 
   return {
-    assistant_message: `Saved contract: ${created.name}\nContract ID: ${created.id}\nUse "run" to execute now.`,
+    assistant_message: `Got it - "${created.name}" is saved (ID: ${created.id}). Say "run" whenever you're ready to execute it.`,
     state: nextState
   };
 }
@@ -578,7 +575,7 @@ async function saveWithValidation(state: ChatState, apiClient: WebApiClient): Pr
   const missing = getMissingDraftFields(state);
   if (missing.length > 0) {
     return {
-      assistant_message: `I can save it once I have: ${missing.join(", ")}.\nTry: "Call it ${suggestReportName(state)}".`,
+      assistant_message: `Almost there! I just need: ${missing.join(", ")}.\nFor example: "Call it ${suggestReportName(state)}"`,
       state
     };
   }
@@ -606,7 +603,7 @@ async function runContract(state: ChatState, apiClient: WebApiClient): Promise<C
   const pdfDownloadUrl = `/api/runs/${run.run_id}/pdf`;
 
   return {
-    assistant_message: `${preface}Run complete.\nRun ID: ${run.run_id}\nDownload PDF: ${pdfDownloadUrl}\n\n${renderExecBrief(run.exec_brief)}`,
+    assistant_message: `${preface}Done! Here's what I found:\n\n${renderExecBrief(run.exec_brief)}\n\nYou can download the full PDF report below.`,
     state: nextState,
     pdf_download_url: pdfDownloadUrl
   };
@@ -616,7 +613,7 @@ async function runWithValidation(state: ChatState, apiClient: WebApiClient): Pro
   const missing = getMissingDraftFields(state);
   if (missing.length > 0) {
     return {
-      assistant_message: `I can run it right away once I have: ${missing.join(", ")}.\nTry: "Call it ${suggestReportName(state)}".`,
+      assistant_message: `I'm ready to run it - just need: ${missing.join(", ")}.\nFor example: "Call it ${suggestReportName(state)}"`,
       state
     };
   }
@@ -688,77 +685,83 @@ function renderDraftChecklist(state: ChatState): string {
 
   if (missing.length === 0) {
     return state.contract_id
-      ? "Draft is valid and saved. You can run now."
-      : 'Draft is valid. Use "save" to persist or "run" to save and execute.';
+      ? "Everything looks good - you can run it now."
+      : "The draft is ready. Say \"run\" to execute or \"save\" to save it for later.";
   }
 
-  return `Missing or invalid fields: ${missing.join(", ")}.`;
+  return `I still need: ${missing.join(", ")}.`;
 }
 
 function renderContractList(contracts: ReportContractRecord[]): string {
   if (contracts.length === 0) {
-    return "No contracts found yet.";
+    return "No report contracts yet. Describe a report and I'll create one for you.";
   }
 
   const lines = contracts.slice(0, 12).map((contract) => {
     const schedule = contract.schedule_cron ?? "manual";
-    return `- ${contract.name} (${contract.id}) | ${contract.timezone} | ${schedule}`;
+    return `  - ${contract.name} (${schedule}, ${contract.timezone})`;
   });
 
-  return `Contracts\n${lines.join("\n")}`;
+  return `Here are your saved contracts:\n${lines.join("\n")}`;
 }
 
 function renderConnectedTables(context: ConnectionContextRecord): string {
   if (!context.connected) {
-    return "No active connected database. Open /connect to attach a Postgres source.";
+    return "No database connected yet. Head over to /connect to hook up your Postgres database.";
   }
 
   const tables = context.allowed_relations.length > 0 ? context.allowed_relations : context.available_relations;
   if (tables.length === 0) {
-    return "Database is connected but no tables are allowlisted yet. Use /connect to select tables.";
+    return "Your database is connected, but no tables have been selected yet. Use /connect to pick the ones you want to work with.";
   }
 
-  const lines = tables.slice(0, 40).map((table) => `- ${table}`);
+  const lines = tables.slice(0, 40).map((table) => `  - ${table}`);
   return [
-    `Connected database: ${context.database ?? context.name ?? "unknown"}`,
-    `Allowlisted tables (${tables.length}):`,
-    lines.join("\n")
+    `Connected to ${context.database ?? context.name ?? "your database"} with ${tables.length} table${tables.length === 1 ? "" : "s"}:`,
+    lines.join("\n"),
+    `\nSay "use connected tables" to pull these into your report draft.`
   ].join("\n");
 }
 
 function renderSafeQueryResult(result: SafeQueryResponseRecord): string {
   const preview = result.rows.slice(0, 10);
 
-  return [
-    "Safe query executed.",
-    `Rows returned: ${result.row_count}`,
-    `Governed SQL: ${result.governed_sql}`,
-    result.warnings.length > 0 ? `Warnings: ${result.warnings.join(" | ")}` : "Warnings: none",
-    `Preview:\n${JSON.stringify(preview, null, 2)}`
-  ].join("\n");
+  const parts = [`Query returned ${result.row_count} row${result.row_count === 1 ? "" : "s"}.`];
+
+  if (result.warnings.length > 0) {
+    parts.push(`Note: ${result.warnings.join("; ")}`);
+  }
+
+  parts.push(`\nPreview (first ${Math.min(10, preview.length)}):\n${JSON.stringify(preview, null, 2)}`);
+
+  return parts.join("\n");
 }
 
 function renderExecBrief(execBrief: ExecBriefRecord): string {
-  const section = (title: string, values: string[]) =>
-    `${title}: ${values.length > 0 ? values.join(" | ") : "No insights."}`;
+  const bullet = (items: string[]) =>
+    items.length > 0 ? items.map((item) => `  - ${item}`).join("\n") : "  (none detected)";
 
-  return [
-    section("What changed", execBrief.what_changed),
-    section("Why", execBrief.why),
-    section("So what", execBrief.so_what),
-    section("What to do", execBrief.what_to_do),
-    `Confidence score: ${execBrief.confidence.score.toFixed(2)}`,
-    `Confidence rationale: ${execBrief.confidence.rationale}`,
-    section("Deltas vs last run", execBrief.deltas_vs_last_run),
-    `Appendix refs: ${execBrief.appendix_refs.join(", ")}`
-  ].join("\n");
+  const sections = [
+    `What changed:\n${bullet(execBrief.what_changed)}`,
+    `Why it changed:\n${bullet(execBrief.why)}`,
+    `What it means:\n${bullet(execBrief.so_what)}`,
+    `Recommended actions:\n${bullet(execBrief.what_to_do)}`
+  ];
+
+  if (execBrief.deltas_vs_last_run.length > 0) {
+    sections.push(`Changes since last run:\n${bullet(execBrief.deltas_vs_last_run)}`);
+  }
+
+  sections.push(`Confidence: ${(execBrief.confidence.score * 100).toFixed(0)}%`);
+
+  return sections.join("\n\n");
 }
 
 function answerConversationalPrompt(command: string, state: ChatState): ChatTurnResponse | null {
   if (isWellbeingQuestion(command)) {
     return {
       assistant_message:
-        "Doing well and ready to help. Tell me what report you want, for whom, and the main KPI, and I will draft it.",
+        "Doing great, thanks for asking! What kind of report are you looking to build? Tell me the audience and the key metric, and I'll get a draft going.",
       state
     };
   }
@@ -766,14 +769,14 @@ function answerConversationalPrompt(command: string, state: ChatState): ChatTurn
   if (isGreeting(command)) {
     return {
       assistant_message:
-        "Hi. I can help you define a report contract, run it, explain findings, and generate the PDF.",
+        "Hey! I'm your report assistant - I can help you set up a report, run it against your data, and generate a polished PDF. What are you working on?",
       state
     };
   }
 
   if (isThanks(command)) {
     return {
-      assistant_message: "Anytime. Share the report goal and I will continue from here.",
+      assistant_message: "Happy to help! Let me know if you want to tweak anything or build another report.",
       state
     };
   }
@@ -781,7 +784,12 @@ function answerConversationalPrompt(command: string, state: ChatState): ChatTurn
   if (asksForCapabilities(command)) {
     return {
       assistant_message:
-        "I can gather report requirements, run safe SELECT queries on connected tables, save contracts, execute governed report runs, summarize insights, and provide a PDF link.",
+        "I can help you with the full report workflow:\n" +
+        "- Define what to track (metrics, dimensions, SQL)\n" +
+        "- Connect to your database and run safe read-only queries\n" +
+        "- Execute the report pipeline and analyze the results\n" +
+        "- Generate a PDF you can share with stakeholders\n\n" +
+        "Just describe what you need and I'll guide you through it.",
       state
     };
   }
@@ -789,7 +797,7 @@ function answerConversationalPrompt(command: string, state: ChatState): ChatTurn
   if (asksForFindings(command)) {
     if (!state.last_exec_brief) {
       return {
-        assistant_message: "I do not have analyzed results yet. Run the report first by sending `run`.",
+        assistant_message: "I haven't run an analysis yet. Say \"run\" and I'll execute the report and show you what I find.",
         state
       };
     }
@@ -803,13 +811,13 @@ function answerConversationalPrompt(command: string, state: ChatState): ChatTurn
   if (asksForPdf(command)) {
     if (!state.last_run_id) {
       return {
-        assistant_message: "No run is available yet. Send `run` first, then I will provide a PDF link.",
+        assistant_message: "No report has been run yet. Say \"run\" first and I'll generate the PDF for you.",
         state
       };
     }
 
     return {
-      assistant_message: `You can download the latest PDF here: /api/runs/${state.last_run_id}/pdf`,
+      assistant_message: `Here's your PDF - click to download: /api/runs/${state.last_run_id}/pdf`,
       state,
       pdf_download_url: `/api/runs/${state.last_run_id}/pdf`
     };
@@ -870,7 +878,7 @@ async function syncConnectedTables(state: ChatState, apiClient: WebApiClient): P
   if (!context.connected || context.allowed_relations.length === 0) {
     return {
       assistant_message:
-        "No connected allowlisted tables found. Open /connect, connect your Postgres database, and select tables first.",
+        "No tables available yet. Head to /connect to connect your database and pick the tables you want to use.",
       state
     };
   }
@@ -891,22 +899,24 @@ async function syncConnectedTables(state: ChatState, apiClient: WebApiClient): P
 
   return {
     assistant_message:
-      `Synced ${context.allowed_relations.length} connected tables into guardrails.\n` +
-      `Default SQL updated to: ${nextState.draft.sql_template}\n` +
+      `Pulled in ${context.allowed_relations.length} table${context.allowed_relations.length === 1 ? "" : "s"} from your connected database.\n` +
+      `Default query set to: ${nextState.draft.sql_template}\n` +
       renderDraftChecklist(nextState),
     state: nextState
   };
 }
 
 function summarizeExecBrief(execBrief: ExecBriefRecord): string {
-  const top = (items: string[]) => (items.length > 0 ? items[0] : "No item");
+  const top = (items: string[]) => (items.length > 0 ? items[0] : "Nothing notable");
 
   return [
-    `Top finding: ${top(execBrief.what_changed)}`,
-    `Primary driver: ${top(execBrief.why)}`,
-    `Business impact: ${top(execBrief.so_what)}`,
-    `Recommended action: ${top(execBrief.what_to_do)}`,
-    `Confidence: ${execBrief.confidence.score.toFixed(2)} (${execBrief.confidence.rationale})`
+    `Here's a quick summary of the last run:\n`,
+    `The main finding is: ${top(execBrief.what_changed)}`,
+    `This happened because: ${top(execBrief.why)}`,
+    `What it means for the business: ${top(execBrief.so_what)}`,
+    `I'd recommend: ${top(execBrief.what_to_do)}`,
+    `\nConfidence: ${(execBrief.confidence.score * 100).toFixed(0)}%`,
+    `\nWant the full PDF? Just say "download".`
   ].join("\n");
 }
 
@@ -937,25 +947,28 @@ function asksForMissingDetails(command: string): boolean {
 function renderMissingDetails(state: ChatState): string {
   const missing = getMissingDraftFields(state);
   if (missing.length === 0) {
-    return 'You already gave enough to run. Say "run it now" when ready.';
+    return "You're all set - everything I need is filled in. Say \"run\" when you're ready!";
   }
 
-  return `To continue, I still need: ${missing.join(", ")}.`;
+  return `I still need: ${missing.join(", ")}. Once you provide ${missing.length === 1 ? "that" : "those"}, we're good to go.`;
 }
 
 function renderOpenEndedFallback(state: ChatState): string {
   const missing = getMissingDraftFields(state);
   if (missing.length > 0) {
     return [
-      COMMAND_HINT,
-      `I still need: ${missing.join(", ")}.`,
-      `Example: "Call it ${suggestReportName(state)} and run it now."`
+      "I'm not sure what you meant there.",
+      `To continue building the report, I still need: ${missing.join(", ")}.`,
+      `For example, try: "Call it ${suggestReportName(state)} and run it"`
     ].join("\n");
   }
 
   return [
-    COMMAND_HINT,
-    'You can say things like "run it now", "what did you find?", or "download the pdf".'
+    "I'm not sure what you meant. Here are some things you can try:",
+    "  - \"run\" to execute the report",
+    "  - \"what did you find?\" to see the analysis",
+    "  - \"download\" to get the PDF",
+    "  - or describe what you'd like to change"
   ].join("\n");
 }
 
@@ -963,11 +976,11 @@ function renderReportDiscoveryPrompt(state: ChatState): string {
   const draft = state.draft;
 
   return [
-    "Great, let's build your report.",
-    `Audience: ${draft.audience}`,
-    `Current focus: ${draft.metric_ids.join(", ")} by ${draft.dimension_ids.join(", ")}`,
-    `Suggested name: ${suggestReportName(state)}`,
-    "Tell me any edits in plain English, or say 'run it now'."
+    "Great, let's build that report! Here's what I have so far:",
+    `  Audience: ${draft.audience}`,
+    `  Tracking: ${draft.metric_ids.join(", ")} by ${draft.dimension_ids.join(", ")}`,
+    `  Suggested name: ${suggestReportName(state)}`,
+    "\nFeel free to adjust anything, or say \"run\" when you're ready."
   ].join("\n");
 }
 
