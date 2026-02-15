@@ -971,6 +971,39 @@ function formatConnectionError(
     return `Timed out connecting to ${host}${port}. Check network/firewall/VPN restrictions and that the database is reachable.`;
   }
 
+  if (
+    code === "SELF_SIGNED_CERT_IN_CHAIN" ||
+    code === "DEPTH_ZERO_SELF_SIGNED_CERT" ||
+    code === "UNABLE_TO_VERIFY_LEAF_SIGNATURE" ||
+    code === "UNABLE_TO_GET_ISSUER_CERT_LOCALLY" ||
+    /self-signed certificate/i.test(rawMessage) ||
+    /unable to verify/i.test(rawMessage)
+  ) {
+    const maybeSupabase =
+      Boolean(parsed.hostname && /\\.supabase\\.co$/i.test(parsed.hostname)) ||
+      Boolean(parsed.hostname && /\\.pooler\\.supabase\\.com$/i.test(parsed.hostname));
+    const supabaseHint = maybeSupabase
+      ? "For Supabase, prefer Connection Pooling -> Transaction mode (host *.pooler.supabase.com) on port 6543."
+      : "";
+
+    return [
+      `TLS certificate validation failed for ${host}${port}.`,
+      "This usually means your network is intercepting TLS (corporate SSL inspection) or the DB uses a self-signed certificate.",
+      supabaseHint,
+      "Fix options: use a network without SSL inspection, or add your org/DB CA to Node via NODE_EXTRA_CA_CERTS and restart the server.",
+      "Dev-only workaround: append sslmode=no-verify to the connection string."
+    ]
+      .filter((chunk) => chunk.length > 0)
+      .join(" ");
+  }
+
+  if (
+    code === "ERR_TLS_CERT_ALTNAME_INVALID" ||
+    rawMessage.toLowerCase().includes("hostname/ip does not match certificate")
+  ) {
+    return `TLS hostname mismatch for ${host}${port}. Ensure you are connecting via the exact host name issued on the certificate (avoid raw IPs).`;
+  }
+
   if (code === "28P01") {
     return "Authentication failed (28P01). Verify username/password in your connection string.";
   }
