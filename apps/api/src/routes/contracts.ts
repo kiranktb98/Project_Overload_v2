@@ -42,19 +42,24 @@ export function registerContractRoutes(
       return reply.code(404).send({ message: "Report contract not found" });
     }
 
-    const result = await runReportContractPipeline({
-      contract,
-      store,
-      data_plane: dataPlane,
-      analyst_client: analystClient
-    });
+    try {
+      const result = await runReportContractPipeline({
+        contract,
+        store,
+        data_plane: dataPlane,
+        analyst_client: analystClient
+      });
 
-    return reply.code(200).send({
-      run_id: result.run.id,
-      contract_id: id,
-      exec_brief: result.exec_brief,
-      pdf_path: `/report-runs/${result.run.id}/pdf`
-    });
+      return reply.code(200).send({
+        run_id: result.run.id,
+        contract_id: id,
+        exec_brief: result.exec_brief,
+        pdf_path: `/report-runs/${result.run.id}/pdf`
+      });
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "Report pipeline failed";
+      return reply.code(500).send({ message: `Report run failed: ${message}` });
+    }
   });
 
   app.get("/report-contracts/:id/runs", async (request, reply) => {
@@ -88,15 +93,20 @@ export function registerContractRoutes(
       return reply.code(404).send({ message: "Report run not found" });
     }
 
-    const execBrief = ExecBriefSchema.parse(run.exec_brief);
-    const html = renderExecBriefHtml(execBrief);
-    const pdf = await renderPdfFromHtml(html);
+    try {
+      const execBrief = ExecBriefSchema.parse(run.exec_brief);
+      const html = renderExecBriefHtml(execBrief);
+      const pdf = await renderPdfFromHtml(html);
 
-    return reply
-      .code(200)
-      .header("content-type", "application/pdf")
-      .header("content-disposition", `attachment; filename="exec-brief-${run.id}.pdf"`)
-      .send(pdf.bytes);
+      return reply
+        .code(200)
+        .header("content-type", "application/pdf")
+        .header("content-disposition", `attachment; filename="exec-brief-${run.id}.pdf"`)
+        .send(pdf.bytes);
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "PDF generation failed";
+      return reply.code(500).send({ message });
+    }
   });
 }
 

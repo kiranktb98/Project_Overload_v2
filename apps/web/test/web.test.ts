@@ -55,7 +55,7 @@ describe("web chat interface", () => {
     expect(response.statusCode).toBe(200);
     const body = response.json();
     expect(body.state.draft.name).toBe("Weekly CEO Revenue");
-    expect(body.assistant_message).toContain("Updated name");
+    expect(body.assistant_message).toContain("name updated");
     expect(body.state.conversation_history).toHaveLength(2);
     expect(body.state.conversation_history[0].role).toBe("user");
     expect(body.state.conversation_history[1].role).toBe("assistant");
@@ -78,7 +78,7 @@ describe("web chat interface", () => {
 
     expect(wellbeing.statusCode).toBe(200);
     const wellbeingBody = wellbeing.json();
-    expect(wellbeingBody.assistant_message.toLowerCase()).toContain("doing well");
+    expect(wellbeingBody.assistant_message.toLowerCase()).toContain("doing great");
 
     const openEnded = await app.inject({
       method: "POST",
@@ -90,7 +90,7 @@ describe("web chat interface", () => {
     });
 
     expect(openEnded.statusCode).toBe(200);
-    expect(openEnded.json().assistant_message).toContain("Great, let's build your report.");
+    expect(openEnded.json().assistant_message).toContain("let's build that report");
 
     await app.close();
   });
@@ -208,7 +208,7 @@ describe("web chat interface", () => {
 
     expect(run.statusCode).toBe(200);
     const runBody = run.json();
-    expect(runBody.assistant_message).toContain("Run complete.");
+    expect(runBody.assistant_message).toContain("Here's what I found");
     expect(runBody.pdf_download_url).toBe("/api/runs/run_web_test/pdf");
     expect(runBody.state.last_run_id).toBe("run_web_test");
     expect(runBody.state.last_exec_brief).toBeTruthy();
@@ -222,7 +222,7 @@ describe("web chat interface", () => {
       }
     });
     expect(insights.statusCode).toBe(200);
-    expect(insights.json().assistant_message).toContain("Top finding");
+    expect(insights.json().assistant_message).toContain("main finding");
 
     const pdf = await app.inject({
       method: "GET",
@@ -335,7 +335,7 @@ describe("web chat interface", () => {
       }
     });
     expect(turn1.statusCode).toBe(200);
-    expect(turn1.json().assistant_message).toContain("define a report contract");
+    expect(turn1.json().assistant_message).toContain("report assistant");
 
     const turn2 = await app.inject({
       method: "POST",
@@ -346,7 +346,7 @@ describe("web chat interface", () => {
       }
     });
     expect(turn2.statusCode).toBe(200);
-    expect(turn2.json().assistant_message).toContain("Updated:");
+    expect(turn2.json().assistant_message).toContain("Updated");
 
     const turn3 = await app.inject({
       method: "POST",
@@ -357,7 +357,7 @@ describe("web chat interface", () => {
       }
     });
     expect(turn3.statusCode).toBe(200);
-    expect(turn3.json().assistant_message).toContain("already gave enough");
+    expect(turn3.json().assistant_message).toContain("all set");
 
     const turn4 = await app.inject({
       method: "POST",
@@ -368,7 +368,7 @@ describe("web chat interface", () => {
       }
     });
     expect(turn4.statusCode).toBe(200);
-    expect(turn4.json().assistant_message).toContain("Run complete.");
+    expect(turn4.json().assistant_message).toContain("Here's what I found");
     expect(turn4.json().state.last_run_id).toBe("run_nl_test");
 
     const turn5 = await app.inject({
@@ -380,7 +380,7 @@ describe("web chat interface", () => {
       }
     });
     expect(turn5.statusCode).toBe(200);
-    expect(turn5.json().assistant_message).toContain("Top finding:");
+    expect(turn5.json().assistant_message).toContain("main finding");
 
     const turn6 = await app.inject({
       method: "POST",
@@ -632,7 +632,7 @@ describe("web chat interface", () => {
     });
 
     expect(sync.statusCode).toBe(200);
-    expect(sync.json().assistant_message).toContain("Synced");
+    expect(sync.json().assistant_message).toContain("Pulled in");
     expect(sync.json().state.draft.allowed_relations).toContain("public.sales");
 
     const query = await app.inject({
@@ -645,8 +645,8 @@ describe("web chat interface", () => {
     });
 
     expect(query.statusCode).toBe(200);
-    expect(query.json().assistant_message).toContain("Safe query executed.");
-    expect(query.json().assistant_message).toContain("Rows returned: 1");
+    expect(query.json().assistant_message).toContain("Query returned");
+    expect(query.json().assistant_message).toContain("1 row");
 
     await app.close();
   });

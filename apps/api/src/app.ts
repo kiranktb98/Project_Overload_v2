@@ -1,4 +1,5 @@
 import Fastify from "fastify";
+import type { FastifyRequest, FastifyReply } from "fastify";
 import { ZodError } from "zod";
 import { createDataPlaneFromEnv, type DataPlane } from "@project-overload/dataplane";
 import { createAnalystClientFromEnv, type AnalystClient } from "@project-overload/llm-client";
@@ -18,7 +19,11 @@ export type ApiDependencies = {
 };
 
 export async function buildApiApp(options: Partial<ApiDependencies> = {}) {
-  const app = Fastify({ logger: false });
+  const app = Fastify({
+    logger: {
+      level: process.env.LOG_LEVEL ?? "info"
+    }
+  });
 
   app.addContentTypeParser(
     "application/json",
@@ -60,6 +65,19 @@ export async function buildApiApp(options: Partial<ApiDependencies> = {}) {
     });
   const analystClient = options.analyst_client ?? createAnalystClientFromEnv();
 
+  const rateLimiter = createRateLimiter({
+    window_ms: 60_000,
+    max_requests: Number.parseInt(process.env.RATE_LIMIT_RPM ?? "120", 10)
+  });
+
+  app.addHook("onRequest", async (request: FastifyRequest, reply: FastifyReply) => {
+    if (request.url === "/health") return;
+    const ip = request.ip || "unknown";
+    if (!rateLimiter.check(ip)) {
+      return reply.code(429).send({ message: "Too many requests. Please slow down." });
+    }
+  });
+
   app.get("/health", async () => ({ status: "ok", service: "api" }));
 
   registerSemanticRoutes(app, store);
@@ -86,10 +104,49 @@ export async function buildApiApp(options: Partial<ApiDependencies> = {}) {
   });
 
   app.addHook("onClose", async () => {
+    rateLimiter.destroy();
     await store.close();
     await connectionManager.close();
     await localRowProviderRuntime.close();
   });
 
   return app;
+}
+
+type RateLimiterOptions = {
+  window_ms: number;
+  max_requests: number;
+};
+
+function createRateLimiter(options: RateLimiterOptions) {
+  const hits = new Map<string, number[]>();
+  const cleanup = setInterval(() => {
+    const cutoff = Date.now() - options.window_ms;
+    for (const [key, timestamps] of hits) {
+      const valid = timestamps.filter((t) => t > cutoff);
+      if (valid.length === 0) {
+        hits.delete(key);
+      } else {
+        hits.set(key, valid);
+      }
+    }
+  }, options.window_ms);
+
+  return {
+    check(key: string): boolean {
+      const now = Date.now();
+      const cutoff = now - options.window_ms;
+      const existing = (hits.get(key) ?? []).filter((t) => t > cutoff);
+      if (existing.length >= options.max_requests) {
+        return false;
+      }
+      existing.push(now);
+      hits.set(key, existing);
+      return true;
+    },
+    destroy() {
+      clearInterval(cleanup);
+      hits.clear();
+    }
+  };
 }

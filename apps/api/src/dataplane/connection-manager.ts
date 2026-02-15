@@ -14,7 +14,17 @@ const EXCLUDED_SCHEMAS = [
   "pg_toast",
   "extensions",
   "auth",
-  "storage"
+  "storage",
+  "supabase_functions",
+  "supabase_migrations",
+  "graphql",
+  "graphql_public",
+  "realtime",
+  "vault",
+  "pgsodium",
+  "net",
+  "_realtime",
+  "_analytics"
 ];
 
 export type RelationHealthStatus = "OK" | "NO_SELECT_GRANT" | "RLS_NO_POLICY";
@@ -707,14 +717,14 @@ async function listRelationHealth(pool: Pool): Promise<RelationHealth[]> {
           WHERE p.schemaname = n.nspname
             AND p.tablename = c.relname
             AND (
-              p.polroles IS NULL
-              OR coalesce(array_length(p.polroles, 1), 0) = 0
-              OR 0 = ANY (p.polroles)
+              p.roles = '{}'
+              OR current_user = ANY (p.roles)
               OR EXISTS (
                 SELECT 1
-                FROM unnest(p.polroles) AS role_oid
-                WHERE role_oid <> 0
-                  AND pg_has_role(current_user, role_oid, 'member')
+                FROM unnest(p.roles) AS role_name
+                WHERE role_name <> ''
+                  AND EXISTS (SELECT 1 FROM pg_roles WHERE rolname = role_name)
+                  AND pg_has_role(current_user, role_name, 'member')
               )
             )
         ) AS policies_count_for_me

@@ -7,6 +7,8 @@ import { loadEnvironment } from "./load-env";
 
 loadEnvironment(import.meta.url);
 
+validateWorkerEnv();
+
 const intervalMs = Number.parseInt(process.env.WORKER_TICK_MS ?? "30000", 10);
 const appTimezone = process.env.APP_TZ ?? "UTC";
 const enableDemoSchedule = parseBoolean(process.env.WORKER_ENABLE_DEMO_SCHEDULE ?? "false");
@@ -47,4 +49,16 @@ process.on("SIGTERM", () => {
 function parseBoolean(value: string): boolean {
   const normalized = value.trim().toLowerCase();
   return normalized === "true" || normalized === "1" || normalized === "yes";
+}
+
+function validateWorkerEnv(): void {
+  const apiBaseUrl = process.env.WORKER_API_BASE_URL;
+  if (!apiBaseUrl) {
+    process.stderr.write("[env] WORKER_API_BASE_URL is not set - using default http://localhost:4000\n");
+  }
+
+  const queueDriver = (process.env.WORKER_QUEUE_DRIVER ?? "").toLowerCase();
+  if (queueDriver === "redis" && !process.env.REDIS_URL) {
+    process.stderr.write("[env] WORKER_QUEUE_DRIVER=redis but REDIS_URL is missing. Worker will fail to start queue.\n");
+  }
 }
