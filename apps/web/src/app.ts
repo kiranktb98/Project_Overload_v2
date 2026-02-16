@@ -4,6 +4,7 @@ import {
   appendConversationTurn,
   ChatTurnRequestSchema,
   createWebApiClient,
+  fetchCatalogContext,
   handleChatTurn,
   parseChatState
 } from "./chat";
@@ -66,11 +67,14 @@ export function buildWebApp(options: WebAppDependencies = {}) {
         state,
         api_client: apiClient
       });
+      const catalogCtx = await fetchCatalogContext(apiClient);
       const aiMessage = await conversationClient.respond({
         user_message: parsed.data.message,
-        deterministic_response: response.assistant_message,
+        action_context: response.assistant_message,
         state: response.state,
-        history: state.conversation_history
+        history: state.conversation_history,
+        catalog_summary: catalogCtx.catalog_summary,
+        business_context: catalogCtx.business_context
       });
       const nextState = appendConversationTurn(response.state, parsed.data.message, aiMessage);
 
@@ -197,6 +201,37 @@ export function buildWebApp(options: WebAppDependencies = {}) {
       api_base_url: apiBaseUrl,
       method: "POST",
       path: "/connections/query",
+      body: request.body,
+      reply
+    });
+  });
+
+  app.get("/api/db/catalog", async (_request, reply) => {
+    return proxyToApi({
+      fetch_impl: options.fetch_impl,
+      api_base_url: apiBaseUrl,
+      method: "GET",
+      path: "/connections/catalog",
+      reply
+    });
+  });
+
+  app.post("/api/db/catalog/refresh", async (_request, reply) => {
+    return proxyToApi({
+      fetch_impl: options.fetch_impl,
+      api_base_url: apiBaseUrl,
+      method: "POST",
+      path: "/connections/catalog/refresh",
+      reply
+    });
+  });
+
+  app.post("/api/db/business-context", async (request, reply) => {
+    return proxyToApi({
+      fetch_impl: options.fetch_impl,
+      api_base_url: apiBaseUrl,
+      method: "POST",
+      path: "/connections/business-context",
       body: request.body,
       reply
     });

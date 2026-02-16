@@ -2,16 +2,20 @@ import { randomUUID } from "node:crypto";
 import type { FastifyInstance } from "fastify";
 import { ExecBriefSchema, ReportContractSchema, ReportGuardrailsSchema } from "@project-overload/shared";
 import type { DataPlane } from "@project-overload/dataplane";
-import type { AnalystClient } from "@project-overload/llm-client";
+import type { AnalystClient, QueryStrategistClient, ReportComposerClient } from "@project-overload/llm-client";
 import { renderExecBriefHtml, renderPdfFromHtml } from "@project-overload/report-render";
 import type { MetadataStore } from "../store";
+import type { RuntimeConnectionManager } from "../dataplane/connection-manager";
 import { runReportContractPipeline } from "../services/run-contract";
 
 export function registerContractRoutes(
   app: FastifyInstance,
   store: MetadataStore,
   dataPlane: DataPlane,
-  analystClient: AnalystClient
+  analystClient: AnalystClient,
+  queryStrategist: QueryStrategistClient,
+  reportComposer: ReportComposerClient,
+  connectionManager: RuntimeConnectionManager
 ): void {
   app.post("/report-contracts", async (request, reply) => {
     const payload = toReportContract(request.body);
@@ -43,17 +47,23 @@ export function registerContractRoutes(
     }
 
     try {
+      const catalogSummary = buildCatalogSummary(connectionManager);
+
       const result = await runReportContractPipeline({
         contract,
         store,
         data_plane: dataPlane,
-        analyst_client: analystClient
+        analyst_client: analystClient,
+        query_strategist: queryStrategist,
+        report_composer: reportComposer,
+        catalog_summary: catalogSummary
       });
 
       return reply.code(200).send({
         run_id: result.run.id,
         contract_id: id,
         exec_brief: result.exec_brief,
+        exec_brief_html: result.html,
         pdf_path: `/report-runs/${result.run.id}/pdf`
       });
     } catch (error) {
@@ -122,6 +132,26 @@ function toReportContract(body: unknown) {
     sql_template: payload.sql_template ?? "SELECT * FROM analytics.sales",
     metric_ids: Array.isArray(payload.metric_ids) ? payload.metric_ids : [],
     dimension_ids: Array.isArray(payload.dimension_ids) ? payload.dimension_ids : [],
+    insight_mode: typeof payload.insight_mode === "string" ? payload.insight_mode : "business",
     guardrails: ReportGuardrailsSchema.parse(payload.guardrails ?? {})
   });
+}
+
+function buildCatalogSummary(connectionManager: RuntimeConnectionManager): string {
+  const catalog = connectionManager.getCatalog();
+  if (!catalog || !catalog.tables || catalog.tables.length === 0) {
+    return "No catalog available.";
+  }
+
+  const lines: string[] = [];
+  for (const table of catalog.tables.slice(0, 20)) {
+    const cols = table.columns.slice(0, 20).map((c: { column_name: string; data_type: string }) =>
+      `${c.column_name}(${c.data_type})`
+    ).join(", ");
+    const extra = table.columns.length > 20 ? ` +${table.columns.length - 20} more` : "";
+    const rowInfo = table.row_count_estimate > 0 ? ` ~${table.row_count_estimate} rows` : "";
+    lines.push(`${table.qualified_name} [${table.relation_type}]${rowInfo}: ${cols}${extra}`);
+  }
+
+  return lines.join("\n");
 }

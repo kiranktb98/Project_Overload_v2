@@ -107,6 +107,7 @@ function createContract(contractId: string, scheduleCron: string | null): Report
     sql_template: "SELECT * FROM analytics.sales",
     metric_ids: ["metric_revenue"],
     dimension_ids: ["region"],
+    insight_mode: "business",
     guardrails: {
       evidence_row_cap: 200,
       max_batches: 5,

@@ -72,6 +72,7 @@ export type ConnectionContext = {
   source: "runtime" | "env" | "fallback" | "none";
   read_only_enforced: true;
   select_only_enforced: true;
+  catalog: DataCatalog | null;
 };
 
 export type QueryResultPayload = {
@@ -107,6 +108,7 @@ export type ConnectInput = {
   tls_ca_pem?: string;
   name?: string;
   allowed_relations?: string[];
+  business_context?: string;
 };
 
 export type ConnectionManagerOptions = {
@@ -115,6 +117,26 @@ export type ConnectionManagerOptions = {
   default_timeout_ms?: number;
   default_limit?: number;
   app_encryption_key?: string;
+};
+
+export type TableColumnInfo = {
+  column_name: string;
+  data_type: string;
+  is_nullable: boolean;
+};
+
+export type TableCatalogEntry = {
+  qualified_name: string;
+  relation_type: "TABLE" | "VIEW" | "MATERIALIZED VIEW";
+  columns: TableColumnInfo[];
+  sample_rows: Record<string, unknown>[];
+  row_count_estimate: number;
+};
+
+export type DataCatalog = {
+  tables: TableCatalogEntry[];
+  business_context: string;
+  cataloged_at: string;
 };
 
 type ActiveConnection = {
@@ -131,6 +153,7 @@ type ActiveConnection = {
   allowed_relations: string[];
   relations_health: RelationHealth[];
   source: "runtime" | "env";
+  catalog: DataCatalog | null;
 };
 
 type LastTestSnapshot = {
@@ -293,8 +316,17 @@ export class RuntimeConnectionManager {
         connected_at: new Date().toISOString(),
         allowed_relations: allowed,
         relations_health: relations,
-        source
+        source,
+        catalog: null
       };
+
+      // Auto-catalog: sample rows and column info for allowed tables
+      try {
+        const catalog = await buildDataCatalog(pool, allowed, relations, input.business_context ?? "");
+        this.active.catalog = catalog;
+      } catch {
+        // Catalog failure should not block connection
+      }
 
       if (previous) {
         await previous.pool.end();
@@ -329,7 +361,8 @@ export class RuntimeConnectionManager {
         available_relations: this.active.relations_health.map((entry) => entry.qualified_name),
         source: this.active.source,
         read_only_enforced: true,
-        select_only_enforced: true
+        select_only_enforced: true,
+        catalog: this.active.catalog
       };
     }
 
@@ -345,7 +378,8 @@ export class RuntimeConnectionManager {
         available_relations: [],
         source: "fallback",
         read_only_enforced: true,
-        select_only_enforced: true
+        select_only_enforced: true,
+        catalog: null
       };
     }
 
@@ -360,8 +394,34 @@ export class RuntimeConnectionManager {
       available_relations: [],
       source: "none",
       read_only_enforced: true,
-      select_only_enforced: true
+      select_only_enforced: true,
+      catalog: null
     };
+  }
+
+  getCatalog(): DataCatalog | null {
+    return this.active?.catalog ?? null;
+  }
+
+  updateBusinessContext(context: string): void {
+    if (!this.active || !this.active.catalog) {
+      throw new Error("No active connection with catalog.");
+    }
+    this.active.catalog.business_context = context;
+  }
+
+  async refreshCatalog(): Promise<DataCatalog | null> {
+    if (!this.active) {
+      throw new Error("No active database connection.");
+    }
+    const catalog = await buildDataCatalog(
+      this.active.pool,
+      this.active.allowed_relations,
+      this.active.relations_health,
+      this.active.catalog?.business_context ?? ""
+    );
+    this.active.catalog = catalog;
+    return catalog;
   }
 
   getTables(): RelationHealth[] {
@@ -775,7 +835,9 @@ function classifyRelationStatus(relation: {
 }
 
 function selectRecommendedAllowlist(relations: RelationHealth[]): string[] {
-  const okRelations = relations.filter((entry) => entry.status === "OK");
+  // Include both OK and RLS_NO_POLICY tables — RLS tables are still introspectable
+  // (information_schema.columns works, sample rows fail gracefully via try/catch)
+  const okRelations = relations.filter((entry) => entry.status === "OK" || entry.status === "RLS_NO_POLICY");
   const analyticsOrReportingViews = okRelations.filter(
     (entry) =>
       ["analytics", "reporting"].includes(entry.schema_name.toLowerCase()) &&
@@ -1116,4 +1178,85 @@ function sanitizeTlsCaPem(value?: string): string | undefined {
   }
 
   return pem;
+}
+
+async function buildDataCatalog(
+  pool: Pool,
+  allowedRelations: string[],
+  relationsHealth: RelationHealth[],
+  businessContext: string
+): Promise<DataCatalog> {
+  const tables: TableCatalogEntry[] = [];
+
+  for (const qualifiedName of allowedRelations.slice(0, 30)) {
+    const health = relationsHealth.find((r) => r.qualified_name === qualifiedName);
+    if (!health || !health.has_select_privilege) continue;
+
+    const [schema, table] = qualifiedName.includes(".")
+      ? qualifiedName.split(".", 2)
+      : ["public", qualifiedName];
+
+    try {
+      const colResult = await pool.query<{
+        column_name: string;
+        data_type: string;
+        is_nullable: string;
+      }>(
+        `SELECT column_name, data_type, is_nullable
+         FROM information_schema.columns
+         WHERE table_schema = $1 AND table_name = $2
+         ORDER BY ordinal_position`,
+        [schema, table]
+      );
+
+      const columns: TableColumnInfo[] = colResult.rows.map((row) => ({
+        column_name: row.column_name,
+        data_type: row.data_type,
+        is_nullable: row.is_nullable === "YES"
+      }));
+
+      let sampleRows: Record<string, unknown>[] = [];
+      try {
+        const sampleResult = await pool.query(
+          `SELECT * FROM ${quoteIdent(schema)}.${quoteIdent(table)} LIMIT 5`
+        );
+        sampleRows = sampleResult.rows;
+      } catch {
+        // Some tables may not be queryable (RLS, etc.)
+      }
+
+      let rowCountEstimate = 0;
+      try {
+        const countResult = await pool.query<{ estimate: string }>(
+          `SELECT reltuples::bigint AS estimate
+           FROM pg_class
+           WHERE oid = $1::regclass`,
+          [`${quoteIdent(schema)}.${quoteIdent(table)}`]
+        );
+        rowCountEstimate = Math.max(0, Number.parseInt(countResult.rows[0]?.estimate ?? "0", 10));
+      } catch {
+        // Estimate unavailable
+      }
+
+      tables.push({
+        qualified_name: qualifiedName,
+        relation_type: health.relation_type,
+        columns,
+        sample_rows: sampleRows,
+        row_count_estimate: rowCountEstimate
+      });
+    } catch {
+      // Skip tables we can't introspect
+    }
+  }
+
+  return {
+    tables,
+    business_context: businessContext,
+    cataloged_at: new Date().toISOString()
+  };
+}
+
+function quoteIdent(identifier: string): string {
+  return `"${identifier.replace(/"/g, '""')}"`;
 }

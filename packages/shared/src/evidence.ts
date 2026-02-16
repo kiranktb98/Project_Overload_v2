@@ -16,7 +16,29 @@ export const AnalystInputSchema = z.object({
   batch_index: z.number().int().min(0),
   total_batches: z.number().int().min(1).max(MAX_BATCHES),
   summary_word_budget: z.number().int().min(50).max(800),
-  evidence_packet: EvidencePacketSchema
+  evidence_packet: EvidencePacketSchema,
+  question: z.string().min(1).optional(),
+  insight_mode: z.enum(["business", "data"]).default("business")
+});
+
+export const QueryStrategyInputSchema = z.object({
+  catalog_summary: z.string().min(1),
+  report_goal: z.string().min(1),
+  audience: z.string().min(1),
+  insight_mode: z.enum(["business", "data"]),
+  metric_ids: z.array(z.string().min(1)).default([]),
+  dimension_ids: z.array(z.string().min(1)).default([]),
+  allowed_relations: z.array(z.string().min(1)).default([])
+});
+
+export const PlannedQuerySchema = z.object({
+  question: z.string().min(1),
+  sql: z.string().min(1),
+  purpose: z.string().min(1)
+});
+
+export const QueryStrategyOutputSchema = z.object({
+  queries: z.array(PlannedQuerySchema).min(1).max(5)
 });
 
 export const BatchAnalysisSchema = z.object({
@@ -49,3 +71,6 @@ export type EvidencePacket = z.infer<typeof EvidencePacketSchema>;
 export type AnalystInput = z.infer<typeof AnalystInputSchema>;
 export type BatchAnalysis = z.infer<typeof BatchAnalysisSchema>;
 export type ExecBrief = z.infer<typeof ExecBriefSchema>;
+export type QueryStrategyInput = z.infer<typeof QueryStrategyInputSchema>;
+export type PlannedQuery = z.infer<typeof PlannedQuerySchema>;
+export type QueryStrategyOutput = z.infer<typeof QueryStrategyOutputSchema>;

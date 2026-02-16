@@ -11,6 +11,7 @@ const sampleInput: AnalystInput = {
   batch_index: 0,
   total_batches: 1,
   summary_word_budget: 180,
+  insight_mode: "business",
   evidence_packet: {
     request_id: "req_1",
     batch_index: 0,

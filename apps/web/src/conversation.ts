@@ -4,9 +4,12 @@ export type ConversationProvider = "stub" | "openai" | "openrouter";
 
 export type ConversationTurnInput = {
   user_message: string;
-  deterministic_response: string;
+  /** Structured context from action execution — serves as fallback response if LLM is unavailable. */
+  action_context: string;
   state: ChatState;
   history: ChatHistoryTurn[];
+  catalog_summary?: string;
+  business_context?: string;
 };
 
 export interface ConversationClient {
@@ -40,7 +43,7 @@ type ProviderRequest = {
 
 const DEFAULT_TIMEOUT_MS = 15000;
 const DEFAULT_OPENAI_MODEL = "gpt-4.1-mini";
-const DEFAULT_OPENROUTER_MODEL = "openai/gpt-5.2";
+const DEFAULT_OPENROUTER_MODEL = "anthropic/claude-sonnet-4.5";
 const DEFAULT_OPENROUTER_BASE_URL = "https://openrouter.ai/api/v1";
 
 export function createPassthroughConversationClient(): ConversationClient {
@@ -48,7 +51,7 @@ export function createPassthroughConversationClient(): ConversationClient {
     provider: "stub",
     mode: "deterministic",
     async respond(input: ConversationTurnInput): Promise<string> {
-      return input.deterministic_response;
+      return input.action_context;
     }
   };
 }
@@ -208,7 +211,7 @@ function buildOpenAiRequest(
       input: [
         {
           role: "system",
-          content: [{ type: "text", text: conversationalSystemPrompt() }]
+          content: [{ type: "text", text: conversationalSystemPrompt(input) }]
         },
         {
           role: "user",
@@ -246,56 +249,105 @@ function buildOpenRouterRequest(
       model: options.openrouter_model ?? DEFAULT_OPENROUTER_MODEL,
       temperature: 0.3,
       messages: [
-        { role: "system", content: conversationalSystemPrompt() },
+        { role: "system", content: conversationalSystemPrompt(input) },
         { role: "user", content: conversationalUserPrompt(input) }
       ]
     }
   };
 }
 
-function conversationalSystemPrompt(): string {
-  return [
-    "You are a friendly, knowledgeable report assistant working inside Project Overload.",
-    "Your job is to help users build, run, and understand their report contracts.",
-    "Rewrite the deterministic assistant response to sound warm, natural, and human - like a helpful colleague, not a robot.",
-    "Use casual but professional language. Be concise. Avoid bullet-point lists unless the data calls for it.",
+function conversationalSystemPrompt(input: ConversationTurnInput): string {
+  const lines = [
+    "You are a data insights agent inside Project Overload — a smart, knowledgeable colleague who helps everyone in the organization understand their data and build reports.",
+    "",
+    "PERSONALITY & TONE:",
+    "- Adapt to whoever you're talking to. Strategic and high-level for executives, tactical and detailed for analysts or ops people.",
+    "- Be warm and professional — like a data-savvy colleague, not a chatbot or a form wizard.",
+    "- Be concise. 2-4 sentences typical. Expand when sharing analysis, data descriptions, or multiple insights.",
+    "- Support brainstorming and open-ended exploration. Engage with half-formed ideas.",
+    "- Only mention data patterns when they're relevant to what the user is asking about. Don't volunteer unsolicited analysis.",
+    "",
+    "WHAT YOU CAN DO:",
+    "- Explore the database: describe tables, columns, data types, sample values, row counts.",
+    "- Suggest reports and analyses based on the actual data available.",
+    "- Help build report contracts: the system auto-detects report parameters (audience, metrics, dimensions, schedule, SQL) from natural conversation.",
+    "- Answer business questions using the connected data.",
+    "- Run safe read-only SQL queries when asked.",
+    "- Execute reports and generate PDF downloads with executive-level analysis.",
+    "- Switch between two insight modes:",
+    "  * Business Insights: trends, opportunities, risks, actionable recommendations. Treats data as trustworthy.",
+    "  * Data Quality: data completeness, anomalies, null rates, issues to fix. Treats data critically.",
+    "- When the user asks for a report or analysis, check which insight mode they want. If unclear, briefly mention both options (\"Would you like business insights or a data quality check?\"). The user can say 'data insights' or 'business insights' to switch.",
+    "",
+    "HOW THE SYSTEM WORKS:",
+    "The system detects actions from the user's message (save, run, query, draft updates) and executes them automatically.",
+    "The ACTION CONTEXT in the user prompt shows what happened. Incorporate results naturally — don't repeat raw IDs or JSON, interpret them for the user.",
+    "If no action was taken, you're just having a conversation. Answer naturally using the catalog and business context below.",
+    "",
     "CRITICAL RULES:",
-    "- Never invent data, metrics, numbers, IDs, links, or outcomes that aren't in the deterministic response.",
-    "- Preserve all run IDs, download URLs, field names, and technical constraints exactly as given.",
-    "- If showing analysis results, keep the structure clear but make the language natural.",
-    "- Keep responses short - usually 2-4 sentences unless sharing detailed analysis.",
-    "Return plain text only."
-  ].join(" ");
+    "- NEVER ask \"who is the audience?\" or \"what format do you want?\" — infer the audience and style from conversation context. If someone talks like a CEO, the report is for executives. If they're drilling into operational details, it's for managers or analysts.",
+    "- Reference actual table names, column names, and data types from the catalog.",
+    "- Never invent tables, columns, or data that aren't in the catalog.",
+    "- If no database is connected or the catalog is empty, suggest visiting /connect.",
+    "- Don't push the user into a rigid workflow. Let the conversation flow naturally.",
+    "- For greetings (hi, hello, hey), respond warmly and briefly. Don't assume they want a specific report or analysis — just say hello back and let them lead.",
+    "- When draft fields get updated automatically, acknowledge the changes casually (\"Got it, I'll focus on revenue by region\") — don't list them like form fields.",
+    "- Preserve all run IDs, contract IDs, and download URLs exactly when relaying action results.",
+    "- Return plain text only."
+  ];
+
+  if (input.business_context) {
+    lines.push("", "BUSINESS CONTEXT (what this organization does):", input.business_context);
+  }
+
+  if (input.catalog_summary) {
+    lines.push("", "DATABASE CATALOG (the user's actual connected data):", input.catalog_summary);
+  }
+
+  const currentMode = input.state.draft.insight_mode === "data" ? "Data Quality" : "Business Insights";
+  lines.push("", `CURRENT INSIGHT MODE: ${currentMode}`);
+
+  return lines.join("\n");
 }
 
 function conversationalUserPrompt(input: ConversationTurnInput): string {
-  const stateSnapshot = {
+  const stateSnapshot: Record<string, unknown> = {
     draft: {
       name: input.state.draft.name,
       audience: input.state.draft.audience,
       timezone: input.state.draft.timezone,
       schedule_cron: input.state.draft.schedule_cron,
       metric_ids: input.state.draft.metric_ids,
-      dimension_ids: input.state.draft.dimension_ids
+      dimension_ids: input.state.draft.dimension_ids,
+      insight_mode: input.state.draft.insight_mode
     },
     contract_id: input.state.contract_id,
-    last_run_id: input.state.last_run_id,
-    has_exec_brief: input.state.last_exec_brief !== null
+    last_run_id: input.state.last_run_id
   };
+
+  if (input.state.last_exec_brief) {
+    stateSnapshot.last_analysis = {
+      what_changed: input.state.last_exec_brief.what_changed,
+      why: input.state.last_exec_brief.why,
+      so_what: input.state.last_exec_brief.so_what,
+      what_to_do: input.state.last_exec_brief.what_to_do,
+      confidence: input.state.last_exec_brief.confidence.score
+    };
+  }
 
   const history = serializeHistory(input.history);
 
   return [
-    "Conversation context:",
-    history.length > 0 ? history : "(no prior turns)",
+    "Conversation history:",
+    history.length > 0 ? history : "(new conversation)",
     "",
-    "Latest user message:",
+    "User message:",
     input.user_message,
     "",
-    "Deterministic assistant response (must stay semantically true):",
-    input.deterministic_response,
+    "Action context (what the system executed in response):",
+    input.action_context,
     "",
-    "Current chat state:",
+    "Current report draft state:",
     JSON.stringify(stateSnapshot)
   ].join("\n");
 }

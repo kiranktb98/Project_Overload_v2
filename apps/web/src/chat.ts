@@ -16,7 +16,8 @@ export const ChatDraftSchema = z.object({
   metric_ids: z.array(z.string()),
   dimension_ids: z.array(z.string()),
   allowed_relations: z.array(z.string()),
-  allowed_schemas: z.array(z.string())
+  allowed_schemas: z.array(z.string()),
+  insight_mode: z.enum(["business", "data"]).default("business")
 });
 
 export const ChatHistoryTurnSchema = z.object({
@@ -46,6 +47,7 @@ export type ChatTurnResponse = {
   assistant_message: string;
   state: ChatState;
   pdf_download_url?: string;
+  exec_brief_html?: string;
 };
 
 type ReportContractRecord = z.output<typeof ReportContractSchema>;
@@ -64,16 +66,19 @@ export interface WebApiClient {
   runContract(contractId: string): Promise<{
     run_id: string;
     exec_brief: ExecBriefRecord;
+    exec_brief_html?: string;
     pdf_path?: string;
   }>;
   downloadRunPdf(runId: string): Promise<Response>;
   getConnectionContext(): Promise<ConnectionContextRecord>;
   runSafeQuery(sql: string, limit?: number): Promise<SafeQueryResponseRecord>;
+  getCatalog(): Promise<DataCatalogRecord>;
 }
 
 const RunContractResponseSchema = z.object({
   run_id: z.string().min(1),
   exec_brief: ExecBriefSchema,
+  exec_brief_html: z.string().optional(),
   pdf_path: z.string().min(1).optional()
 });
 
@@ -95,6 +100,28 @@ const SafeQueryResponseSchema = z.object({
   warnings: z.array(z.string()).default([])
 });
 
+const TableColumnInfoSchema = z.object({
+  column_name: z.string(),
+  data_type: z.string(),
+  is_nullable: z.boolean()
+});
+
+const TableCatalogEntrySchema = z.object({
+  qualified_name: z.string(),
+  relation_type: z.enum(["TABLE", "VIEW", "MATERIALIZED VIEW"]),
+  columns: z.array(TableColumnInfoSchema),
+  sample_rows: z.array(z.record(z.string(), z.unknown())),
+  row_count_estimate: z.number().int().min(0)
+});
+
+const DataCatalogSchema = z.object({
+  tables: z.array(TableCatalogEntrySchema).default([]),
+  business_context: z.string().default(""),
+  cataloged_at: z.string().nullable().default(null)
+});
+
+type DataCatalogRecord = z.output<typeof DataCatalogSchema>;
+
 const DEFAULT_DRAFT: ChatDraft = {
   name: "",
   audience: "Executive",
@@ -104,28 +131,9 @@ const DEFAULT_DRAFT: ChatDraft = {
   metric_ids: ["metric_revenue"],
   dimension_ids: ["region"],
   allowed_relations: ["analytics.sales"],
-  allowed_schemas: ["analytics"]
+  allowed_schemas: ["analytics"],
+  insight_mode: "business"
 };
-
-const HELP_TEXT = [
-  "Here's what I can do:\n",
-  "To build a report, just tell me who it's for and what you want to track. For example:",
-  '  "I need a weekly revenue report for the CEO, broken down by region"',
-  "",
-  "You can also tweak things step by step:",
-  "  set name: Weekly CEO report",
-  "  set audience: CEO",
-  "  set timezone: Asia/Kolkata",
-  "  set schedule: 0 18 * * 5",
-  "  set sql: SELECT region, SUM(amount) AS revenue FROM analytics.sales GROUP BY region",
-  "",
-  "Other things I can help with:",
-  "  preview      - see the current draft",
-  "  save         - save the contract",
-  "  run          - save and execute now",
-  "  list tables  - see connected database tables",
-  "  query: SELECT ... - run a safe read-only query"
-].join("\n");
 
 export const MAX_CONVERSATION_TURNS = 12;
 
@@ -136,7 +144,8 @@ export function createInitialChatState(): ChatState {
       metric_ids: [...DEFAULT_DRAFT.metric_ids],
       dimension_ids: [...DEFAULT_DRAFT.dimension_ids],
       allowed_relations: [...DEFAULT_DRAFT.allowed_relations],
-      allowed_schemas: [...DEFAULT_DRAFT.allowed_schemas]
+      allowed_schemas: [...DEFAULT_DRAFT.allowed_schemas],
+      insight_mode: DEFAULT_DRAFT.insight_mode
     },
     contract_id: null,
     last_run_id: null,
@@ -157,7 +166,8 @@ export function parseChatState(value: unknown): ChatState {
       metric_ids: [...parsed.data.draft.metric_ids],
       dimension_ids: [...parsed.data.draft.dimension_ids],
       allowed_relations: [...parsed.data.draft.allowed_relations],
-      allowed_schemas: [...parsed.data.draft.allowed_schemas]
+      allowed_schemas: [...parsed.data.draft.allowed_schemas],
+      insight_mode: parsed.data.draft.insight_mode ?? "business"
     },
     contract_id: parsed.data.contract_id,
     last_run_id: parsed.data.last_run_id,
@@ -256,9 +266,23 @@ export function createWebApiClient(options: CreateWebApiClientOptions): WebApiCl
       });
 
       return parseJsonResponse(response, SafeQueryResponseSchema);
+    },
+    async getCatalog() {
+      const response = await fetcher(`${baseUrl}/connections/catalog`, {
+        method: "GET"
+      });
+
+      return parseJsonResponse(response, DataCatalogSchema);
     }
   };
 }
+
+// ---------------------------------------------------------------------------
+// handleChatTurn — action router
+//
+// Detects and executes concrete actions (save, run, query, draft updates).
+// Everything else returns minimal context for the LLM to generate a response.
+// ---------------------------------------------------------------------------
 
 export async function handleChatTurn(input: {
   message: string;
@@ -268,73 +292,72 @@ export async function handleChatTurn(input: {
   const rawMessage = input.message.trim();
   const command = rawMessage.toLowerCase();
   let nextState = parseChatState(input.state);
-  const conversational = answerConversationalPrompt(command, nextState);
-  if (conversational) {
-    return conversational;
+
+  // --- Explicit actions ---
+
+  if (command === "save") {
+    return executeSave(nextState, input.api_client);
   }
 
-  if (command === "help" || command === "/help" || command === "?") {
-    return { assistant_message: HELP_TEXT, state: nextState };
+  if (command === "run") {
+    return executeRun(nextState, input.api_client);
   }
 
   if (command === "preview" || command === "/preview") {
-    return { assistant_message: renderPreview(nextState), state: nextState };
+    return {
+      assistant_message: `Draft preview:\n${JSON.stringify(nextState.draft, null, 2)}\nContract: ${nextState.contract_id ?? "not saved"}. Last run: ${nextState.last_run_id ?? "none"}.`,
+      state: nextState
+    };
+  }
+
+  if (asksForPdf(command)) {
+    if (!nextState.last_run_id) {
+      return { assistant_message: "No report has been run yet.", state: nextState };
+    }
+    return {
+      assistant_message: `PDF available for run ${nextState.last_run_id}.`,
+      state: nextState,
+      pdf_download_url: `/api/runs/${nextState.last_run_id}/pdf`
+    };
   }
 
   if (asksToUseConnectedTables(command)) {
     return syncConnectedTables(nextState, input.api_client);
   }
 
-  if (asksForConnectedTables(command)) {
-    const context = await input.api_client.getConnectionContext();
-    return {
-      assistant_message: renderConnectedTables(context),
-      state: nextState
-    };
-  }
-
-  if (command === "list tables" || command === "show tables" || command === "tables") {
-    const context = await input.api_client.getConnectionContext();
-    return {
-      assistant_message: renderConnectedTables(context),
-      state: nextState
-    };
-  }
-
-  if (command === "use connected tables" || command === "sync connected tables") {
-    return syncConnectedTables(nextState, input.api_client);
-  }
-
   const queryCommand = parseQueryCommand(rawMessage);
   if (queryCommand) {
     const result = await input.api_client.runSafeQuery(queryCommand.sql, queryCommand.limit);
+    const preview = result.rows.slice(0, 10);
+    const warnings = result.warnings.length > 0 ? `\nWarnings: ${result.warnings.join("; ")}` : "";
     return {
-      assistant_message: renderSafeQueryResult(result),
+      assistant_message: `Query returned ${result.row_count} row${result.row_count === 1 ? "" : "s"}.${warnings}\nPreview:\n${JSON.stringify(preview, null, 2)}`,
       state: nextState
     };
   }
 
   if (command === "list contracts" || command === "list") {
     const contracts = await input.api_client.listContracts();
+    if (contracts.length === 0) {
+      return { assistant_message: "No contracts saved yet.", state: nextState };
+    }
+    const lines = contracts.slice(0, 12).map((c) => `${c.name} (${c.schedule_cron ?? "manual"}, ${c.timezone})`);
     return {
-      assistant_message: renderContractList(contracts),
+      assistant_message: `${contracts.length} contract${contracts.length === 1 ? "" : "s"}:\n${lines.join("\n")}`,
       state: nextState
     };
   }
 
-  if (command === "save") {
-    const saved = await saveContract(nextState, input.api_client);
-    return saved;
-  }
+  // --- Set commands ---
 
-  if (command === "run") {
-    const runResult = await runContract(nextState, input.api_client);
-    return runResult;
-  }
-
-  if (asksForMissingDetails(command)) {
+  // --- Insight mode switch ---
+  const insightMode = detectInsightMode(command);
+  if (insightMode) {
+    nextState.draft.insight_mode = insightMode;
+    nextState.contract_id = null;
+    const label = insightMode === "data" ? "Data Quality" : "Business Insights";
     return {
-      assistant_message: renderMissingDetails(nextState),
+      assistant_message: `Insight mode set to **${label}**. ${insightMode === "data" ? "I'll focus on data quality, completeness, anomalies, and issues you can fix." : "I'll focus on business trends, opportunities, risks, and actionable recommendations — treating your data as trustworthy."}`,
       state: nextState
     };
   }
@@ -342,96 +365,154 @@ export async function handleChatTurn(input: {
   const setCommand = parseSetCommand(rawMessage);
   if (setCommand) {
     const applied = applySetCommand(nextState, setCommand.field, setCommand.value);
-    if (!applied.updated) {
+    if (applied.updated) {
+      nextState = applied.state;
       return {
-        assistant_message:
-          "Unknown field for set command. Supported fields: name, audience, timezone, schedule, sql, metrics, dimensions, relations, schemas.",
+        assistant_message: `Draft updated: ${setCommand.field} set to "${setCommand.value}".`,
         state: nextState
       };
     }
-
-    nextState = applied.state;
-    return {
-      assistant_message: `Got it, ${setCommand.field} updated.\n${renderDraftChecklist(nextState)}`,
-      state: nextState
-    };
   }
+
+  // --- Natural language draft updates ---
 
   const natural = applyNaturalLanguageDraftUpdates(rawMessage, nextState);
   if (natural.updated_fields.length > 0) {
     nextState = natural.state;
 
     const action = detectConversationalAction(command);
-    if (action === "run") {
-      return runWithValidation(nextState, input.api_client);
-    }
-
-    if (action === "save") {
-      return saveWithValidation(nextState, input.api_client);
-    }
-
-    if (action === "preview") {
-      return {
-        assistant_message: renderPreview(nextState),
-        state: nextState
-      };
-    }
-
-    if (action === "list") {
-      const contracts = await input.api_client.listContracts();
-      return {
-        assistant_message: renderContractList(contracts),
-        state: nextState
-      };
-    }
+    if (action === "run") return executeRun(nextState, input.api_client);
+    if (action === "save") return executeSave(nextState, input.api_client);
 
     return {
-      assistant_message: `Updated ${natural.updated_fields.join(", ")}.\n${renderDraftChecklist(nextState)}`,
+      assistant_message: `Draft updated: ${natural.updated_fields.join(", ")}.`,
       state: nextState
     };
   }
+
+  // --- Simple intent inference ---
 
   const inferred = inferSimpleIntent(rawMessage, nextState);
-  if (inferred) {
-    return inferred;
-  }
+  if (inferred) return inferred;
+
+  // --- Conversational action mentions (e.g. "let's run it") ---
 
   const action = detectConversationalAction(command);
-  if (action === "run") {
-    return runWithValidation(nextState, input.api_client);
-  }
-
-  if (action === "save") {
-    return saveWithValidation(nextState, input.api_client);
-  }
-
-  if (action === "preview") {
-    return {
-      assistant_message: renderPreview(nextState),
-      state: nextState
-    };
-  }
-
+  if (action === "run") return executeRun(nextState, input.api_client);
+  if (action === "save") return executeSave(nextState, input.api_client);
   if (action === "list") {
     const contracts = await input.api_client.listContracts();
+    if (contracts.length === 0) {
+      return { assistant_message: "No contracts saved yet.", state: nextState };
+    }
+    const lines = contracts.slice(0, 12).map((c) => `${c.name} (${c.schedule_cron ?? "manual"}, ${c.timezone})`);
     return {
-      assistant_message: renderContractList(contracts),
+      assistant_message: `${contracts.length} contract${contracts.length === 1 ? "" : "s"}:\n${lines.join("\n")}`,
       state: nextState
     };
   }
 
-  if (expressesReportIntent(command)) {
-    return {
-      assistant_message: renderReportDiscoveryPrompt(nextState),
-      state: nextState
-    };
-  }
+  // --- No action — LLM handles the conversation ---
 
   return {
-    assistant_message: renderOpenEndedFallback(nextState),
+    assistant_message: buildStateContext(nextState),
     state: nextState
   };
 }
+
+// ---------------------------------------------------------------------------
+// Action executors
+// ---------------------------------------------------------------------------
+
+async function executeSave(state: ChatState, apiClient: WebApiClient): Promise<ChatTurnResponse> {
+  const missing = getMissingDraftFields(state);
+  if (missing.length > 0) {
+    return { assistant_message: `Cannot save yet: ${missing.join(", ")}.`, state };
+  }
+
+  const contract = buildContractPayload(state);
+  const created = await apiClient.createContract(contract);
+  const nextState = parseChatState(state);
+  nextState.contract_id = created.id;
+
+  return {
+    assistant_message: `Contract saved. ID: ${created.id}. Name: "${created.name}".`,
+    state: nextState
+  };
+}
+
+async function executeRun(state: ChatState, apiClient: WebApiClient): Promise<ChatTurnResponse> {
+  const missing = getMissingDraftFields(state);
+  if (missing.length > 0) {
+    return { assistant_message: `Cannot run yet: ${missing.join(", ")}.`, state };
+  }
+
+  let nextState = parseChatState(state);
+
+  if (!nextState.contract_id) {
+    const contract = buildContractPayload(nextState);
+    const created = await apiClient.createContract(contract);
+    nextState.contract_id = created.id;
+  }
+
+  const run = await apiClient.runContract(nextState.contract_id!);
+  nextState.last_run_id = run.run_id;
+  nextState.last_exec_brief = run.exec_brief;
+
+  const brief = run.exec_brief;
+  const briefLines = [
+    `What changed: ${brief.what_changed.join("; ") || "nothing notable"}`,
+    `Why: ${brief.why.join("; ") || "unknown"}`,
+    `So what: ${brief.so_what.join("; ") || "no impact noted"}`,
+    `Recommended: ${brief.what_to_do.join("; ") || "no action needed"}`,
+    `Confidence: ${(brief.confidence.score * 100).toFixed(0)}%`
+  ];
+
+  return {
+    assistant_message: `Report executed. Run ID: ${run.run_id}.\n${briefLines.join("\n")}\nPDF available.`,
+    state: nextState,
+    pdf_download_url: `/api/runs/${run.run_id}/pdf`,
+    exec_brief_html: run.exec_brief_html
+  };
+}
+
+// ---------------------------------------------------------------------------
+// State context builder (for LLM when no action was taken)
+// ---------------------------------------------------------------------------
+
+function buildStateContext(state: ChatState): string {
+  const modeLabel = state.draft.insight_mode === "data" ? "Data Quality" : "Business Insights";
+  const parts = [
+    `Current draft: ${state.draft.audience} audience, ${modeLabel} mode, tracking ${state.draft.metric_ids.join(", ")} by ${state.draft.dimension_ids.join(", ")}.`
+  ];
+
+  if (state.draft.name) {
+    parts.push(`Report name: "${state.draft.name}".`);
+  }
+
+  if (state.contract_id) {
+    parts.push(`Saved as ${state.contract_id}.`);
+  }
+
+  if (state.last_run_id) {
+    parts.push(`Last run: ${state.last_run_id}.`);
+  }
+
+  if (state.last_exec_brief) {
+    const eb = state.last_exec_brief;
+    parts.push(
+      `Last analysis: ${eb.what_changed.join("; ")}. ` +
+      `Confidence: ${(eb.confidence.score * 100).toFixed(0)}%.`
+    );
+  }
+
+  parts.push("No specific action was executed for this message.");
+  return parts.join("\n");
+}
+
+// ---------------------------------------------------------------------------
+// Parsing helpers
+// ---------------------------------------------------------------------------
 
 function parseSetCommand(raw: string): { field: string; value: string } | null {
   const match = raw.match(/^(?:\/?set\s+)?([a-z_ ]+)\s*[:=]\s*(.+)$/i);
@@ -507,6 +588,14 @@ function applySetCommand(state: ChatState, field: string, value: string): { stat
       next.draft.allowed_schemas = parseCsv(value);
       next.contract_id = null;
       return { state: next, updated: true };
+    case "insight_mode":
+    case "mode":
+      if (value === "data" || value === "business") {
+        next.draft.insight_mode = value;
+        next.contract_id = null;
+        return { state: next, updated: true };
+      }
+      return { state: next, updated: false };
     default:
       return { state: next, updated: false };
   }
@@ -526,107 +615,77 @@ function parseCsv(input: string): string[] {
 function inferSimpleIntent(message: string, state: ChatState): ChatTurnResponse | null {
   const lowered = message.toLowerCase();
   const nextState = parseChatState(state);
-
-  if (lowered.includes("weekly") && nextState.draft.schedule_cron === null) {
-    nextState.draft.schedule_cron = "0 18 * * 5";
-    return {
-      assistant_message:
-        "I've set this up as a weekly report (Fridays at 18:00). You can adjust the timezone with \"set timezone: Asia/Kolkata\" or similar.",
-      state: nextState
-    };
-  }
-
-  if (lowered.includes("ceo") && !lowered.includes("name") && nextState.draft.audience === "Executive") {
-    nextState.draft.audience = "CEO";
-    return {
-      assistant_message: "Audience set to CEO. What should we call this report? And what's the key metric you want to track?",
-      state: nextState
-    };
-  }
+  const changes: string[] = [];
 
   if (lowered.startsWith("create ") || lowered.startsWith("new report")) {
     const guessedName = message.replace(/^(create|new report)\s*/i, "").trim();
     if (guessedName.length > 0) {
       nextState.draft.name = guessedName;
       nextState.contract_id = null;
-      return {
-        assistant_message: `Named it "${guessedName}".\n${renderDraftChecklist(nextState)}`,
-        state: nextState
-      };
+      changes.push(`name to "${guessedName}"`);
     }
+  }
+
+  if (changes.length === 0 && looksLikeReportTitle(lowered)) {
+    nextState.draft.name = message.trim();
+    nextState.contract_id = null;
+    changes.push(`name to "${message.trim()}"`);
+  }
+
+  const audience = extractAudience(lowered);
+  if (audience && nextState.draft.audience !== audience) {
+    nextState.draft.audience = audience;
+    nextState.contract_id = null;
+    changes.push(`audience to ${audience}`);
+  }
+
+  if (lowered.includes("by region") && !nextState.draft.dimension_ids.includes("region")) {
+    nextState.draft.dimension_ids = Array.from(new Set([...nextState.draft.dimension_ids, "region"]));
+    nextState.contract_id = null;
+    changes.push("added region dimension");
+  }
+  if (lowered.includes("by channel") && !nextState.draft.dimension_ids.includes("channel")) {
+    nextState.draft.dimension_ids = Array.from(new Set([...nextState.draft.dimension_ids, "channel"]));
+    nextState.contract_id = null;
+    changes.push("added channel dimension");
+  }
+
+  if (lowered.includes("weekly") && nextState.draft.schedule_cron !== "0 18 * * 5") {
+    nextState.draft.schedule_cron = "0 18 * * 5";
+    nextState.contract_id = null;
+    changes.push("schedule to weekly (Fridays at 18:00)");
+  } else if (lowered.includes("daily") && nextState.draft.schedule_cron !== "0 9 * * *") {
+    nextState.draft.schedule_cron = "0 9 * * *";
+    nextState.contract_id = null;
+    changes.push("schedule to daily (09:00)");
+  }
+
+  if (changes.length > 0) {
+    return {
+      assistant_message: `Draft updated: ${changes.join(", ")}.`,
+      state: nextState
+    };
   }
 
   return null;
 }
 
-async function saveContract(state: ChatState, apiClient: WebApiClient): Promise<ChatTurnResponse> {
-  const contract = buildContractPayload(state);
-  const created = await apiClient.createContract(contract);
-  const nextState = parseChatState(state);
-  nextState.contract_id = created.id;
-
-  return {
-    assistant_message: `Got it - "${created.name}" is saved (ID: ${created.id}). Say "run" whenever you're ready to execute it.`,
-    state: nextState
-  };
+function looksLikeReportTitle(lower: string): boolean {
+  if (lower.length > 100 || lower.length < 5) return false;
+  const hasReportWord = /\b(report|performance|summary|analysis|overview|dashboard|brief|metrics?|revenue|sales|kpi)\b/.test(lower);
+  const isQuestion = lower.includes("?") || /^(what|how|why|when|where|can|do|does|is|are)\b/.test(lower);
+  const isCommand = /^(set|run|save|preview|list|help|query|use|show)\b/.test(lower);
+  const isIntent = /\b(i need|i want|create|build|make|prepare|generate|give me)\b/.test(lower);
+  return hasReportWord && !isQuestion && !isCommand && !isIntent;
 }
 
-async function saveWithValidation(state: ChatState, apiClient: WebApiClient): Promise<ChatTurnResponse> {
-  const missing = getMissingDraftFields(state);
-  if (missing.length > 0) {
-    return {
-      assistant_message: `Almost there! I just need: ${missing.join(", ")}.\nFor example: "Call it ${suggestReportName(state)}"`,
-      state
-    };
-  }
-
-  return saveContract(state, apiClient);
-}
-
-async function runContract(state: ChatState, apiClient: WebApiClient): Promise<ChatTurnResponse> {
-  let nextState = parseChatState(state);
-  let preface = "";
-
-  if (!nextState.contract_id) {
-    const saved = await saveContract(nextState, apiClient);
-    nextState = saved.state;
-    preface = `${saved.assistant_message}\n\n`;
-  }
-
-  if (!nextState.contract_id) {
-    throw new Error("Contract save failed before run.");
-  }
-
-  const run = await apiClient.runContract(nextState.contract_id);
-  nextState.last_run_id = run.run_id;
-  nextState.last_exec_brief = run.exec_brief;
-  const pdfDownloadUrl = `/api/runs/${run.run_id}/pdf`;
-
-  return {
-    assistant_message: `${preface}Done! Here's what I found:\n\n${renderExecBrief(run.exec_brief)}\n\nYou can download the full PDF report below.`,
-    state: nextState,
-    pdf_download_url: pdfDownloadUrl
-  };
-}
-
-async function runWithValidation(state: ChatState, apiClient: WebApiClient): Promise<ChatTurnResponse> {
-  const missing = getMissingDraftFields(state);
-  if (missing.length > 0) {
-    return {
-      assistant_message: `I'm ready to run it - just need: ${missing.join(", ")}.\nFor example: "Call it ${suggestReportName(state)}"`,
-      state
-    };
-  }
-
-  return runContract(state, apiClient);
-}
+// ---------------------------------------------------------------------------
+// Contract / report helpers
+// ---------------------------------------------------------------------------
 
 function buildContractPayload(state: ChatState): ReportContractRecord {
   const draft = state.draft;
-  const name = draft.name.trim();
-  if (name.length === 0) {
-    throw new Error("Set contract name first: set name: <value>");
-  }
+  const name = draft.name.trim().length > 0 ? draft.name.trim() : suggestReportName(state);
 
   const sql = draft.sql_template.trim();
   if (!/^\s*select\b/i.test(sql)) {
@@ -645,6 +704,7 @@ function buildContractPayload(state: ChatState): ReportContractRecord {
     sql_template: sql,
     metric_ids: draft.metric_ids,
     dimension_ids: draft.dimension_ids,
+    insight_mode: draft.insight_mode ?? "business",
     guardrails: {
       evidence_row_cap: 200,
       max_batches: 5,
@@ -668,322 +728,6 @@ function deriveSchemas(relations: string[]): string[] {
   return Array.from(new Set(schemas));
 }
 
-function renderPreview(state: ChatState): string {
-  const draft = state.draft;
-  const preview = {
-    ...draft,
-    contract_id: state.contract_id,
-    last_run_id: state.last_run_id,
-    has_exec_brief: state.last_exec_brief !== null
-  };
-
-  return `Current draft\n${JSON.stringify(preview, null, 2)}\n\n${renderDraftChecklist(state)}`;
-}
-
-function renderDraftChecklist(state: ChatState): string {
-  const missing = getMissingDraftFields(state);
-
-  if (missing.length === 0) {
-    return state.contract_id
-      ? "Everything looks good - you can run it now."
-      : "The draft is ready. Say \"run\" to execute or \"save\" to save it for later.";
-  }
-
-  return `I still need: ${missing.join(", ")}.`;
-}
-
-function renderContractList(contracts: ReportContractRecord[]): string {
-  if (contracts.length === 0) {
-    return "No report contracts yet. Describe a report and I'll create one for you.";
-  }
-
-  const lines = contracts.slice(0, 12).map((contract) => {
-    const schedule = contract.schedule_cron ?? "manual";
-    return `  - ${contract.name} (${schedule}, ${contract.timezone})`;
-  });
-
-  return `Here are your saved contracts:\n${lines.join("\n")}`;
-}
-
-function renderConnectedTables(context: ConnectionContextRecord): string {
-  if (!context.connected) {
-    return "No database connected yet. Head over to /connect to hook up your Postgres database.";
-  }
-
-  const tables = context.allowed_relations.length > 0 ? context.allowed_relations : context.available_relations;
-  if (tables.length === 0) {
-    return "Your database is connected, but no tables have been selected yet. Use /connect to pick the ones you want to work with.";
-  }
-
-  const lines = tables.slice(0, 40).map((table) => `  - ${table}`);
-  return [
-    `Connected to ${context.database ?? context.name ?? "your database"} with ${tables.length} table${tables.length === 1 ? "" : "s"}:`,
-    lines.join("\n"),
-    `\nSay "use connected tables" to pull these into your report draft.`
-  ].join("\n");
-}
-
-function renderSafeQueryResult(result: SafeQueryResponseRecord): string {
-  const preview = result.rows.slice(0, 10);
-
-  const parts = [`Query returned ${result.row_count} row${result.row_count === 1 ? "" : "s"}.`];
-
-  if (result.warnings.length > 0) {
-    parts.push(`Note: ${result.warnings.join("; ")}`);
-  }
-
-  parts.push(`\nPreview (first ${Math.min(10, preview.length)}):\n${JSON.stringify(preview, null, 2)}`);
-
-  return parts.join("\n");
-}
-
-function renderExecBrief(execBrief: ExecBriefRecord): string {
-  const bullet = (items: string[]) =>
-    items.length > 0 ? items.map((item) => `  - ${item}`).join("\n") : "  (none detected)";
-
-  const sections = [
-    `What changed:\n${bullet(execBrief.what_changed)}`,
-    `Why it changed:\n${bullet(execBrief.why)}`,
-    `What it means:\n${bullet(execBrief.so_what)}`,
-    `Recommended actions:\n${bullet(execBrief.what_to_do)}`
-  ];
-
-  if (execBrief.deltas_vs_last_run.length > 0) {
-    sections.push(`Changes since last run:\n${bullet(execBrief.deltas_vs_last_run)}`);
-  }
-
-  sections.push(`Confidence: ${(execBrief.confidence.score * 100).toFixed(0)}%`);
-
-  return sections.join("\n\n");
-}
-
-function answerConversationalPrompt(command: string, state: ChatState): ChatTurnResponse | null {
-  if (isWellbeingQuestion(command)) {
-    return {
-      assistant_message:
-        "Doing great, thanks for asking! What kind of report are you looking to build? Tell me the audience and the key metric, and I'll get a draft going.",
-      state
-    };
-  }
-
-  if (isGreeting(command)) {
-    return {
-      assistant_message:
-        "Hey! I'm your report assistant - I can help you set up a report, run it against your data, and generate a polished PDF. What are you working on?",
-      state
-    };
-  }
-
-  if (isThanks(command)) {
-    return {
-      assistant_message: "Happy to help! Let me know if you want to tweak anything or build another report.",
-      state
-    };
-  }
-
-  if (asksForCapabilities(command)) {
-    return {
-      assistant_message:
-        "I can help you with the full report workflow:\n" +
-        "- Define what to track (metrics, dimensions, SQL)\n" +
-        "- Connect to your database and run safe read-only queries\n" +
-        "- Execute the report pipeline and analyze the results\n" +
-        "- Generate a PDF you can share with stakeholders\n\n" +
-        "Just describe what you need and I'll guide you through it.",
-      state
-    };
-  }
-
-  if (asksForFindings(command)) {
-    if (!state.last_exec_brief) {
-      return {
-        assistant_message: "I haven't run an analysis yet. Say \"run\" and I'll execute the report and show you what I find.",
-        state
-      };
-    }
-
-    return {
-      assistant_message: summarizeExecBrief(state.last_exec_brief),
-      state
-    };
-  }
-
-  if (asksForPdf(command)) {
-    if (!state.last_run_id) {
-      return {
-        assistant_message: "No report has been run yet. Say \"run\" first and I'll generate the PDF for you.",
-        state
-      };
-    }
-
-    return {
-      assistant_message: `Here's your PDF - click to download: /api/runs/${state.last_run_id}/pdf`,
-      state,
-      pdf_download_url: `/api/runs/${state.last_run_id}/pdf`
-    };
-  }
-
-  return null;
-}
-
-function isGreeting(command: string): boolean {
-  const normalized = command.trim();
-  return /\b(hi|hello|hey|yo|good morning|good evening)\b/.test(normalized);
-}
-
-function isWellbeingQuestion(command: string): boolean {
-  return /\b(how are you|how are you doing|how's it going|how is it going|how do you do)\b/.test(command);
-}
-
-function isThanks(command: string): boolean {
-  return /\b(thanks|thank you|thx)\b/.test(command);
-}
-
-function asksForCapabilities(command: string): boolean {
-  return /\b(what can you do|help me|how does this work|what do you do)\b/.test(command);
-}
-
-function asksForFindings(command: string): boolean {
-  const patterns = [
-    "what did you find",
-    "what did it find",
-    "what did you analyze",
-    "tell me what you found",
-    "tell me what it found",
-    "what did you learn",
-    "summary",
-    "insights",
-    "findings",
-    "what changed"
-  ];
-
-  return patterns.some((pattern) => command.includes(pattern));
-}
-
-function asksForPdf(command: string): boolean {
-  return command.includes("pdf") || command.includes("download");
-}
-
-function asksForConnectedTables(command: string): boolean {
-  return /\b(connected tables|which tables|show tables|list tables|what tables)\b/.test(command);
-}
-
-function asksToUseConnectedTables(command: string): boolean {
-  return /\b(use connected tables|sync connected tables|use connected db|use database tables)\b/.test(command);
-}
-
-async function syncConnectedTables(state: ChatState, apiClient: WebApiClient): Promise<ChatTurnResponse> {
-  const context = await apiClient.getConnectionContext();
-
-  if (!context.connected || context.allowed_relations.length === 0) {
-    return {
-      assistant_message:
-        "No tables available yet. Head to /connect to connect your database and pick the tables you want to use.",
-      state
-    };
-  }
-
-  const nextState = parseChatState(state);
-  nextState.draft.allowed_relations = [...context.allowed_relations];
-  nextState.draft.allowed_schemas = [...context.allowed_schemas];
-
-  const firstRelation = context.allowed_relations[0];
-  if (
-    nextState.draft.sql_template.trim().toLowerCase() === "select * from analytics.sales" ||
-    nextState.draft.sql_template.trim().length === 0
-  ) {
-    nextState.draft.sql_template = `SELECT * FROM ${firstRelation}`;
-  }
-
-  nextState.contract_id = null;
-
-  return {
-    assistant_message:
-      `Pulled in ${context.allowed_relations.length} table${context.allowed_relations.length === 1 ? "" : "s"} from your connected database.\n` +
-      `Default query set to: ${nextState.draft.sql_template}\n` +
-      renderDraftChecklist(nextState),
-    state: nextState
-  };
-}
-
-function summarizeExecBrief(execBrief: ExecBriefRecord): string {
-  const top = (items: string[]) => (items.length > 0 ? items[0] : "Nothing notable");
-
-  return [
-    `Here's a quick summary of the last run:\n`,
-    `The main finding is: ${top(execBrief.what_changed)}`,
-    `This happened because: ${top(execBrief.why)}`,
-    `What it means for the business: ${top(execBrief.so_what)}`,
-    `I'd recommend: ${top(execBrief.what_to_do)}`,
-    `\nConfidence: ${(execBrief.confidence.score * 100).toFixed(0)}%`,
-    `\nWant the full PDF? Just say "download".`
-  ].join("\n");
-}
-
-function detectConversationalAction(command: string): "run" | "save" | "preview" | "list" | null {
-  if (/\b(run|execute|start now|run now|launch)\b/.test(command)) {
-    return "run";
-  }
-
-  if (/\b(save|store|persist)\b/.test(command)) {
-    return "save";
-  }
-
-  if (/\b(preview|show draft|show contract|what do you have)\b/.test(command)) {
-    return "preview";
-  }
-
-  if (/\b(list contracts|show contracts|list reports|list)\b/.test(command)) {
-    return "list";
-  }
-
-  return null;
-}
-
-function asksForMissingDetails(command: string): boolean {
-  return /\b(what do you still need|what else do you need|anything missing|what is missing)\b/.test(command);
-}
-
-function renderMissingDetails(state: ChatState): string {
-  const missing = getMissingDraftFields(state);
-  if (missing.length === 0) {
-    return "You're all set - everything I need is filled in. Say \"run\" when you're ready!";
-  }
-
-  return `I still need: ${missing.join(", ")}. Once you provide ${missing.length === 1 ? "that" : "those"}, we're good to go.`;
-}
-
-function renderOpenEndedFallback(state: ChatState): string {
-  const missing = getMissingDraftFields(state);
-  if (missing.length > 0) {
-    return [
-      "I'm not sure what you meant there.",
-      `To continue building the report, I still need: ${missing.join(", ")}.`,
-      `For example, try: "Call it ${suggestReportName(state)} and run it"`
-    ].join("\n");
-  }
-
-  return [
-    "I'm not sure what you meant. Here are some things you can try:",
-    "  - \"run\" to execute the report",
-    "  - \"what did you find?\" to see the analysis",
-    "  - \"download\" to get the PDF",
-    "  - or describe what you'd like to change"
-  ].join("\n");
-}
-
-function renderReportDiscoveryPrompt(state: ChatState): string {
-  const draft = state.draft;
-
-  return [
-    "Great, let's build that report! Here's what I have so far:",
-    `  Audience: ${draft.audience}`,
-    `  Tracking: ${draft.metric_ids.join(", ")} by ${draft.dimension_ids.join(", ")}`,
-    `  Suggested name: ${suggestReportName(state)}`,
-    "\nFeel free to adjust anything, or say \"run\" when you're ready."
-  ].join("\n");
-}
-
 function suggestsWeeklyCadence(state: ChatState): boolean {
   return state.draft.schedule_cron === "0 18 * * 5";
 }
@@ -994,15 +738,15 @@ function suggestReportName(state: ChatState): string {
   }
 
   const audience = state.draft.audience.trim().length > 0 ? state.draft.audience : "Executive";
-  const cadence = suggestsWeeklyCadence(state) ? "Weekly" : "Performance";
-  return `${cadence} ${audience} Report`;
+  const cadence = suggestsWeeklyCadence(state) ? "Weekly " : "";
+  const metric = state.draft.metric_ids.length > 0
+    ? state.draft.metric_ids[0].replace(/^metric_/, "").replace(/_/g, " ").replace(/\b\w/g, (c) => c.toUpperCase())
+    : "Performance";
+  return `${cadence}${audience} ${metric} Report`;
 }
 
 function getMissingDraftFields(state: ChatState): string[] {
   const missing: string[] = [];
-  if (state.draft.name.trim().length === 0) {
-    missing.push("name");
-  }
 
   if (!/^\s*select\b/i.test(state.draft.sql_template)) {
     missing.push("sql_template (must start with SELECT)");
@@ -1011,11 +755,93 @@ function getMissingDraftFields(state: ChatState): string[] {
   return missing;
 }
 
-function expressesReportIntent(command: string): boolean {
-  const hasReportWord = /\b(report|brief|dashboard|analysis)\b/.test(command);
-  const hasIntentWord = /\b(need|want|create|build|make|prepare|generate)\b/.test(command);
-  return hasReportWord && hasIntentWord;
+// ---------------------------------------------------------------------------
+// Boolean detectors
+// ---------------------------------------------------------------------------
+
+function asksForPdf(command: string): boolean {
+  return command.includes("pdf") || command.includes("download");
 }
+
+function asksToUseConnectedTables(command: string): boolean {
+  return /\b(use connected tables|sync connected tables|use connected db|use database tables)\b/.test(command);
+}
+
+function detectInsightMode(command: string): "business" | "data" | null {
+  if (/\bdata\s*(insights?|quality|mode|analysis)\b/.test(command)) return "data";
+  if (/\bbusiness\s*(insights?|mode|analysis)\b/.test(command)) return "business";
+  if (/\binsight\s*mode\s*[:=]?\s*data\b/.test(command)) return "data";
+  if (/\binsight\s*mode\s*[:=]?\s*business\b/.test(command)) return "business";
+  return null;
+}
+
+function detectConversationalAction(command: string): "run" | "save" | "list" | null {
+  if (/\b(run|execute|start now|run now|launch)\b/.test(command)) {
+    return "run";
+  }
+
+  if (/\b(save|store|persist)\b/.test(command)) {
+    return "save";
+  }
+
+  if (/\b(list contracts|show contracts|list reports|list)\b/.test(command)) {
+    return "list";
+  }
+
+  return null;
+}
+
+// ---------------------------------------------------------------------------
+// Audience extraction
+// ---------------------------------------------------------------------------
+
+function extractAudience(lower: string): string | null {
+  const forMatch = lower.match(/\bfor\s+(?:the\s+)?(.+?)(?:\s+(?:team|department|group|level))?\s*(?:[.,!?]|$)/i);
+  if (forMatch) {
+    const raw = forMatch[1].replace(/\s*(team|department|group|level)\s*$/i, "").trim();
+    const mapped = mapAudienceKeyword(raw);
+    if (mapped) return mapped;
+  }
+
+  if (/\bnot\b.*\bexecutive\b/.test(lower)) {
+    // Don't return Executive; let more specific match win
+  } else if (lower.includes("executive")) return "Executive";
+
+  if (lower.includes("ceo")) return "CEO";
+  if (lower.includes("cfo")) return "CFO";
+  if (lower.includes("cto")) return "CTO";
+  if (lower.includes("coo")) return "COO";
+  if (/\bsales\b/.test(lower)) return "Sales";
+  if (/\bmarketing\b/.test(lower)) return "Marketing";
+  if (/\bops\b|\boperations\b/.test(lower)) return "Ops";
+  if (/\bengineering\b|\bdev\b|\bdevelopment\b/.test(lower)) return "Engineering";
+  if (/\bfinance\b|\baccounting\b/.test(lower)) return "Finance";
+  if (/\bhr\b|\bhuman resources\b/.test(lower)) return "HR";
+  if (/\bproduct\b/.test(lower)) return "Product";
+  if (/\bboard\b/.test(lower)) return "Board";
+  if (/\bmanagement\b|\bmanagers?\b/.test(lower)) return "Management";
+
+  return null;
+}
+
+function mapAudienceKeyword(raw: string): string | null {
+  const map: Record<string, string> = {
+    ceo: "CEO", cfo: "CFO", cto: "CTO", coo: "COO",
+    sales: "Sales", marketing: "Marketing",
+    ops: "Ops", operations: "Ops",
+    engineering: "Engineering", dev: "Engineering", development: "Engineering",
+    finance: "Finance", accounting: "Finance",
+    hr: "HR", "human resources": "HR",
+    product: "Product", board: "Board",
+    management: "Management", managers: "Management",
+    executive: "Executive", executives: "Executive"
+  };
+  return map[raw] ?? null;
+}
+
+// ---------------------------------------------------------------------------
+// Natural language draft updates
+// ---------------------------------------------------------------------------
 
 function applyNaturalLanguageDraftUpdates(
   message: string,
@@ -1038,24 +864,11 @@ function applyNaturalLanguageDraftUpdates(
     }
   }
 
-  if (lower.includes("ceo")) {
-    if (next.draft.audience !== "CEO") {
-      next.draft.audience = "CEO";
-      next.contract_id = null;
-      updated.add("audience");
-    }
-  } else if (lower.includes("cfo")) {
-    if (next.draft.audience !== "CFO") {
-      next.draft.audience = "CFO";
-      next.contract_id = null;
-      updated.add("audience");
-    }
-  } else if (lower.includes("ops")) {
-    if (next.draft.audience !== "Ops") {
-      next.draft.audience = "Ops";
-      next.contract_id = null;
-      updated.add("audience");
-    }
+  const audienceMatch = extractAudience(lower);
+  if (audienceMatch && next.draft.audience !== audienceMatch) {
+    next.draft.audience = audienceMatch;
+    next.contract_id = null;
+    updated.add("audience");
   }
 
   const timezoneMatch = message.match(/\btimezone(?:\s*(?:to|as|is))?\s*([A-Za-z_/+-]+)/i);
@@ -1134,6 +947,82 @@ function applyNaturalLanguageDraftUpdates(
     updated_fields: [...updated]
   };
 }
+
+// ---------------------------------------------------------------------------
+// Table sync
+// ---------------------------------------------------------------------------
+
+async function syncConnectedTables(state: ChatState, apiClient: WebApiClient): Promise<ChatTurnResponse> {
+  const context = await apiClient.getConnectionContext();
+
+  if (!context.connected || context.allowed_relations.length === 0) {
+    return {
+      assistant_message: "No tables available. Database not connected or no tables selected at /connect.",
+      state
+    };
+  }
+
+  const nextState = parseChatState(state);
+  nextState.draft.allowed_relations = [...context.allowed_relations];
+  nextState.draft.allowed_schemas = [...context.allowed_schemas];
+
+  const firstRelation = context.allowed_relations[0];
+  if (
+    nextState.draft.sql_template.trim().toLowerCase() === "select * from analytics.sales" ||
+    nextState.draft.sql_template.trim().length === 0
+  ) {
+    nextState.draft.sql_template = `SELECT * FROM ${firstRelation}`;
+  }
+
+  nextState.contract_id = null;
+
+  return {
+    assistant_message: `Synced ${context.allowed_relations.length} table${context.allowed_relations.length === 1 ? "" : "s"} from connected database. SQL updated to: ${nextState.draft.sql_template}.`,
+    state: nextState
+  };
+}
+
+// ---------------------------------------------------------------------------
+// Catalog context (for LLM system prompt)
+// ---------------------------------------------------------------------------
+
+export async function fetchCatalogContext(apiClient: WebApiClient): Promise<{ catalog_summary: string; business_context: string }> {
+  try {
+    const catalog = await apiClient.getCatalog();
+    if (catalog.tables.length === 0) {
+      return { catalog_summary: "", business_context: catalog.business_context ?? "" };
+    }
+
+    const lines: string[] = [];
+    for (const table of catalog.tables.slice(0, 20)) {
+      const cols = table.columns.slice(0, 12).map((c) => `${c.column_name}(${c.data_type})`).join(", ");
+      const extra = table.columns.length > 12 ? ` +${table.columns.length - 12} more` : "";
+      const rowInfo = table.row_count_estimate > 0 ? ` ~${formatNumber(table.row_count_estimate)} rows` : "";
+      lines.push(`${table.qualified_name} [${table.relation_type}]${rowInfo}: ${cols}${extra}`);
+      if (table.sample_rows.length > 0) {
+        const sampleKeys = Object.keys(table.sample_rows[0]).slice(0, 6);
+        const preview = sampleKeys.map((k) => `${k}=${String(table.sample_rows[0][k] ?? "null").slice(0, 25)}`).join(", ");
+        lines.push(`  sample: ${preview}`);
+      }
+    }
+    if (catalog.tables.length > 20) {
+      lines.push(`... +${catalog.tables.length - 20} more tables`);
+    }
+    return { catalog_summary: lines.join("\n"), business_context: catalog.business_context ?? "" };
+  } catch {
+    return { catalog_summary: "", business_context: "" };
+  }
+}
+
+function formatNumber(n: number): string {
+  if (n >= 1_000_000) return `${(n / 1_000_000).toFixed(1)}M`;
+  if (n >= 1_000) return `${(n / 1_000).toFixed(1)}K`;
+  return String(n);
+}
+
+// ---------------------------------------------------------------------------
+// JSON response parser
+// ---------------------------------------------------------------------------
 
 async function parseJsonResponse<TSchema extends z.ZodTypeAny>(
   response: Response,

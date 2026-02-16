@@ -11,7 +11,12 @@ const ConnectPayloadSchema = z.object({
   name: z.string().trim().min(1).optional(),
   connection_string: z.string().trim().min(1),
   tls_ca_pem: z.string().trim().min(1).optional(),
-  allowed_relations: z.array(z.string().trim().min(1)).default([])
+  allowed_relations: z.array(z.string().trim().min(1)).default([]),
+  business_context: z.string().trim().max(2000).optional()
+});
+
+const BusinessContextPayloadSchema = z.object({
+  business_context: z.string().trim().max(2000)
 });
 
 const AllowlistPayloadSchema = z.object({
@@ -60,7 +65,8 @@ export function registerConnectionRoutes(app: FastifyInstance, manager: RuntimeC
         name: payload.name,
         connection_string: payload.connection_string,
         tls_ca_pem: payload.tls_ca_pem,
-        allowed_relations: payload.allowed_relations
+        allowed_relations: payload.allowed_relations,
+        business_context: payload.business_context
       });
 
       return reply.code(200).send(context);
@@ -68,6 +74,39 @@ export function registerConnectionRoutes(app: FastifyInstance, manager: RuntimeC
       return reply.code(400).send({
         ok: false,
         message: error instanceof Error ? error.message : "Unable to connect"
+      });
+    }
+  });
+
+  app.get("/connections/catalog", async (_request, reply) => {
+    const catalog = manager.getCatalog();
+    if (!catalog) {
+      return reply.code(200).send({ tables: [], business_context: "", cataloged_at: null });
+    }
+    return reply.code(200).send(catalog);
+  });
+
+  app.post("/connections/catalog/refresh", async (_request, reply) => {
+    try {
+      const catalog = await manager.refreshCatalog();
+      return reply.code(200).send(catalog ?? { tables: [], business_context: "", cataloged_at: null });
+    } catch (error) {
+      return reply.code(400).send({
+        ok: false,
+        message: error instanceof Error ? error.message : "Unable to refresh catalog"
+      });
+    }
+  });
+
+  app.post("/connections/business-context", async (request, reply) => {
+    const payload = BusinessContextPayloadSchema.parse(request.body);
+    try {
+      manager.updateBusinessContext(payload.business_context);
+      return reply.code(200).send({ ok: true, business_context: payload.business_context });
+    } catch (error) {
+      return reply.code(400).send({
+        ok: false,
+        message: error instanceof Error ? error.message : "Unable to update business context"
       });
     }
   });

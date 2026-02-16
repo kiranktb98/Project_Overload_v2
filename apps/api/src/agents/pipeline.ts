@@ -239,6 +239,7 @@ export function agentE_analyzeBatch(packet: ContractEvidencePacket): ContractBat
     batch_index: packet.batch_index,
     total_batches: packet.total_batches,
     summary_word_budget: packet.total_batches > 1 ? 120 : 250,
+    insight_mode: "business",
     evidence_packet: {
       request_id: packet.request_id,
       batch_index: packet.batch_index,
