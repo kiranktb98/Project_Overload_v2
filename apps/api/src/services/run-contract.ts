@@ -58,10 +58,13 @@ export async function runReportContractPipeline(input: {
     let rows: Record<string, unknown>[] = [];
     let queryError: string | null = null;
 
+    // Safety: extract only the first SELECT statement if LLM returned multiple
+    const safeSql = sanitizeLlmSql(planned.sql);
+
     try {
       const result = await input.data_plane.execute({
         request_id: `${input.contract.id}_${randomUUID().slice(0, 8)}`,
-        sql: planned.sql,
+        sql: safeSql,
         policy: {
           allowed_relations: input.contract.guardrails.allowed_relations,
           allowed_schemas: input.contract.guardrails.allowed_schemas,
@@ -75,14 +78,14 @@ export async function runReportContractPipeline(input: {
 
       await input.store.appendAuditLog("dataplane_execute", {
         question: planned.question,
-        sql: planned.sql,
+        sql: safeSql,
         row_count: rows.length
       });
     } catch (error) {
       queryError = error instanceof Error ? error.message : "Query execution failed";
       await input.store.appendAuditLog("dataplane_error", {
         question: planned.question,
-        sql: planned.sql,
+        sql: safeSql,
         error: queryError
       });
     }
@@ -95,11 +98,11 @@ export async function runReportContractPipeline(input: {
         recommendations: ["Verify the query or check that the relevant tables contain data."],
         data_summary: `Query for "${planned.question}" returned no results. ${queryError ?? ""}`
       });
-      queryDetails.push({ question: planned.question, sql: planned.sql, row_count: 0 });
+      queryDetails.push({ question: planned.question, sql: safeSql, row_count: 0 });
       continue;
     }
 
-    queryDetails.push({ question: planned.question, sql: planned.sql, row_count: rows.length });
+    queryDetails.push({ question: planned.question, sql: safeSql, row_count: rows.length });
 
     // Step 3: Analyst — analyze this specific dataset for its specific question
     const analysis = await input.analyst_client.analyzeBatch({
@@ -159,6 +162,45 @@ export async function runReportContractPipeline(input: {
     exec_brief: execBrief,
     html
   };
+}
+
+/**
+ * Sanitize LLM-generated SQL to ensure it's a single SELECT statement.
+ * - Strips trailing semicolons
+ * - If multiple statements separated by semicolons, takes only the first
+ * - Ensures it starts with SELECT (or WITH for CTEs)
+ */
+function sanitizeLlmSql(rawSql: string): string {
+  let sql = rawSql.trim();
+
+  // Remove markdown code fences if the LLM wrapped it
+  const fenceMatch = sql.match(/```(?:sql)?\s*\n?([\s\S]*?)```/);
+  if (fenceMatch) {
+    sql = fenceMatch[1].trim();
+  }
+
+  // Split on semicolons and take only the first non-empty statement
+  const statements = sql
+    .split(";")
+    .map((s) => s.trim())
+    .filter((s) => s.length > 0);
+
+  sql = statements[0] ?? sql;
+
+  // Remove any trailing semicolons
+  sql = sql.replace(/;\s*$/, "").trim();
+
+  // Validate it starts with SELECT or WITH (for CTEs)
+  if (!/^\s*(SELECT|WITH)\b/i.test(sql)) {
+    throw new Error(`LLM generated non-SELECT SQL: ${sql.slice(0, 80)}...`);
+  }
+
+  // Ensure LIMIT exists — append if missing
+  if (!/\bLIMIT\b/i.test(sql)) {
+    sql = `${sql} LIMIT 200`;
+  }
+
+  return sql;
 }
 
 function buildExecBrief(

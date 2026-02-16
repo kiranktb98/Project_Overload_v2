@@ -352,18 +352,21 @@ function queryStrategistSystemPrompt(input: QueryStrategyInput): string {
     `MODE: ${mode}`,
     "",
     "RULES:",
-    "- Each query MUST be a valid PostgreSQL SELECT statement.",
-    "- Use only the tables and columns from the catalog provided.",
-    "- Each query should return at most 200 rows. Use GROUP BY, aggregations, and LIMIT to keep results manageable.",
+    "- Each query MUST be exactly ONE valid PostgreSQL SELECT statement.",
+    "- NEVER put multiple statements in a single sql field. NO semicolons separating statements. One SELECT per query object.",
+    "- If you need multiple analyses, create separate query objects in the queries array — do NOT combine them into one sql string.",
+    "- Use only the tables and columns from the catalog provided. Do NOT guess column names.",
+    "- Each query should return at most 200 rows. Use GROUP BY, aggregations, and LIMIT 200 to keep results manageable.",
     "- Write queries that produce SUMMARIZED data (aggregates, distributions, top-N), not raw row dumps.",
     "- Each query answers a DIFFERENT question — don't repeat the same analysis.",
     "- Use JOINs across tables when it adds insight.",
     "- For business mode: focus on metrics, trends, dimensional breakdowns.",
     "- For data mode: focus on NULL counts, distinct value counts, distribution checks, outlier detection.",
+    "- Always include LIMIT 200 at the end of each query.",
     "",
     "Return strictly valid JSON matching this shape:",
-    '{"queries": [{"question": "...", "sql": "...", "purpose": "..."}]}',
-    "No markdown, no extra keys."
+    '{"queries": [{"question": "...", "sql": "SELECT ... LIMIT 200", "purpose": "..."}]}',
+    "No markdown, no extra keys. Each sql value is ONE SELECT statement, no semicolons."
   ].join("\n");
 }
 
