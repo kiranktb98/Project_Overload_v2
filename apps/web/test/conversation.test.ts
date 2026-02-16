@@ -7,7 +7,7 @@ import {
 
 const TURN_INPUT: ConversationTurnInput = {
   user_message: "hello",
-  deterministic_response: "Base response",
+  action_context: "Base response",
   history: [],
   state: {
     draft: {
@@ -19,7 +19,8 @@ const TURN_INPUT: ConversationTurnInput = {
       metric_ids: ["metric_revenue"],
       dimension_ids: ["region"],
       allowed_relations: ["analytics.sales"],
-      allowed_schemas: ["analytics"]
+      allowed_schemas: ["analytics"],
+      insight_mode: "business" as const
     },
     contract_id: null,
     last_run_id: null,
@@ -66,8 +67,8 @@ describe("conversation client", () => {
     expect(response).toBe("Natural AI response");
 
     const rawBody = typeof calls[0].init?.body === "string" ? calls[0].init?.body : "{}";
-    expect(rawBody).toContain("Conversation context:");
-    expect(rawBody).toContain("Latest user message:");
+    expect(rawBody).toContain("Conversation history:");
+    expect(rawBody).toContain("User message:");
   });
 
   it("falls back to deterministic when provider call fails and fallback is enabled", async () => {

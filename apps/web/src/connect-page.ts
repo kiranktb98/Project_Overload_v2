@@ -356,9 +356,15 @@ export function renderConnectionPage(): string {
           <div style="margin-top: 10px;">
             <label for="tls-ca-pem">Custom CA (PEM)</label>
             <textarea id="tls-ca-pem" placeholder="-----BEGIN CERTIFICATE-----\n..."></textarea>
-            <p class="muted">If you see TLS errors like “self-signed certificate in certificate chain”, paste your org/DB root CA here (PEM). This is used only for this session.</p>
+            <p class="muted">If you see TLS errors like "self-signed certificate in certificate chain", paste your org/DB root CA here (PEM). This is used only for this session.</p>
           </div>
         </details>
+
+        <div style="margin-top: 10px;">
+          <label for="business-context">Business Context (optional)</label>
+          <textarea id="business-context" style="min-height: 80px;" placeholder="E.g. We're a B2B SaaS company selling project management tools. Our main revenue comes from monthly subscriptions. We track sales by region, plan tier, and customer segment."></textarea>
+          <p class="muted">Describe what your business does so the chat assistant can suggest relevant reports and understand your data better.</p>
+        </div>
 
         <div class="actions">
           <button class="secondary" id="test-connection">Test Connection</button>
@@ -392,6 +398,7 @@ export function renderConnectionPage(): string {
           <button class="secondary" id="select-ok">Select all OK</button>
           <button class="secondary" id="select-none">Select none</button>
           <button class="secondary" id="save-allowlist">Save allowlist</button>
+          <button class="secondary" id="save-business-context">Save business context</button>
           <button class="danger" id="open-fix-script">Fix-it script</button>
         </div>
         <div class="table-list" id="table-list"></div>
@@ -465,7 +472,9 @@ export function renderConnectionPage(): string {
           fixStatus: document.getElementById("fix-status"),
           closeFixModalBtn: document.getElementById("close-fix-modal"),
           copyFixScriptBtn: document.getElementById("copy-fix-script"),
-          ranFixScriptBtn: document.getElementById("ran-fix-script")
+          ranFixScriptBtn: document.getElementById("ran-fix-script"),
+          businessContext: document.getElementById("business-context"),
+          saveBusinessContextBtn: document.getElementById("save-business-context")
         };
 
         const state = {
@@ -777,6 +786,7 @@ export function renderConnectionPage(): string {
             }
 
             const tlsCaPem = String(elements.tlsCaPem.value || "").trim();
+            const businessContext = String(elements.businessContext.value || "").trim();
             const body = {
               name: String(elements.name.value || "").trim() || undefined,
               connection_string: connectionString,
@@ -784,6 +794,9 @@ export function renderConnectionPage(): string {
             };
             if (tlsCaPem) {
               body.tls_ca_pem = tlsCaPem;
+            }
+            if (businessContext) {
+              body.business_context = businessContext;
             }
 
             const context = await request("/api/db/connect", "POST", body);
@@ -873,6 +886,16 @@ export function renderConnectionPage(): string {
             state.selected = new Set(Array.isArray(context.allowed_relations) ? context.allowed_relations.map((v) => String(v).toLowerCase()) : []);
             renderRelations();
             showOutput(context);
+          } catch (error) {
+            showOutput(error instanceof Error ? error.message : "Unknown error");
+          }
+        });
+
+        elements.saveBusinessContextBtn.addEventListener("click", async () => {
+          try {
+            const text = String(elements.businessContext.value || "").trim();
+            await request("/api/db/business-context", "POST", { business_context: text });
+            showOutput(text ? "Business context saved." : "Business context cleared.");
           } catch (error) {
             showOutput(error instanceof Error ? error.message : "Unknown error");
           }

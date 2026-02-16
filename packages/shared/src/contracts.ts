@@ -10,6 +10,9 @@ export const ReportGuardrailsSchema = z.object({
   deny_write: z.literal(true).default(true)
 });
 
+export const InsightModeSchema = z.enum(["business", "data"]).default("business");
+export type InsightMode = z.infer<typeof InsightModeSchema>;
+
 export const ReportContractSchema = z.object({
   id: z.string().min(1),
   name: z.string().min(1),
@@ -19,6 +22,7 @@ export const ReportContractSchema = z.object({
   sql_template: z.string().min(1),
   metric_ids: z.array(z.string().min(1)).default([]),
   dimension_ids: z.array(z.string().min(1)).default([]),
+  insight_mode: InsightModeSchema,
   guardrails: ReportGuardrailsSchema
 });
 

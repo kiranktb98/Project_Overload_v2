@@ -161,6 +161,47 @@ export function renderChatPage(): string {
         font-weight: 700;
       }
 
+      .exec-brief-embed {
+        margin-top: 10px;
+        padding: 14px;
+        border: 1px solid rgba(14, 165, 233, 0.25);
+        border-radius: 10px;
+        background: rgba(255, 255, 255, 0.85);
+        font-size: 0.85rem;
+        line-height: 1.55;
+        max-height: 480px;
+        overflow-y: auto;
+      }
+
+      .exec-brief-embed h1 {
+        font-size: 1.05rem;
+        margin: 0 0 6px;
+      }
+
+      .exec-brief-embed h2 {
+        font-size: 0.9rem;
+        margin: 12px 0 4px;
+        color: var(--ink);
+      }
+
+      .exec-brief-embed ul {
+        margin: 4px 0;
+        padding-left: 18px;
+      }
+
+      .exec-brief-embed li {
+        margin-bottom: 3px;
+      }
+
+      .exec-brief-embed .confidence {
+        margin-top: 10px;
+        padding: 8px;
+        border-radius: 6px;
+        background: rgba(14, 165, 233, 0.06);
+        border: 1px solid rgba(14, 165, 233, 0.15);
+        font-size: 0.8rem;
+      }
+
       .composer {
         border-top: 1px solid var(--line);
         padding: 14px 18px 18px;
@@ -287,13 +328,20 @@ export function renderChatPage(): string {
           statusEl.textContent = runtimeStatusRef.mode + " | " + activity;
         }
 
-        function appendMessage(role, text, downloadUrl) {
+        function appendMessage(role, text, downloadUrl, execBriefHtml) {
           const bubble = document.createElement("div");
           bubble.className = "bubble " + role;
 
           const content = document.createElement("div");
           content.textContent = text;
           bubble.appendChild(content);
+
+          if (role === "assistant" && typeof execBriefHtml === "string" && execBriefHtml.length > 0) {
+            const briefContainer = document.createElement("div");
+            briefContainer.className = "exec-brief-embed";
+            briefContainer.innerHTML = execBriefHtml;
+            bubble.appendChild(briefContainer);
+          }
 
           if (role === "assistant" && typeof downloadUrl === "string" && downloadUrl.length > 0) {
             const link = document.createElement("a");
@@ -336,7 +384,7 @@ export function renderChatPage(): string {
             }
 
             stateRef.value = payload.state;
-            appendMessage("assistant", payload.assistant_message, payload.pdf_download_url);
+            appendMessage("assistant", payload.assistant_message, payload.pdf_download_url, payload.exec_brief_html);
           } catch (error) {
             const errorText = error instanceof Error ? error.message : "Unknown error";
             appendMessage("assistant", "Network error: " + errorText);

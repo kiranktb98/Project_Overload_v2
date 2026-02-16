@@ -96,6 +96,7 @@ describe("analysis aggregation", () => {
       batch_index: 0,
       total_batches: 1,
       summary_word_budget: 150,
+      insight_mode: "business",
       evidence_packet: {
         request_id: "req_3",
         batch_index: 0,

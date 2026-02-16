@@ -2,7 +2,14 @@ import Fastify from "fastify";
 import type { FastifyRequest, FastifyReply } from "fastify";
 import { ZodError } from "zod";
 import { createDataPlaneFromEnv, type DataPlane } from "@project-overload/dataplane";
-import { createAnalystClientFromEnv, type AnalystClient } from "@project-overload/llm-client";
+import {
+  createAnalystClientFromEnv,
+  createQueryStrategistClientFromEnv,
+  createReportComposerClientFromEnv,
+  type AnalystClient,
+  type QueryStrategistClient,
+  type ReportComposerClient
+} from "@project-overload/llm-client";
 import { SqlGuardError } from "@project-overload/sql-guard";
 import { createMetadataStoreFromEnv, type MetadataStore } from "./store";
 import { registerSemanticRoutes } from "./routes/semantic";
@@ -15,6 +22,8 @@ export type ApiDependencies = {
   store: MetadataStore;
   data_plane: DataPlane;
   analyst_client: AnalystClient;
+  query_strategist: QueryStrategistClient;
+  report_composer: ReportComposerClient;
   connection_manager: RuntimeConnectionManager;
 };
 
@@ -64,6 +73,8 @@ export async function buildApiApp(options: Partial<ApiDependencies> = {}) {
       }
     });
   const analystClient = options.analyst_client ?? createAnalystClientFromEnv();
+  const queryStrategist = options.query_strategist ?? createQueryStrategistClientFromEnv();
+  const reportComposer = options.report_composer ?? createReportComposerClientFromEnv();
 
   const rateLimiter = createRateLimiter({
     window_ms: 60_000,
@@ -81,7 +92,7 @@ export async function buildApiApp(options: Partial<ApiDependencies> = {}) {
   app.get("/health", async () => ({ status: "ok", service: "api" }));
 
   registerSemanticRoutes(app, store);
-  registerContractRoutes(app, store, dataPlane, analystClient);
+  registerContractRoutes(app, store, dataPlane, analystClient, queryStrategist, reportComposer, connectionManager);
   registerConnectionRoutes(app, connectionManager);
 
   app.setErrorHandler((error: unknown, _request, reply) => {
