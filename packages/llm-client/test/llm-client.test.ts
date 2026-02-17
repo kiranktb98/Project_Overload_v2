@@ -1,9 +1,11 @@
 import { describe, expect, it } from "vitest";
-import type { AnalystInput, BatchAnalysis } from "@project-overload/shared";
+import type { AnalystInput, BatchAnalysis, QueryStrategyInput } from "@project-overload/shared";
 import {
   createAnalystClient,
   createAnalystClientFromEnv,
-  createStubAnalystClient
+  createStubAnalystClient,
+  createStubQueryStrategistClient,
+  createStubReportComposerClient
 } from "../src";
 
 const sampleInput: AnalystInput = {
@@ -140,6 +142,120 @@ describe("llm client", () => {
     ]);
 
     expect(result).toEqual(expected);
+  });
+});
+
+describe("stub query strategist", () => {
+  const baseInput: QueryStrategyInput = {
+    catalog_summary: "public.sales [TABLE]: id, amount, region",
+    report_goal: "Test report",
+    audience: "test",
+    insight_mode: "business",
+    metric_ids: [],
+    dimension_ids: [],
+    allowed_relations: ["public.sales"]
+  };
+
+  it("returns standalone queries when only metric_ids are set (Case 2)", async () => {
+    const client = createStubQueryStrategistClient();
+    const result = await client.planQueries({
+      ...baseInput,
+      metric_ids: ["revenue"]
+    });
+
+    expect(result.queries.length).toBeGreaterThanOrEqual(1);
+    for (const q of result.queries) {
+      expect(q.group_id).toBeUndefined();
+    }
+  });
+
+  it("returns standalone queries when only dimension_ids are set (Case 2)", async () => {
+    const client = createStubQueryStrategistClient();
+    const result = await client.planQueries({
+      ...baseInput,
+      dimension_ids: ["region"]
+    });
+
+    expect(result.queries.length).toBeGreaterThanOrEqual(1);
+    for (const q of result.queries) {
+      expect(q.group_id).toBeUndefined();
+    }
+  });
+
+  it("returns grouped queries when both metric_ids and dimension_ids are set (Case 1)", async () => {
+    const client = createStubQueryStrategistClient();
+    const result = await client.planQueries({
+      ...baseInput,
+      metric_ids: ["revenue"],
+      dimension_ids: ["region"]
+    });
+
+    expect(result.queries.length).toBe(2);
+    expect(result.queries[0].group_id).toBe("overview");
+    expect(result.queries[1].group_id).toBe("overview");
+  });
+
+  it("returns data quality query for data insight mode", async () => {
+    const client = createStubQueryStrategistClient();
+    const result = await client.planQueries({
+      ...baseInput,
+      insight_mode: "data"
+    });
+
+    expect(result.queries.length).toBe(1);
+    expect(result.queries[0].question).toContain("data quality");
+    expect(result.queries[0].group_id).toBeUndefined();
+  });
+
+  it("returns fallback query when no metric_ids or dimension_ids", async () => {
+    const client = createStubQueryStrategistClient();
+    const result = await client.planQueries(baseInput);
+
+    expect(result.queries.length).toBe(1);
+    expect(result.queries[0].question).toContain("key business insights");
+    expect(result.queries[0].group_id).toBeUndefined();
+  });
+});
+
+describe("stub report composer", () => {
+  it("generates HTML with correct title and mode label", async () => {
+    const client = createStubReportComposerClient();
+
+    const html = await client.composeReport({
+      title: "Revenue Report",
+      audience: "CEO",
+      insight_mode: "business",
+      analyses: [
+        {
+          question: "What is the trend?",
+          highlights: ["Revenue up 10%"],
+          risks: ["Churn rising"],
+          recommendations: ["Expand sales team"],
+          data_summary: "100 rows analyzed"
+        }
+      ],
+      catalog_summary: "public.sales"
+    });
+
+    expect(html).toContain("Revenue Report");
+    expect(html).toContain("Business Insights Report");
+    expect(html).toContain("Revenue up 10%");
+    expect(html).toContain("Churn rising");
+    expect(html).toContain("Expand sales team");
+  });
+
+  it("renders data quality label for data mode", async () => {
+    const client = createStubReportComposerClient();
+
+    const html = await client.composeReport({
+      title: "DQ Report",
+      audience: "Ops",
+      insight_mode: "data",
+      analyses: [],
+      catalog_summary: "x"
+    });
+
+    expect(html).toContain("Data Quality Assessment");
   });
 });
 

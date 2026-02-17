@@ -8,6 +8,8 @@ import {
   ContractQueryPlanSchema,
   EvidencePacketSchema,
   MetricSchema,
+  PlannedQuerySchema,
+  QueryStrategyOutputSchema,
   QualityEvalSchema,
   ReportContractDraftSchema,
   QueryPlanSchema,
@@ -201,5 +203,49 @@ describe("shared schemas", () => {
     expect(queryPlan.evidence_requests[0].strategy).toBe("db_join");
     expect(brief.headline).toContain("12%");
     expect(quality.score_0_100).toBe(91);
+  });
+
+  it("accepts PlannedQuery without group_id (Case 2)", () => {
+    const query = PlannedQuerySchema.parse({
+      question: "Revenue trend?",
+      sql: "SELECT * FROM sales LIMIT 200",
+      purpose: "Trend analysis"
+    });
+    expect(query.group_id).toBeUndefined();
+  });
+
+  it("accepts PlannedQuery with group_id (Case 1)", () => {
+    const query = PlannedQuerySchema.parse({
+      question: "Revenue by region?",
+      sql: "SELECT * FROM sales LIMIT 200",
+      purpose: "Regional breakdown",
+      group_id: "overview"
+    });
+    expect(query.group_id).toBe("overview");
+  });
+
+  it("rejects PlannedQuery with empty group_id", () => {
+    expect(() =>
+      PlannedQuerySchema.parse({
+        question: "Q?",
+        sql: "SELECT 1",
+        purpose: "P",
+        group_id: ""
+      })
+    ).toThrow();
+  });
+
+  it("validates QueryStrategyOutput with mixed grouped and standalone queries", () => {
+    const output = QueryStrategyOutputSchema.parse({
+      queries: [
+        { question: "Q1?", sql: "SELECT 1", purpose: "P1" },
+        { question: "Q2?", sql: "SELECT 2", purpose: "P2", group_id: "g1" },
+        { question: "Q3?", sql: "SELECT 3", purpose: "P3", group_id: "g1" }
+      ]
+    });
+    expect(output.queries).toHaveLength(3);
+    expect(output.queries[0].group_id).toBeUndefined();
+    expect(output.queries[1].group_id).toBe("g1");
+    expect(output.queries[2].group_id).toBe("g1");
   });
 });
