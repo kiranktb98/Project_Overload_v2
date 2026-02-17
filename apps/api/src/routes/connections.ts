@@ -124,6 +124,18 @@ export function registerConnectionRoutes(app: FastifyInstance, manager: RuntimeC
     }
   });
 
+  app.post("/connections/validate", async (_request, reply) => {
+    try {
+      const result = await manager.validateAllowlistAccess();
+      return reply.code(200).send(result);
+    } catch (error) {
+      return reply.code(400).send({
+        ok: false,
+        message: error instanceof Error ? error.message : "Unable to validate allowlist"
+      });
+    }
+  });
+
   app.post("/connections/fix-script", async (request, reply) => {
     const payload = FixScriptPayloadSchema.parse(request.body);
     try {

@@ -36,74 +36,19 @@ export function renderChatPage(): string {
       }
 
       .page {
-        width: min(1120px, 100% - 32px);
+        width: min(860px, 100% - 32px);
         margin: 28px auto;
-        display: grid;
-        grid-template-columns: minmax(230px, 320px) 1fr;
-        gap: 18px;
       }
 
-      .panel,
       .chat-shell {
         border: 1px solid var(--line);
         border-radius: 20px;
         background: var(--card);
         box-shadow: var(--shadow);
         backdrop-filter: blur(10px);
-      }
-
-      .panel {
-        padding: 18px;
-      }
-
-      .panel h1 {
-        margin: 0 0 10px;
-        font-size: 1.05rem;
-      }
-
-      .panel p {
-        margin: 0;
-        color: var(--ink-soft);
-        line-height: 1.45;
-      }
-
-      .chips {
-        margin-top: 14px;
-        display: flex;
-        flex-wrap: wrap;
-        gap: 8px;
-      }
-
-      .panel .nav-link {
-        display: inline-block;
-        margin-top: 10px;
-        color: #075985;
-        font-size: 0.8rem;
-      }
-
-      .chip {
-        appearance: none;
-        border: 1px solid rgba(14, 165, 233, 0.35);
-        background: rgba(14, 165, 233, 0.08);
-        color: var(--ink);
-        border-radius: 999px;
-        padding: 8px 12px;
-        font-family: "IBM Plex Mono", monospace;
-        font-size: 0.72rem;
-        cursor: pointer;
-        transition: transform 140ms ease, border-color 140ms ease, background 140ms ease;
-      }
-
-      .chip:hover {
-        transform: translateY(-1px);
-        border-color: rgba(14, 165, 233, 0.7);
-        background: rgba(14, 165, 233, 0.16);
-      }
-
-      .chat-shell {
         display: grid;
         grid-template-rows: auto 1fr auto;
-        min-height: 72vh;
+        min-height: 82vh;
       }
 
       .chat-head {
@@ -116,6 +61,26 @@ export function renderChatPage(): string {
 
       .chat-head strong {
         font-size: 1rem;
+      }
+
+      .chat-head-right {
+        display: flex;
+        align-items: center;
+        gap: 12px;
+      }
+
+      .nav-link {
+        color: #075985;
+        font-size: 0.78rem;
+        text-decoration: none;
+        font-family: "IBM Plex Mono", monospace;
+        opacity: 0.8;
+        transition: opacity 140ms ease;
+      }
+
+      .nav-link:hover {
+        opacity: 1;
+        text-decoration: underline;
       }
 
       .status {
@@ -131,24 +96,25 @@ export function renderChatPage(): string {
       .messages {
         padding: 18px;
         overflow-y: auto;
-        max-height: calc(72vh - 130px);
+        max-height: calc(82vh - 130px);
       }
 
       .bubble {
         width: fit-content;
         max-width: min(90%, 720px);
         margin-bottom: 12px;
-        padding: 10px 12px;
+        padding: 10px 14px;
         border-radius: 14px;
-        line-height: 1.45;
-        white-space: pre-wrap;
+        line-height: 1.55;
         word-break: break-word;
+        font-size: 0.92rem;
       }
 
       .bubble.user {
         margin-left: auto;
         background: rgba(14, 165, 233, 0.14);
         border: 1px solid rgba(14, 165, 233, 0.45);
+        white-space: pre-wrap;
       }
 
       .bubble.assistant {
@@ -159,6 +125,97 @@ export function renderChatPage(): string {
       .bubble.assistant a {
         color: #0369a1;
         font-weight: 700;
+      }
+
+      /* Markdown styles inside assistant bubbles */
+      .bubble.assistant p {
+        margin: 0 0 8px;
+      }
+
+      .bubble.assistant p:last-child {
+        margin-bottom: 0;
+      }
+
+      .bubble.assistant strong {
+        font-weight: 700;
+      }
+
+      .bubble.assistant em {
+        font-style: italic;
+      }
+
+      .bubble.assistant code {
+        font-family: "IBM Plex Mono", monospace;
+        font-size: 0.84em;
+        background: rgba(15, 23, 42, 0.08);
+        padding: 1px 5px;
+        border-radius: 4px;
+      }
+
+      .bubble.assistant h1,
+      .bubble.assistant h2,
+      .bubble.assistant h3,
+      .bubble.assistant h4 {
+        margin: 12px 0 6px;
+        line-height: 1.3;
+      }
+
+      .bubble.assistant h1:first-child,
+      .bubble.assistant h2:first-child,
+      .bubble.assistant h3:first-child,
+      .bubble.assistant h4:first-child {
+        margin-top: 0;
+      }
+
+      .bubble.assistant h1 { font-size: 1.15rem; }
+      .bubble.assistant h2 { font-size: 1.05rem; }
+      .bubble.assistant h3 { font-size: 0.95rem; }
+      .bubble.assistant h4 { font-size: 0.9rem; }
+
+      .bubble.assistant ul,
+      .bubble.assistant ol {
+        margin: 4px 0 8px;
+        padding-left: 20px;
+      }
+
+      .bubble.assistant li {
+        margin-bottom: 3px;
+      }
+
+      /* Thinking indicator */
+      .thinking-bubble {
+        display: flex;
+        align-items: center;
+        gap: 10px;
+        color: var(--ink-soft);
+        font-size: 0.85rem;
+        font-style: italic;
+      }
+
+      .thinking-dots {
+        display: flex;
+        gap: 4px;
+      }
+
+      .thinking-dots span {
+        width: 6px;
+        height: 6px;
+        border-radius: 50%;
+        background: var(--accent);
+        animation: pulse 1.4s ease-in-out infinite;
+      }
+
+      .thinking-dots span:nth-child(2) {
+        animation-delay: 0.2s;
+      }
+
+      .thinking-dots span:nth-child(3) {
+        animation-delay: 0.4s;
+      }
+
+      @keyframes pulse {
+        0%, 80%, 100% { opacity: 0.25; transform: scale(0.8); }
+        40% { opacity: 1; transform: scale(1); }
       }
 
       .exec-brief-embed {
@@ -223,6 +280,12 @@ export function renderChatPage(): string {
         font-size: 0.84rem;
       }
 
+      .composer input:focus {
+        outline: none;
+        border-color: var(--accent);
+        box-shadow: 0 0 0 3px rgba(14, 165, 233, 0.12);
+      }
+
       .composer button {
         border: none;
         border-radius: 12px;
@@ -249,58 +312,28 @@ export function renderChatPage(): string {
       .hint {
         margin-top: 10px;
         color: var(--ink-soft);
-        font-size: 0.78rem;
-      }
-
-      @media (max-width: 940px) {
-        .page {
-          grid-template-columns: 1fr;
-        }
-
-        .chat-shell {
-          min-height: 68vh;
-        }
-
-        .messages {
-          max-height: calc(68vh - 130px);
-        }
+        font-size: 0.75rem;
+        text-align: center;
       }
     </style>
   </head>
   <body>
     <div class="page">
-      <aside class="panel">
-        <h1>Report Contract Chat</h1>
-        <p>
-          Define one contract with guardrails, then save and run it. This UI keeps the workflow deterministic:
-          set fields, preview, save, run.
-        </p>
-        <a class="nav-link" href="/connect">Open Database Connector</a>
-        <div class="chips" id="chips">
-          <button class="chip" data-command="set name: Weekly CEO Revenue">set name</button>
-          <button class="chip" data-command="set audience: CEO">set audience</button>
-          <button class="chip" data-command="set timezone: Asia/Kolkata">set timezone</button>
-          <button class="chip" data-command="set schedule: 0 18 * * 5">set schedule</button>
-          <button class="chip" data-command="preview">preview</button>
-          <button class="chip" data-command="save">save</button>
-          <button class="chip" data-command="run">run</button>
-          <button class="chip" data-command="list contracts">list contracts</button>
-          <button class="chip" data-command="help">help</button>
-        </div>
-      </aside>
-
       <main class="chat-shell">
         <header class="chat-head">
-          <strong>Planner + Guardrails Chat</strong>
-          <span class="status" id="status">starting</span>
+          <strong>Project Overload</strong>
+          <div class="chat-head-right">
+            <a class="nav-link" href="/connect">Database</a>
+            <span class="status" id="status">starting</span>
+          </div>
         </header>
         <section class="messages" id="messages"></section>
         <section class="composer">
           <form id="composer-form">
-            <input id="composer-input" autocomplete="off" placeholder="Describe the report you want. Example: I need a weekly CEO revenue report by region." />
+            <input id="composer-input" autocomplete="off" placeholder="Describe the report you want, e.g. weekly refund analysis by product category" />
             <button id="composer-send" type="submit">Send</button>
           </form>
-          <div class="hint">Every turn runs through server-side <code>/api/chat</code>, AI response generation, and existing API contracts.</div>
+          <div class="hint">Powered by AI &mdash; each message runs through the analysis pipeline</div>
         </section>
       </main>
     </div>
@@ -313,9 +346,140 @@ export function renderChatPage(): string {
         const inputEl = document.getElementById("composer-input");
         const sendButtonEl = document.getElementById("composer-send");
         const formEl = document.getElementById("composer-form");
-        const chipsEl = document.getElementById("chips");
         const runtimeStatusRef = { mode: "checking provider", busy: false };
 
+        /* ── Thinking indicator ── */
+        const thinkingMessages = {
+          chatting: ["Thinking...", "Pondering your question...", "Mulling it over..."],
+          analyzing: ["Cooking insights...", "Sherlocking the data...", "Connecting the dots..."],
+          running: ["Scouring the seven seas...", "Crunching the numbers...", "Mining for gold..."]
+        };
+
+        let thinkingEl = null;
+        let thinkingInterval = null;
+
+        function showThinking(phase) {
+          hideThinking();
+          const messages = thinkingMessages[phase] || thinkingMessages.chatting;
+          let idx = 0;
+
+          const bubble = document.createElement("div");
+          bubble.className = "bubble assistant thinking-bubble";
+          bubble.id = "thinking-indicator";
+
+          const dots = document.createElement("div");
+          dots.className = "thinking-dots";
+          dots.innerHTML = "<span></span><span></span><span></span>";
+
+          const text = document.createElement("span");
+          text.textContent = messages[0];
+
+          bubble.appendChild(dots);
+          bubble.appendChild(text);
+          messagesEl.appendChild(bubble);
+          messagesEl.scrollTop = messagesEl.scrollHeight;
+
+          thinkingEl = bubble;
+          thinkingInterval = setInterval(() => {
+            idx = (idx + 1) % messages.length;
+            text.textContent = messages[idx];
+          }, 3000);
+        }
+
+        function hideThinking() {
+          if (thinkingInterval) {
+            clearInterval(thinkingInterval);
+            thinkingInterval = null;
+          }
+          if (thinkingEl) {
+            thinkingEl.remove();
+            thinkingEl = null;
+          }
+        }
+
+        /* ── Markdown renderer ── */
+        function renderMarkdown(text) {
+          // Escape HTML entities to prevent XSS
+          const esc = text
+            .replace(/&/g, "&amp;")
+            .replace(/</g, "&lt;")
+            .replace(/>/g, "&gt;");
+
+          const lines = esc.split("\\n");
+          const out = [];
+          let inList = false;
+          let listTag = "";
+
+          function closeList() {
+            if (inList) {
+              out.push("</" + listTag + ">");
+              inList = false;
+              listTag = "";
+            }
+          }
+
+          for (let i = 0; i < lines.length; i++) {
+            const line = lines[i];
+
+            // Headings
+            const headingMatch = line.match(/^(#{1,4})\\s+(.+)$/);
+            if (headingMatch) {
+              closeList();
+              const level = headingMatch[1].length;
+              out.push("<h" + level + ">" + inlineFormat(headingMatch[2]) + "</h" + level + ">");
+              continue;
+            }
+
+            // Unordered list items
+            const ulMatch = line.match(/^[\\-\\*]\\s+(.+)$/);
+            if (ulMatch) {
+              if (!inList || listTag !== "ul") {
+                closeList();
+                out.push("<ul>");
+                inList = true;
+                listTag = "ul";
+              }
+              out.push("<li>" + inlineFormat(ulMatch[1]) + "</li>");
+              continue;
+            }
+
+            // Ordered list items
+            const olMatch = line.match(/^\\d+\\.\\s+(.+)$/);
+            if (olMatch) {
+              if (!inList || listTag !== "ol") {
+                closeList();
+                out.push("<ol>");
+                inList = true;
+                listTag = "ol";
+              }
+              out.push("<li>" + inlineFormat(olMatch[1]) + "</li>");
+              continue;
+            }
+
+            closeList();
+
+            // Blank line → paragraph break
+            if (line.trim() === "") {
+              out.push("<br>");
+              continue;
+            }
+
+            // Regular text
+            out.push("<p>" + inlineFormat(line) + "</p>");
+          }
+
+          closeList();
+          return out.join("");
+        }
+
+        function inlineFormat(text) {
+          return text
+            .replace(/\`([^\`]+)\`/g, "<code>$1</code>")
+            .replace(/\\*\\*(.+?)\\*\\*/g, "<strong>$1</strong>")
+            .replace(/\\*(.+?)\\*/g, "<em>$1</em>");
+        }
+
+        /* ── Status ── */
         function setBusy(isBusy) {
           runtimeStatusRef.busy = isBusy;
           renderStatus();
@@ -328,12 +492,19 @@ export function renderChatPage(): string {
           statusEl.textContent = runtimeStatusRef.mode + " | " + activity;
         }
 
+        /* ── Messages ── */
         function appendMessage(role, text, downloadUrl, execBriefHtml) {
+          hideThinking();
+
           const bubble = document.createElement("div");
           bubble.className = "bubble " + role;
 
           const content = document.createElement("div");
-          content.textContent = text;
+          if (role === "assistant") {
+            content.innerHTML = renderMarkdown(text);
+          } else {
+            content.textContent = text;
+          }
           bubble.appendChild(content);
 
           if (role === "assistant" && typeof execBriefHtml === "string" && execBriefHtml.length > 0) {
@@ -357,6 +528,7 @@ export function renderChatPage(): string {
           messagesEl.scrollTop = messagesEl.scrollHeight;
         }
 
+        /* ── Submit ── */
         async function submitMessage(message) {
           const value = String(message || "").trim();
           if (!value) {
@@ -365,6 +537,7 @@ export function renderChatPage(): string {
 
           appendMessage("user", value);
           setBusy(true);
+          showThinking("chatting");
 
           try {
             const response = await fetch("/api/chat", {
@@ -389,11 +562,13 @@ export function renderChatPage(): string {
             const errorText = error instanceof Error ? error.message : "Unknown error";
             appendMessage("assistant", "Network error: " + errorText);
           } finally {
+            hideThinking();
             setBusy(false);
             inputEl.focus();
           }
         }
 
+        /* ── Runtime status ── */
         async function loadRuntimeStatus() {
           try {
             const response = await fetch("/api/chat/runtime", { method: "GET" });
@@ -415,6 +590,7 @@ export function renderChatPage(): string {
           renderStatus();
         }
 
+        /* ── DB context bootstrap ── */
         async function loadDbContextForChat() {
           try {
             const response = await fetch("/api/db/context", { method: "GET" });
@@ -448,13 +624,14 @@ export function renderChatPage(): string {
 
             appendMessage(
               "assistant",
-              "I see you have a database connected - I'll use your tables by default. Want a quick look at the data? Try:\\n  query: SELECT * FROM " + (defaultRelation || "your_schema.your_table") + " LIMIT 20"
+              "I see you have a database connected with **" + allowedRelations.length + " table" + (allowedRelations.length === 1 ? "" : "s") + "** available. Tell me what you'd like to analyze and I'll get started!"
             );
           } catch (_error) {
             // Ignore optional context bootstrap failures.
           }
         }
 
+        /* ── Init ── */
         formEl.addEventListener("submit", (event) => {
           event.preventDefault();
           const value = inputEl.value;
@@ -462,22 +639,9 @@ export function renderChatPage(): string {
           submitMessage(value);
         });
 
-        chipsEl.addEventListener("click", (event) => {
-          const target = event.target;
-          if (!(target instanceof HTMLElement)) {
-            return;
-          }
-
-          if (!target.dataset.command) {
-            return;
-          }
-
-          submitMessage(target.dataset.command);
-        });
-
         appendMessage(
           "assistant",
-          "Hey! Tell me what report you'd like to build - who's the audience and what metric matters most? I'll handle the rest.\\n\\nYou can also type 'help' to see all available commands."
+          "Hey! Tell me what report you'd like to build - **who's the audience** and **what metric matters most**? I'll handle the rest."
         );
         renderStatus();
         loadRuntimeStatus();
