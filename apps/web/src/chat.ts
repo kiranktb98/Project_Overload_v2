@@ -74,6 +74,7 @@ export interface WebApiClient {
   getConnectionContext(): Promise<ConnectionContextRecord>;
   runSafeQuery(sql: string, limit?: number): Promise<SafeQueryResponseRecord>;
   getCatalog(): Promise<DataCatalogRecord>;
+  getTableHealth(): Promise<RelationHealthRecord[]>;
 }
 
 const RunContractResponseSchema = z.object({
@@ -122,6 +123,23 @@ const DataCatalogSchema = z.object({
 });
 
 type DataCatalogRecord = z.output<typeof DataCatalogSchema>;
+
+const RelationHealthSchema = z.object({
+  schema_name: z.string(),
+  relation_name: z.string(),
+  qualified_name: z.string(),
+  has_select_privilege: z.boolean(),
+  rls_active_for_me: z.boolean(),
+  policies_count_for_me: z.number(),
+  status: z.enum(["OK", "NO_SELECT_GRANT", "RLS_NO_POLICY"]),
+  status_label: z.string()
+});
+
+const TableHealthResponseSchema = z.object({
+  relations: z.array(RelationHealthSchema).default([])
+});
+
+type RelationHealthRecord = z.output<typeof RelationHealthSchema>;
 
 const DEFAULT_DRAFT: ChatDraft = {
   name: "",
@@ -209,6 +227,180 @@ export function appendConversationTurn(
   return next;
 }
 
+// ---------------------------------------------------------------------------
+// applyLlmDraftUpdates — merges structured LLM draft updates into state
+// ---------------------------------------------------------------------------
+
+import type { DraftUpdates } from "./conversation";
+
+export function applyLlmDraftUpdates(state: ChatState, updates: DraftUpdates): ChatState {
+  const next = parseChatState(state);
+  let changed = false;
+
+  if (updates.name !== undefined && updates.name !== next.draft.name) {
+    next.draft.name = updates.name;
+    changed = true;
+  }
+
+  if (updates.audience !== undefined && updates.audience !== next.draft.audience) {
+    next.draft.audience = updates.audience;
+    changed = true;
+  }
+
+  if (updates.timezone !== undefined && updates.timezone !== next.draft.timezone) {
+    next.draft.timezone = updates.timezone;
+    changed = true;
+  }
+
+  if (updates.schedule_cron !== undefined && updates.schedule_cron !== next.draft.schedule_cron) {
+    next.draft.schedule_cron = updates.schedule_cron;
+    changed = true;
+  }
+
+  if (updates.sql_template !== undefined && /^\s*(select|with)\b/i.test(updates.sql_template) && updates.sql_template !== next.draft.sql_template) {
+    next.draft.sql_template = updates.sql_template;
+    changed = true;
+  }
+
+  if (updates.metric_ids !== undefined && updates.metric_ids.length > 0) {
+    next.draft.metric_ids = Array.from(new Set([...next.draft.metric_ids, ...updates.metric_ids]));
+    changed = true;
+  }
+
+  if (updates.dimension_ids !== undefined && updates.dimension_ids.length > 0) {
+    next.draft.dimension_ids = Array.from(new Set([...next.draft.dimension_ids, ...updates.dimension_ids]));
+    changed = true;
+  }
+
+  if (updates.allowed_relations !== undefined && updates.allowed_relations.length > 0) {
+    next.draft.allowed_relations = Array.from(new Set([...next.draft.allowed_relations, ...updates.allowed_relations]));
+    const derivedSchemas = updates.allowed_relations.map((r) => r.split(".")[0]).filter(Boolean);
+    next.draft.allowed_schemas = Array.from(new Set([...next.draft.allowed_schemas, ...derivedSchemas]));
+    changed = true;
+  }
+
+  if (updates.allowed_schemas !== undefined && updates.allowed_schemas.length > 0) {
+    next.draft.allowed_schemas = Array.from(new Set([...next.draft.allowed_schemas, ...updates.allowed_schemas]));
+    changed = true;
+  }
+
+  if (updates.insight_mode !== undefined && updates.insight_mode !== next.draft.insight_mode) {
+    next.draft.insight_mode = updates.insight_mode;
+    changed = true;
+  }
+
+  if (changed) {
+    next.contract_id = null;
+  }
+
+  return next;
+}
+
+// ---------------------------------------------------------------------------
+// verifyDataScope — checks tables exist, are accessible, and have data
+// ---------------------------------------------------------------------------
+
+type VerificationResult = {
+  ok: boolean;
+  blocking_message?: string;
+  warning_lines: string[];
+};
+
+async function verifyDataScope(
+  draft: ChatDraft,
+  apiClient: WebApiClient
+): Promise<VerificationResult> {
+  const warnings: string[] = [];
+
+  if (draft.allowed_relations.length === 0) {
+    return {
+      ok: false,
+      blocking_message: "No tables are scoped for this report. Tell me which tables to analyze, or say 'use connected tables' to include all available tables.",
+      warning_lines: []
+    };
+  }
+
+  // Step 1: Check table health (permissions, RLS)
+  const relations = await apiClient.getTableHealth();
+  const healthMap = new Map(relations.map((r) => [r.qualified_name.toLowerCase(), r.status]));
+
+  const blockedTables: string[] = [];
+  const rlsTables: string[] = [];
+  const missingTables: string[] = [];
+
+  if (relations.length > 0) {
+    for (const relation of draft.allowed_relations) {
+      const status = healthMap.get(relation.toLowerCase());
+      if (status === undefined) {
+        missingTables.push(relation);
+      } else if (status === "NO_SELECT_GRANT") {
+        blockedTables.push(relation);
+      } else if (status === "RLS_NO_POLICY") {
+        rlsTables.push(relation);
+      }
+    }
+  }
+
+  if (blockedTables.length > 0) {
+    return {
+      ok: false,
+      blocking_message: [
+        `Cannot read these tables (no SELECT permission): ${blockedTables.join(", ")}.`,
+        "Visit the connection wizard to generate a GRANT SQL fix script, or remove these tables from the scope."
+      ].join("\n"),
+      warning_lines: []
+    };
+  }
+
+  if (missingTables.length > 0) {
+    return {
+      ok: false,
+      blocking_message: [
+        `These tables don't exist in your connected database: ${missingTables.join(", ")}.`,
+        "They may have been renamed or dropped. Update your table scope or say 'use connected tables'."
+      ].join("\n"),
+      warning_lines: []
+    };
+  }
+
+  if (rlsTables.length > 0) {
+    warnings.push(`${rlsTables.join(", ")} ${rlsTables.length === 1 ? "has" : "have"} Row-Level Security active but no policy for this role — data access may be restricted.`);
+  }
+
+  // Step 2: Row-count check on primary table
+  const primaryTable = draft.allowed_relations[0];
+  try {
+    const countResult = await apiClient.runSafeQuery(
+      `SELECT COUNT(*) AS row_count FROM ${primaryTable}`,
+      1
+    );
+
+    const firstRow = countResult.rows[0];
+    const rowCount = firstRow ? Number(firstRow["row_count"] ?? firstRow["count"] ?? 0) : 0;
+
+    if (rowCount === 0) {
+      return {
+        ok: false,
+        blocking_message: [
+          `The table ${primaryTable} appears to be empty (0 rows).`,
+          "There's no data to analyze. Check that data is being loaded into this table."
+        ].join("\n"),
+        warning_lines: warnings
+      };
+    }
+
+    warnings.push(`Data verified: ${primaryTable} contains ${rowCount.toLocaleString()} rows.`);
+  } catch (err) {
+    const message = err instanceof Error ? err.message : "unknown error";
+    warnings.push(`Could not verify row count for ${primaryTable}: ${message}`);
+  }
+
+  return {
+    ok: true,
+    warning_lines: warnings
+  };
+}
+
 export function createWebApiClient(options: CreateWebApiClientOptions): WebApiClient {
   const fetcher = options.fetch_impl ?? fetch;
   const baseUrl = options.base_url.replace(/\/+$/, "");
@@ -276,6 +468,19 @@ export function createWebApiClient(options: CreateWebApiClientOptions): WebApiCl
       });
 
       return parseJsonResponse(response, DataCatalogSchema);
+    },
+    async getTableHealth() {
+      try {
+        const response = await fetcher(`${baseUrl}/connections/tables`, {
+          method: "GET"
+        });
+
+        if (!response.ok) return [];
+        const result = await parseJsonResponse(response, TableHealthResponseSchema);
+        return result.relations;
+      } catch {
+        return [];
+      }
     }
   };
 }
@@ -470,6 +675,15 @@ async function buildScopeConfirmation(state: ChatState, apiClient: WebApiClient)
     return { assistant_message: `Cannot run yet: ${missing.join(", ")}.`, state };
   }
 
+  // Verify data scope before showing confirmation
+  const verification = await verifyDataScope(state.draft, apiClient);
+  if (!verification.ok) {
+    return {
+      assistant_message: verification.blocking_message!,
+      state
+    };
+  }
+
   const nextState = parseChatState(state);
   nextState.scope_pending = true;
 
@@ -500,6 +714,10 @@ async function buildScopeConfirmation(state: ChatState, apiClient: WebApiClient)
 
   const reportName = draft.name.trim().length > 0 ? draft.name.trim() : "Untitled Report";
 
+  const verificationLines = verification.warning_lines.length > 0
+    ? ["", "Data verification:", ...verification.warning_lines.map((w) => `- ${w}`)]
+    : [];
+
   const scopeMessage = [
     `Ready to run: "${reportName}"`,
     "",
@@ -509,6 +727,7 @@ async function buildScopeConfirmation(state: ChatState, apiClient: WebApiClient)
     `- Dimensions: ${dimensions}`,
     `- Mode: ${modeLabel}`,
     `- Timeline: ${timelineHint}`,
+    ...verificationLines,
     "",
     "Quality: Only analysis sections scoring 90%+ confidence will be included.",
     "",

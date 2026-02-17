@@ -2,6 +2,7 @@ import Fastify from "fastify";
 import { z } from "zod";
 import {
   appendConversationTurn,
+  applyLlmDraftUpdates,
   ChatTurnRequestSchema,
   createWebApiClient,
   fetchCatalogContext,
@@ -68,7 +69,7 @@ export function buildWebApp(options: WebAppDependencies = {}) {
         api_client: apiClient
       });
       const catalogCtx = await fetchCatalogContext(apiClient);
-      const aiMessage = await conversationClient.respond({
+      const conversationResponse = await conversationClient.respond({
         user_message: parsed.data.message,
         action_context: response.assistant_message,
         state: response.state,
@@ -76,7 +77,13 @@ export function buildWebApp(options: WebAppDependencies = {}) {
         catalog_summary: catalogCtx.catalog_summary,
         business_context: catalogCtx.business_context
       });
-      const nextState = appendConversationTurn(response.state, parsed.data.message, aiMessage);
+
+      const aiMessage = conversationResponse.message;
+      let stateAfterLlm = response.state;
+      if (conversationResponse.draft_updates) {
+        stateAfterLlm = applyLlmDraftUpdates(response.state, conversationResponse.draft_updates);
+      }
+      const nextState = appendConversationTurn(stateAfterLlm, parsed.data.message, aiMessage);
 
       return reply.code(200).send({
         ...response,
