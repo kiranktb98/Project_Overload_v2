@@ -259,13 +259,21 @@ async function proxyToApi(input: {
   body?: unknown;
 }) {
   const fetcher = input.fetch_impl ?? fetch;
-  const response = await fetcher(`${input.api_base_url}${input.path}`, {
-    method: input.method,
-    headers: {
-      "content-type": "application/json"
-    },
-    body: input.body === undefined ? undefined : JSON.stringify(input.body)
-  });
+
+  let response: Response;
+  try {
+    response = await fetcher(`${input.api_base_url}${input.path}`, {
+      method: input.method,
+      headers: {
+        "content-type": "application/json"
+      },
+      body: input.body === undefined ? undefined : JSON.stringify(input.body)
+    });
+  } catch {
+    return input.reply.code(502).send({
+      message: `Cannot reach API server at ${input.api_base_url}. Is the API running? (pnpm --filter api dev)`
+    });
+  }
 
   const text = await response.text();
   const payload = text.length > 0 ? JSON.parse(text) : {};

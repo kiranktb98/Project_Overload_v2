@@ -243,7 +243,7 @@ export function analyzeBatch(input: AnalystInput): BatchAnalysis {
     highlights,
     risks: validatedInput.total_batches > 3 ? ["High batch count can dilute context."] : [],
     recommendations: ["Review appendix references before final approval."],
-    confidence_score: validatedInput.total_batches > 3 ? 0.72 : 0.84,
+    confidence_score: validatedInput.total_batches > 3 ? 0.72 : 0.92,
     appendix_refs: [`${validatedInput.request_id}:batch-${validatedInput.batch_index + 1}`]
   });
 

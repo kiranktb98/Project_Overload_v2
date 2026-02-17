@@ -202,12 +202,27 @@ describe("web chat interface", () => {
     expect(save.json().state.contract_id).toBe("contract_web_test");
     expect(save.json().assistant_message).toContain("Contract saved");
 
-    const run = await app.inject({
+    // Step 1: "run" now triggers scope confirmation
+    const scopeConfirm = await app.inject({
       method: "POST",
       url: "/api/chat",
       payload: {
         message: "run",
         state: save.json().state
+      }
+    });
+
+    expect(scopeConfirm.statusCode).toBe(200);
+    expect(scopeConfirm.json().assistant_message).toContain("Ready to run");
+    expect(scopeConfirm.json().state.scope_pending).toBe(true);
+
+    // Step 2: Confirm to actually execute the run
+    const run = await app.inject({
+      method: "POST",
+      url: "/api/chat",
+      payload: {
+        message: "confirm",
+        state: scopeConfirm.json().state
       }
     });
 
@@ -218,6 +233,7 @@ describe("web chat interface", () => {
     expect(runBody.pdf_download_url).toBe("/api/runs/run_web_test/pdf");
     expect(runBody.state.last_run_id).toBe("run_web_test");
     expect(runBody.state.last_exec_brief).toBeTruthy();
+    expect(runBody.state.scope_pending).toBe(false);
 
     // Ask for PDF download
     const pdfRequest = await app.inject({
@@ -361,7 +377,7 @@ describe("web chat interface", () => {
     expect(turn2.statusCode).toBe(200);
     expect(turn2.json().assistant_message).toContain("Draft updated");
 
-    // Turn 3: Run the report
+    // Turn 3: Run request → scope confirmation
     const turn3 = await app.inject({
       method: "POST",
       url: "/api/chat",
@@ -371,20 +387,33 @@ describe("web chat interface", () => {
       }
     });
     expect(turn3.statusCode).toBe(200);
-    expect(turn3.json().assistant_message).toContain("Report executed");
-    expect(turn3.json().state.last_run_id).toBe("run_nl_test");
+    expect(turn3.json().assistant_message).toContain("Ready to run");
+    expect(turn3.json().state.scope_pending).toBe(true);
 
-    // Turn 4: Ask for PDF
+    // Turn 4: Confirm to execute
     const turn4 = await app.inject({
       method: "POST",
       url: "/api/chat",
       payload: {
-        message: "Can I download the PDF?",
+        message: "yes",
         state: turn3.json().state
       }
     });
     expect(turn4.statusCode).toBe(200);
-    expect(turn4.json().pdf_download_url).toBe("/api/runs/run_nl_test/pdf");
+    expect(turn4.json().assistant_message).toContain("Report executed");
+    expect(turn4.json().state.last_run_id).toBe("run_nl_test");
+
+    // Turn 5: Ask for PDF
+    const turn5 = await app.inject({
+      method: "POST",
+      url: "/api/chat",
+      payload: {
+        message: "Can I download the PDF?",
+        state: turn4.json().state
+      }
+    });
+    expect(turn5.statusCode).toBe(200);
+    expect(turn5.json().pdf_download_url).toBe("/api/runs/run_nl_test/pdf");
 
     expect(
       requests.some((request) => request.method === "POST" && request.url.endsWith("/report-contracts"))
@@ -973,11 +1002,23 @@ describe("web chat interface", () => {
       conversation_client: conversationClient
     });
 
-    // Run the report
-    const run = await app.inject({
+    // Run the report — first triggers scope confirmation
+    const scope = await app.inject({
       method: "POST",
       url: "/api/chat",
       payload: { message: "run" }
+    });
+    expect(scope.statusCode).toBe(200);
+    expect(capturedAction).toContain("Ready to run");
+
+    // Confirm to actually execute
+    const run = await app.inject({
+      method: "POST",
+      url: "/api/chat",
+      payload: {
+        message: "confirm",
+        state: scope.json().state
+      }
     });
     expect(run.statusCode).toBe(200);
     expect(capturedAction).toContain("Report executed");

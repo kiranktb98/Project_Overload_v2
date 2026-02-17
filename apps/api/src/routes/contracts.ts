@@ -104,14 +104,18 @@ export function registerContractRoutes(
     }
 
     try {
-      const execBrief = ExecBriefSchema.parse(run.exec_brief);
-      const html = renderExecBriefHtml(execBrief);
+      // Prefer the stored Report Composer HTML (rich styled); fall back to ExecBrief template
+      const html =
+        typeof run.report_html === "string" && run.report_html.length > 0
+          ? run.report_html
+          : renderExecBriefHtml(ExecBriefSchema.parse(run.exec_brief));
+
       const pdf = await renderPdfFromHtml(html);
 
       return reply
         .code(200)
         .header("content-type", "application/pdf")
-        .header("content-disposition", `attachment; filename="exec-brief-${run.id}.pdf"`)
+        .header("content-disposition", `attachment; filename="report-${run.id}.pdf"`)
         .send(pdf.bytes);
     } catch (error) {
       const message = error instanceof Error ? error.message : "PDF generation failed";

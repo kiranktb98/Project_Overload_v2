@@ -31,7 +31,8 @@ export const ChatStateSchema = z.object({
   contract_id: z.string().nullable(),
   last_run_id: z.string().nullable(),
   last_exec_brief: ExecBriefSchema.nullable(),
-  conversation_history: z.array(ChatHistoryTurnSchema).max(40).default([])
+  conversation_history: z.array(ChatHistoryTurnSchema).max(40).default([]),
+  scope_pending: z.boolean().default(false)
 });
 
 export const ChatTurnRequestSchema = z.object({
@@ -150,7 +151,8 @@ export function createInitialChatState(): ChatState {
     contract_id: null,
     last_run_id: null,
     last_exec_brief: null,
-    conversation_history: []
+    conversation_history: [],
+    scope_pending: false
   };
 }
 
@@ -172,7 +174,8 @@ export function parseChatState(value: unknown): ChatState {
     contract_id: parsed.data.contract_id,
     last_run_id: parsed.data.last_run_id,
     last_exec_brief: parsed.data.last_exec_brief,
-    conversation_history: [...parsed.data.conversation_history]
+    conversation_history: [...parsed.data.conversation_history],
+    scope_pending: parsed.data.scope_pending ?? false
   };
 }
 
@@ -293,6 +296,13 @@ export async function handleChatTurn(input: {
   const command = rawMessage.toLowerCase();
   let nextState = parseChatState(input.state);
 
+  // --- Scope confirmation: if pending and user confirms, execute the run ---
+
+  if (nextState.scope_pending && isScopeConfirmation(command)) {
+    nextState.scope_pending = false;
+    return executeRun(nextState, input.api_client);
+  }
+
   // --- Explicit actions ---
 
   if (command === "save") {
@@ -300,7 +310,7 @@ export async function handleChatTurn(input: {
   }
 
   if (command === "run") {
-    return executeRun(nextState, input.api_client);
+    return maybeScopeConfirmOrRun(nextState, input.api_client);
   }
 
   if (command === "preview" || command === "/preview") {
@@ -380,8 +390,9 @@ export async function handleChatTurn(input: {
   if (natural.updated_fields.length > 0) {
     nextState = natural.state;
 
+    // Only auto-trigger save if explicitly mentioned — never auto-trigger run
+    // from draft updates. Let the user have a conversation first.
     const action = detectConversationalAction(command);
-    if (action === "run") return executeRun(nextState, input.api_client);
     if (action === "save") return executeSave(nextState, input.api_client);
 
     return {
@@ -398,7 +409,7 @@ export async function handleChatTurn(input: {
   // --- Conversational action mentions (e.g. "let's run it") ---
 
   const action = detectConversationalAction(command);
-  if (action === "run") return executeRun(nextState, input.api_client);
+  if (action === "run") return maybeScopeConfirmOrRun(nextState, input.api_client);
   if (action === "save") return executeSave(nextState, input.api_client);
   if (action === "list") {
     const contracts = await input.api_client.listContracts();
@@ -441,6 +452,79 @@ async function executeSave(state: ChatState, apiClient: WebApiClient): Promise<C
   };
 }
 
+async function maybeScopeConfirmOrRun(state: ChatState, apiClient: WebApiClient): Promise<ChatTurnResponse> {
+  if (state.scope_pending) {
+    // Already confirmed scope in a previous turn — run now
+    const nextState = parseChatState(state);
+    nextState.scope_pending = false;
+    return executeRun(nextState, apiClient);
+  }
+
+  // Show scope confirmation first
+  return buildScopeConfirmation(state, apiClient);
+}
+
+async function buildScopeConfirmation(state: ChatState, apiClient: WebApiClient): Promise<ChatTurnResponse> {
+  const missing = getMissingDraftFields(state);
+  if (missing.length > 0) {
+    return { assistant_message: `Cannot run yet: ${missing.join(", ")}.`, state };
+  }
+
+  const nextState = parseChatState(state);
+  nextState.scope_pending = true;
+
+  const draft = nextState.draft;
+  const tables = draft.allowed_relations.length > 0 ? draft.allowed_relations.join(", ") : "default tables";
+  const metrics = draft.metric_ids.length > 0 ? draft.metric_ids.map(m => m.replace(/^metric_/, "")).join(", ") : "all available";
+  const dimensions = draft.dimension_ids.length > 0 ? draft.dimension_ids.join(", ") : "none specified";
+  const modeLabel = draft.insight_mode === "data" ? "Data Quality" : "Business Insights";
+
+  // Try to detect date/time columns from catalog for timeline context
+  let timelineHint = "all available data in the selected tables";
+  try {
+    const catalog = await apiClient.getCatalog();
+    const dateColumns: string[] = [];
+    for (const table of catalog.tables) {
+      for (const col of table.columns) {
+        if (/date|time|timestamp|created|updated/i.test(col.column_name) && /timestamp|date|time/i.test(col.data_type)) {
+          dateColumns.push(`${table.qualified_name}.${col.column_name}`);
+        }
+      }
+    }
+    if (dateColumns.length > 0) {
+      timelineHint = `Data will be scoped using time columns: ${dateColumns.slice(0, 3).join(", ")}${dateColumns.length > 3 ? ` (+${dateColumns.length - 3} more)` : ""}`;
+    }
+  } catch {
+    // catalog unavailable — use default hint
+  }
+
+  const reportName = draft.name.trim().length > 0 ? draft.name.trim() : "Untitled Report";
+
+  const scopeMessage = [
+    `Ready to run: "${reportName}"`,
+    "",
+    "Scope summary:",
+    `- Tables: ${tables}`,
+    `- Metrics: ${metrics}`,
+    `- Dimensions: ${dimensions}`,
+    `- Mode: ${modeLabel}`,
+    `- Timeline: ${timelineHint}`,
+    "",
+    "Quality: Only analysis sections scoring 90%+ confidence will be included.",
+    "",
+    'Say "confirm" to run, or tell me what to adjust.'
+  ].join("\n");
+
+  return {
+    assistant_message: scopeMessage,
+    state: nextState
+  };
+}
+
+function isScopeConfirmation(command: string): boolean {
+  return /\b(confirm|yes|go ahead|proceed|looks good|lgtm|run it|do it|execute|approved|ok|okay|sure|start)\b/.test(command);
+}
+
 async function executeRun(state: ChatState, apiClient: WebApiClient): Promise<ChatTurnResponse> {
   const missing = getMissingDraftFields(state);
   if (missing.length > 0) {
@@ -448,6 +532,7 @@ async function executeRun(state: ChatState, apiClient: WebApiClient): Promise<Ch
   }
 
   let nextState = parseChatState(state);
+  nextState.scope_pending = false;
 
   if (!nextState.contract_id) {
     const contract = buildContractPayload(nextState);
@@ -776,7 +861,10 @@ function detectInsightMode(command: string): "business" | "data" | null {
 }
 
 function detectConversationalAction(command: string): "run" | "save" | "list" | null {
-  if (/\b(run|execute|start now|run now|launch)\b/.test(command)) {
+  // Only match explicit, standalone run commands — NOT casual mentions like
+  // "I want to run an analysis on refunds" or "can you run through the data".
+  // The user should explicitly say "run the report", "execute now", etc.
+  if (/^(run|run it|run it now|run now|run the report|run report|execute now|execute it|execute the report|start the analysis|launch report|let'?s run it|let'?s run)\s*[.!]?$/.test(command)) {
     return "run";
   }
 

@@ -33,7 +33,8 @@ export const ReportRunSchema = z.object({
   started_at: z.string().datetime(),
   finished_at: z.string().datetime().nullable(),
   query_plan: z.record(z.string(), z.unknown()),
-  exec_brief: z.record(z.string(), z.unknown())
+  exec_brief: z.record(z.string(), z.unknown()),
+  report_html: z.string().optional()
 });
 
 export type ReportGuardrails = z.infer<typeof ReportGuardrailsSchema>;

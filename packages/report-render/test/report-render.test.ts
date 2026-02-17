@@ -32,10 +32,10 @@ describe("report render", () => {
 
     const pdf = await renderPdfFromHtml(html);
 
-    expect(pdf.engine).toBe("pdf-lib");
+    expect(pdf.engine).toBe("puppeteer");
     expect(pdf.mime_type).toBe("application/pdf");
     expect(pdf.page_count).toBeGreaterThan(0);
     expect(pdf.bytes.length).toBeGreaterThan(0);
     expect(pdf.bytes.subarray(0, 5).toString("utf8")).toBe("%PDF-");
-  });
+  }, 30000);
 });

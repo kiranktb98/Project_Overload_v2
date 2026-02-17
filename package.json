@@ -10,6 +10,9 @@
     "lint": "pnpm -w exec eslint . --ext .ts",
     "db:migrate": "pnpm --filter @project-overload/api db:migrate"
   },
+  "pnpm": {
+    "onlyBuiltDependencies": ["puppeteer"]
+  },
   "devDependencies": {
     "@types/node": "^22.13.10",
     "@types/pg": "^8.11.10",

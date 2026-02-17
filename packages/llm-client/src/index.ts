@@ -385,6 +385,8 @@ function queryStrategistSystemPrompt(input: QueryStrategyInput): string {
     "- Use JOINs across tables when it adds insight.",
     "- For business mode: focus on metrics, trends, dimensional breakdowns.",
     "- For data mode: focus on NULL counts, distinct value counts, distribution checks, outlier detection.",
+    "- When the report goal mentions comparisons (QoQ, YoY, month-over-month), include queries that compare the relevant periods using date/time columns. For example, use WHERE clauses with date_trunc or EXTRACT to separate current vs prior period data.",
+    "- If date/timestamp columns exist, consider adding a time-based comparison query to show trends or period-over-period changes.",
     "- Always include LIMIT 200 at the end of each query.",
     "",
     "Return strictly valid JSON matching this shape:",
@@ -625,7 +627,7 @@ function analystSystemPrompt(input: AnalystInput): string {
     "- highlights: The most important findings (3-5 items).",
     "- risks: Issues, concerns, or negative trends (1-3 items).",
     "- recommendations: Specific actionable next steps (2-4 items).",
-    "- confidence_score: 0.0-1.0 based on data quality and coverage.",
+    "- confidence_score: 0.0-1.0 based on data quality and coverage. Be rigorous: only score >= 0.9 if the data clearly supports the findings with sufficient volume, coverage, and no obvious gaps. Sections below 0.9 will be excluded from the final report.",
     "No markdown, no extra keys."
   ].join("\n");
 }

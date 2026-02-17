@@ -1,10 +1,11 @@
-import { PDFDocument, StandardFonts, rgb } from "pdf-lib";
+import { existsSync } from "node:fs";
+import puppeteer, { type Browser } from "puppeteer-core";
 import { type ExecBrief, ExecBriefSchema } from "@project-overload/shared";
 
 export type RenderedPdfDocument = {
   bytes: Buffer;
   mime_type: "application/pdf";
-  engine: "pdf-lib";
+  engine: "puppeteer";
   page_count: number;
 };
 
@@ -46,104 +47,72 @@ export function renderExecBriefHtml(execBriefInput: ExecBrief): string {
 </html>`;
 }
 
+/**
+ * Resolve a Chrome/Chromium executable path.
+ * Priority: CHROME_PATH env → common system paths → @puppeteer/browsers cache.
+ */
+function findChromePath(): string {
+  if (process.env.CHROME_PATH) {
+    return process.env.CHROME_PATH;
+  }
+
+  const candidates =
+    process.platform === "win32"
+      ? [
+          "C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe",
+          "C:\\Program Files (x86)\\Google\\Chrome\\Application\\chrome.exe"
+        ]
+      : process.platform === "darwin"
+        ? ["/Applications/Google Chrome.app/Contents/MacOS/Google Chrome"]
+        : ["/usr/bin/google-chrome", "/usr/bin/chromium-browser", "/usr/bin/chromium"];
+
+  for (const candidate of candidates) {
+    if (existsSync(candidate)) {
+      return candidate;
+    }
+  }
+
+  throw new Error(
+    "Chrome not found. Set CHROME_PATH env variable or install Chrome. " +
+      "You can also run: npx @puppeteer/browsers install chrome@stable --path .cache/puppeteer"
+  );
+}
+
 export async function renderPdfFromHtml(html: string): Promise<RenderedPdfDocument> {
-  const pdf = await PDFDocument.create();
-  const regular = await pdf.embedFont(StandardFonts.Helvetica);
-  const bold = await pdf.embedFont(StandardFonts.HelveticaBold);
+  const executablePath = findChromePath();
 
-  const pageSize: [number, number] = [595.28, 841.89];
-  const margin = 40;
-  const lineHeight = 14;
-  const fontSize = 11;
-  const maxWidth = pageSize[0] - margin * 2;
+  let browser: Browser | undefined;
+  try {
+    browser = await puppeteer.launch({
+      executablePath,
+      headless: true,
+      args: ["--no-sandbox", "--disable-setuid-sandbox", "--disable-gpu"]
+    });
 
-  let page = pdf.addPage(pageSize);
-  let y = pageSize[1] - margin;
+    const page = await browser.newPage();
+    await page.setContent(html, { waitUntil: "networkidle0" });
 
-  const drawLine = (text: string, isHeading = false): void => {
-    const font = isHeading ? bold : regular;
-    const size = isHeading ? 14 : fontSize;
-    const wrappedLines = wrapText(text, font, size, maxWidth);
+    const pdfBuffer = await page.pdf({
+      format: "A4",
+      printBackground: true,
+      margin: { top: "20mm", right: "15mm", bottom: "20mm", left: "15mm" }
+    });
 
-    for (const wrappedLine of wrappedLines) {
-      if (y < margin + lineHeight) {
-        page = pdf.addPage(pageSize);
-        y = pageSize[1] - margin;
-      }
+    // Count pages by checking the PDF cross-reference table
+    const pdfString = Buffer.from(pdfBuffer).toString("latin1");
+    const pageCount = (pdfString.match(/\/Type\s*\/Page(?!s)/g) ?? []).length;
 
-      page.drawText(wrappedLine, {
-        x: margin,
-        y,
-        size,
-        font,
-        color: rgb(0.12, 0.16, 0.22)
-      });
-
-      y -= lineHeight;
-    }
-
-    y -= isHeading ? 4 : 2;
-  };
-
-  drawLine("Executive Brief", true);
-
-  const plainText = htmlToText(html);
-  const lines = plainText
-    .split(/\r?\n/)
-    .map((line) => line.trim())
-    .filter((line) => line.length > 0);
-
-  for (const line of lines) {
-    drawLine(line);
-  }
-
-  const pdfBytes = await pdf.save();
-
-  return {
-    bytes: Buffer.from(pdfBytes),
-    mime_type: "application/pdf",
-    engine: "pdf-lib",
-    page_count: pdf.getPageCount()
-  };
-}
-
-function wrapText(text: string, font: { widthOfTextAtSize: (text: string, size: number) => number }, size: number, maxWidth: number): string[] {
-  const words = text.split(/\s+/).filter((word) => word.length > 0);
-  if (words.length === 0) {
-    return [""];
-  }
-
-  const lines: string[] = [];
-  let current = words[0];
-
-  for (let index = 1; index < words.length; index += 1) {
-    const candidate = `${current} ${words[index]}`;
-    if (font.widthOfTextAtSize(candidate, size) <= maxWidth) {
-      current = candidate;
-    } else {
-      lines.push(current);
-      current = words[index];
+    return {
+      bytes: Buffer.from(pdfBuffer),
+      mime_type: "application/pdf",
+      engine: "puppeteer",
+      page_count: Math.max(pageCount, 1)
+    };
+  } finally {
+    if (browser) {
+      await browser.close();
     }
   }
-
-  lines.push(current);
-  return lines;
-}
-
-function htmlToText(html: string): string {
-  return html
-    .replace(/<script[^>]*>[\s\S]*?<\/script>/gi, "")
-    .replace(/<style[^>]*>[\s\S]*?<\/style>/gi, "")
-    .replace(/<\/?(h1|h2|h3|p|section|div|ul|ol|li|br)[^>]*>/gi, "\n")
-    .replace(/<[^>]+>/g, "")
-    .replace(/&nbsp;/g, " ")
-    .replace(/&amp;/g, "&")
-    .replace(/&lt;/g, "<")
-    .replace(/&gt;/g, ">")
-    .replace(/&quot;/g, '"')
-    .replace(/&#39;/g, "'")
-    .replace(/\n{3,}/g, "\n\n")
-    .trim();
 }
 
 function escapeHtml(value: string): string {

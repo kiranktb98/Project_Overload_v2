@@ -700,7 +700,16 @@ export function renderConnectionPage(): string {
         }
 
         async function loadContext() {
-          const context = await request("/api/db/context", "GET");
+          let context;
+          try {
+            context = await request("/api/db/context", "GET");
+          } catch (error) {
+            const msg = error instanceof Error ? error.message : "Failed to load context";
+            elements.status.textContent = "API unreachable: " + msg;
+            elements.tableList.innerHTML = '<div class="callout"><strong>Cannot reach the API server.</strong> Make sure the API is running (pnpm --filter api dev) before using the wizard.</div>';
+            return;
+          }
+
           state.testResult = null;
           setConnectionStatus(context);
 
@@ -983,9 +992,7 @@ export function renderConnectionPage(): string {
           }
         });
 
-        loadContext().catch((error) => {
-          showOutput(error instanceof Error ? error.message : "Failed to load context");
-        });
+        loadContext().catch(() => {});
       })();
     </script>
   </body>

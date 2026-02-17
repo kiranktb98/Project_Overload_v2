@@ -51,7 +51,12 @@ export async function runReportContractPipeline(input: {
   });
 
   // Step 2: Execute queries and analyze — supports both Case 1 (grouped) and Case 2 (standalone)
-  const analyses: ReportComposerInput["analyses"] = [];
+  const MIN_CONFIDENCE = 0.9;
+  type ScoredAnalysis = {
+    entry: ReportComposerInput["analyses"][number];
+    confidence_score: number;
+  };
+  const scoredAnalyses: ScoredAnalysis[] = [];
   const queryDetails: Array<{ question: string; sql: string; row_count: number; group_id?: string }> = [];
 
   // Separate queries into groups (Case 1) and standalone (Case 2)
@@ -74,12 +79,15 @@ export async function runReportContractPipeline(input: {
     queryDetails.push({ question: planned.question, sql: sanitizeLlmSql(planned.sql), row_count: rows.length });
 
     if (error || rows.length === 0) {
-      analyses.push({
-        question: planned.question,
-        highlights: [],
-        risks: [error ?? "No data returned for this query."],
-        recommendations: ["Verify the query or check that the relevant tables contain data."],
-        data_summary: `Query for "${planned.question}" returned no results. ${error ?? ""}`
+      scoredAnalyses.push({
+        entry: {
+          question: planned.question,
+          highlights: [],
+          risks: [error ?? "No data returned for this query."],
+          recommendations: ["Verify the query or check that the relevant tables contain data."],
+          data_summary: `Query for "${planned.question}" returned no results. ${error ?? ""}`
+        },
+        confidence_score: 0
       });
       continue;
     }
@@ -100,12 +108,15 @@ export async function runReportContractPipeline(input: {
       }
     });
 
-    analyses.push({
-      question: planned.question,
-      highlights: analysis.highlights,
-      risks: analysis.risks,
-      recommendations: analysis.recommendations,
-      data_summary: `${rows.length} rows analyzed. Confidence: ${(analysis.confidence_score * 100).toFixed(0)}%. ${planned.purpose}`
+    scoredAnalyses.push({
+      entry: {
+        question: planned.question,
+        highlights: analysis.highlights,
+        risks: analysis.risks,
+        recommendations: analysis.recommendations,
+        data_summary: `${rows.length} rows analyzed. Confidence: ${(analysis.confidence_score * 100).toFixed(0)}%. ${planned.purpose}`
+      },
+      confidence_score: analysis.confidence_score
     });
   }
 
@@ -137,12 +148,15 @@ export async function runReportContractPipeline(input: {
     const combinedQuestion = groupQuestions.join(" + ");
 
     if (mergedRows.length === 0) {
-      analyses.push({
-        question: combinedQuestion || `Group ${groupId}`,
-        highlights: [],
-        risks: [groupError ?? "No data returned for any query in this group."],
-        recommendations: ["Verify the queries or check that the relevant tables contain data."],
-        data_summary: `Grouped queries for "${combinedQuestion}" returned no results. ${groupError ?? ""}`
+      scoredAnalyses.push({
+        entry: {
+          question: combinedQuestion || `Group ${groupId}`,
+          highlights: [],
+          risks: [groupError ?? "No data returned for any query in this group."],
+          recommendations: ["Verify the queries or check that the relevant tables contain data."],
+          data_summary: `Grouped queries for "${combinedQuestion}" returned no results. ${groupError ?? ""}`
+        },
+        confidence_score: 0
       });
       continue;
     }
@@ -166,12 +180,42 @@ export async function runReportContractPipeline(input: {
       }
     });
 
-    analyses.push({
-      question: combinedQuestion,
-      highlights: analysis.highlights,
-      risks: analysis.risks,
-      recommendations: analysis.recommendations,
-      data_summary: `${cappedRows.length} merged rows from ${groupQueries.length} queries (group: ${groupId}). Confidence: ${(analysis.confidence_score * 100).toFixed(0)}%. ${groupPurposes.join("; ")}`
+    scoredAnalyses.push({
+      entry: {
+        question: combinedQuestion,
+        highlights: analysis.highlights,
+        risks: analysis.risks,
+        recommendations: analysis.recommendations,
+        data_summary: `${cappedRows.length} merged rows from ${groupQueries.length} queries (group: ${groupId}). Confidence: ${(analysis.confidence_score * 100).toFixed(0)}%. ${groupPurposes.join("; ")}`
+      },
+      confidence_score: analysis.confidence_score
+    });
+  }
+
+  // Step 3: Filter analyses by confidence threshold (>= 90%)
+  // Error analyses (confidence 0 — query failures, no data) are always kept.
+  // Only actual analyst outputs are subject to the confidence filter.
+  const kept = scoredAnalyses.filter(s => s.confidence_score === 0 || s.confidence_score >= MIN_CONFIDENCE);
+  const droppedCount = scoredAnalyses.length - kept.length;
+
+  const analyses: ReportComposerInput["analyses"] = kept.length > 0
+    ? kept.map(s => s.entry)
+    : [{
+        question: "Confidence threshold not met",
+        highlights: [`All ${scoredAnalyses.length} analysis sections scored below the ${(MIN_CONFIDENCE * 100).toFixed(0)}% confidence threshold.`],
+        risks: ["Insufficient data quality or coverage to produce high-confidence insights."],
+        recommendations: ["Review the data sources and ensure sufficient, clean data is available.", "Consider broadening the query scope or checking for data gaps."],
+        data_summary: `${scoredAnalyses.length} sections analyzed, none met the ${(MIN_CONFIDENCE * 100).toFixed(0)}% confidence bar. Scores: ${scoredAnalyses.map(s => `${(s.confidence_score * 100).toFixed(0)}%`).join(", ")}`
+      }];
+
+  if (droppedCount > 0) {
+    await input.store.appendAuditLog("confidence_filter", {
+      contract_id: input.contract.id,
+      total_analyses: scoredAnalyses.length,
+      passed: kept.length,
+      dropped: droppedCount,
+      threshold: MIN_CONFIDENCE,
+      scores: scoredAnalyses.map(s => ({ question: s.entry.question, score: s.confidence_score }))
     });
   }
 
@@ -197,7 +241,8 @@ export async function runReportContractPipeline(input: {
       strategy_queries: queryDetails,
       insight_mode: insightMode
     },
-    exec_brief: execBrief
+    exec_brief: execBrief,
+    report_html: html
   });
 
   await input.store.createReportRun(run);
