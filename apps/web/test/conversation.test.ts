@@ -2,6 +2,8 @@ import { describe, expect, it } from "vitest";
 import {
   createConversationClient,
   createPassthroughConversationClient,
+  parseLlmResponse,
+  validateDraftUpdates,
   type ConversationTurnInput
 } from "../src/conversation";
 
@@ -34,7 +36,7 @@ describe("conversation client", () => {
   it("returns deterministic response in passthrough mode", async () => {
     const client = createPassthroughConversationClient();
     const response = await client.respond(TURN_INPUT);
-    expect(response).toBe("Base response");
+    expect(response.message).toBe("Base response");
   });
 
   it("uses provider response text when available", async () => {
@@ -65,7 +67,7 @@ describe("conversation client", () => {
     });
 
     const response = await client.respond(TURN_INPUT);
-    expect(response).toBe("Natural AI response");
+    expect(response.message).toBe("Natural AI response");
 
     const rawBody = typeof calls[0].init?.body === "string" ? calls[0].init?.body : "{}";
     expect(rawBody).toContain("Conversation history:");
@@ -83,7 +85,7 @@ describe("conversation client", () => {
     });
 
     const response = await client.respond(TURN_INPUT);
-    expect(response).toBe("Base response");
+    expect(response.message).toBe("Base response");
   });
 
   it("throws when strict provider mode is enabled without keys", () => {
@@ -93,5 +95,88 @@ describe("conversation client", () => {
         require_provider: true
       })
     ).toThrow("WEB_CHAT_REQUIRE_PROVIDER is true");
+  });
+});
+
+describe("parseLlmResponse", () => {
+  it("returns plain message when no draft block present", () => {
+    const result = parseLlmResponse("Just a normal reply.");
+    expect(result.message).toBe("Just a normal reply.");
+    expect(result.draft_updates).toBeUndefined();
+  });
+
+  it("extracts draft_updates from fenced JSON block", () => {
+    const raw = [
+      "Got it, focusing on refunds by product category.",
+      "",
+      "<<<DRAFT_UPDATES>>>",
+      '{"metric_ids":["metric_refunds"],"dimension_ids":["product_category"],"allowed_relations":["public.orders"]}',
+      "<<<END_DRAFT_UPDATES>>>"
+    ].join("\n");
+
+    const result = parseLlmResponse(raw);
+    expect(result.message).toBe("Got it, focusing on refunds by product category.");
+    expect(result.draft_updates).toBeDefined();
+    expect(result.draft_updates?.metric_ids).toEqual(["metric_refunds"]);
+    expect(result.draft_updates?.dimension_ids).toEqual(["product_category"]);
+    expect(result.draft_updates?.allowed_relations).toEqual(["public.orders"]);
+  });
+
+  it("ignores malformed JSON in draft block", () => {
+    const raw = "Reply text.\n<<<DRAFT_UPDATES>>>\nnot valid json\n<<<END_DRAFT_UPDATES>>>";
+    const result = parseLlmResponse(raw);
+    expect(result.message).toBe("Reply text.");
+    expect(result.draft_updates).toBeUndefined();
+  });
+
+  it("handles missing close fence gracefully", () => {
+    const raw = "Reply.\n<<<DRAFT_UPDATES>>>\n{\"name\":\"test\"}";
+    const result = parseLlmResponse(raw);
+    expect(result.message).toContain("Reply");
+    expect(result.draft_updates).toBeUndefined();
+  });
+});
+
+describe("validateDraftUpdates", () => {
+  it("accepts valid string and array fields", () => {
+    const result = validateDraftUpdates({
+      name: "Refund Analysis",
+      metric_ids: ["metric_refunds"],
+      allowed_relations: ["public.orders"]
+    });
+    expect(result).toBeDefined();
+    expect(result?.name).toBe("Refund Analysis");
+    expect(result?.metric_ids).toEqual(["metric_refunds"]);
+    expect(result?.allowed_relations).toEqual(["public.orders"]);
+  });
+
+  it("rejects sql_template that is not a SELECT", () => {
+    const result = validateDraftUpdates({
+      sql_template: "DROP TABLE orders"
+    });
+    expect(result).toBeUndefined();
+  });
+
+  it("accepts sql_template starting with SELECT", () => {
+    const result = validateDraftUpdates({
+      sql_template: "SELECT * FROM public.orders"
+    });
+    expect(result?.sql_template).toBe("SELECT * FROM public.orders");
+  });
+
+  it("only accepts business or data for insight_mode", () => {
+    expect(validateDraftUpdates({ insight_mode: "business" })?.insight_mode).toBe("business");
+    expect(validateDraftUpdates({ insight_mode: "data" })?.insight_mode).toBe("data");
+    expect(validateDraftUpdates({ insight_mode: "invalid" })).toBeUndefined();
+  });
+
+  it("returns undefined for non-object input", () => {
+    expect(validateDraftUpdates(null)).toBeUndefined();
+    expect(validateDraftUpdates("string")).toBeUndefined();
+    expect(validateDraftUpdates([])).toBeUndefined();
+  });
+
+  it("returns undefined for empty object", () => {
+    expect(validateDraftUpdates({})).toBeUndefined();
   });
 });

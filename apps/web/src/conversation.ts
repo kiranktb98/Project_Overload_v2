@@ -2,6 +2,24 @@ import type { ChatHistoryTurn, ChatState } from "./chat";
 
 export type ConversationProvider = "stub" | "openai" | "openrouter";
 
+export type DraftUpdates = {
+  name?: string;
+  audience?: string;
+  timezone?: string;
+  schedule_cron?: string | null;
+  sql_template?: string;
+  metric_ids?: string[];
+  dimension_ids?: string[];
+  allowed_relations?: string[];
+  allowed_schemas?: string[];
+  insight_mode?: "business" | "data";
+};
+
+export type ConversationResponse = {
+  message: string;
+  draft_updates?: DraftUpdates;
+};
+
 export type ConversationTurnInput = {
   user_message: string;
   /** Structured context from action execution — serves as fallback response if LLM is unavailable. */
@@ -15,7 +33,7 @@ export type ConversationTurnInput = {
 export interface ConversationClient {
   provider: ConversationProvider;
   mode: "provider" | "deterministic";
-  respond(input: ConversationTurnInput): Promise<string>;
+  respond(input: ConversationTurnInput): Promise<ConversationResponse>;
 }
 
 type Fetcher = typeof fetch;
@@ -50,8 +68,8 @@ export function createPassthroughConversationClient(): ConversationClient {
   return {
     provider: "stub",
     mode: "deterministic",
-    async respond(input: ConversationTurnInput): Promise<string> {
-      return input.action_context;
+    async respond(input: ConversationTurnInput): Promise<ConversationResponse> {
+      return { message: input.action_context };
     }
   };
 }
@@ -149,7 +167,7 @@ function createRemoteConversationClient(
   return {
     provider: options.provider,
     mode: "provider",
-    async respond(input: ConversationTurnInput): Promise<string> {
+    async respond(input: ConversationTurnInput): Promise<ConversationResponse> {
       const request = options.request_factory(input);
 
       const response = await fetchWithTimeout(
@@ -174,7 +192,7 @@ function createRemoteConversationClient(
         throw new Error("Unable to parse provider response text.");
       }
 
-      return textPayload.trim();
+      return parseLlmResponse(textPayload.trim());
     }
   };
 }
@@ -186,7 +204,7 @@ function withDeterministicFallback(
   return {
     provider: remote.provider,
     mode: remote.mode,
-    async respond(input: ConversationTurnInput): Promise<string> {
+    async respond(input: ConversationTurnInput): Promise<ConversationResponse> {
       try {
         return await remote.respond(input);
       } catch {
@@ -307,7 +325,22 @@ function conversationalSystemPrompt(input: ConversationTurnInput): string {
     "- For greetings (hi, hello, hey), respond warmly and briefly. Don't assume they want a specific report or analysis — just say hello back and let them lead.",
     "- When draft fields get updated automatically, acknowledge the changes casually (\"Got it, I'll focus on revenue by region\") — don't list them like form fields.",
     "- Preserve all run IDs, contract IDs, and download URLs exactly when relaying action results.",
-    "- Return plain text only."
+    "",
+    "DRAFT UPDATE PROTOCOL:",
+    "After your conversational reply, you MAY optionally append a structured draft update block.",
+    "Use it ONLY when you have genuinely resolved a draft field from the conversation — not on every turn.",
+    "Do NOT use it for greetings, questions, or exploratory discussion.",
+    "Do NOT invent table or column names. Only use qualified table names (schema.table) and column names from the DATABASE CATALOG above.",
+    "",
+    "Format (append AFTER your reply text, separated by a blank line):",
+    "<<<DRAFT_UPDATES>>>",
+    '{"metric_ids":["metric_refunds"],"dimension_ids":["product_category"],"allowed_relations":["public.orders"]}',
+    "<<<END_DRAFT_UPDATES>>>",
+    "",
+    "Supported fields: name, audience, timezone, schedule_cron (cron string or null), sql_template (SELECT only), metric_ids (array), dimension_ids (array), allowed_relations (array of schema.table), allowed_schemas (array), insight_mode (\"business\" or \"data\").",
+    "Only include fields that genuinely changed based on the conversation. Omit unchanged fields.",
+    "When you update allowed_relations, derive allowed_schemas from the schema prefix of each relation automatically.",
+    "The structured block is machine-parsed and hidden from the user — your conversational reply above it is all they see."
   ];
 
   if (input.business_context) {
@@ -333,6 +366,8 @@ function conversationalUserPrompt(input: ConversationTurnInput): string {
       schedule_cron: input.state.draft.schedule_cron,
       metric_ids: input.state.draft.metric_ids,
       dimension_ids: input.state.draft.dimension_ids,
+      allowed_relations: input.state.draft.allowed_relations,
+      allowed_schemas: input.state.draft.allowed_schemas,
       insight_mode: input.state.draft.insight_mode
     },
     contract_id: input.state.contract_id,
@@ -471,4 +506,89 @@ function serializeHistory(history: ChatHistoryTurn[]): string {
   return recent
     .map((turn) => `${turn.role}: ${turn.content}`)
     .join("\n");
+}
+
+const DRAFT_OPEN_FENCE = "<<<DRAFT_UPDATES>>>";
+const DRAFT_CLOSE_FENCE = "<<<END_DRAFT_UPDATES>>>";
+
+export function parseLlmResponse(raw: string): ConversationResponse {
+  const fenceStart = raw.indexOf(DRAFT_OPEN_FENCE);
+  if (fenceStart === -1) {
+    return { message: raw };
+  }
+
+  const message = raw.slice(0, fenceStart).trim();
+  const after = raw.slice(fenceStart + DRAFT_OPEN_FENCE.length);
+  const fenceEnd = after.indexOf(DRAFT_CLOSE_FENCE);
+
+  if (fenceEnd === -1) {
+    return { message: raw.replace(DRAFT_OPEN_FENCE, "").trim() };
+  }
+
+  const jsonStr = after.slice(0, fenceEnd).trim();
+
+  try {
+    const rawUpdates = JSON.parse(jsonStr) as unknown;
+    const draft_updates = validateDraftUpdates(rawUpdates);
+    return { message: message.length > 0 ? message : "Draft updated.", draft_updates };
+  } catch {
+    return { message: message.length > 0 ? message : raw.replace(DRAFT_OPEN_FENCE, "").replace(DRAFT_CLOSE_FENCE, "").replace(jsonStr, "").trim() };
+  }
+}
+
+export function validateDraftUpdates(raw: unknown): DraftUpdates | undefined {
+  if (typeof raw !== "object" || raw === null || Array.isArray(raw)) {
+    return undefined;
+  }
+
+  const obj = raw as Record<string, unknown>;
+  const updates: DraftUpdates = {};
+  let hasUpdates = false;
+
+  if (typeof obj.name === "string" && obj.name.trim().length > 0) {
+    updates.name = obj.name.trim();
+    hasUpdates = true;
+  }
+
+  if (typeof obj.audience === "string" && obj.audience.trim().length > 0) {
+    updates.audience = obj.audience.trim();
+    hasUpdates = true;
+  }
+
+  if (typeof obj.timezone === "string" && obj.timezone.trim().length > 0) {
+    updates.timezone = obj.timezone.trim();
+    hasUpdates = true;
+  }
+
+  if ("schedule_cron" in obj) {
+    if (obj.schedule_cron === null) {
+      updates.schedule_cron = null;
+      hasUpdates = true;
+    } else if (typeof obj.schedule_cron === "string") {
+      updates.schedule_cron = obj.schedule_cron;
+      hasUpdates = true;
+    }
+  }
+
+  if (typeof obj.sql_template === "string" && /^\s*(select|with)\b/i.test(obj.sql_template)) {
+    updates.sql_template = obj.sql_template.trim();
+    hasUpdates = true;
+  }
+
+  for (const arrField of ["metric_ids", "dimension_ids", "allowed_relations", "allowed_schemas"] as const) {
+    if (Array.isArray(obj[arrField]) && (obj[arrField] as unknown[]).every((x) => typeof x === "string")) {
+      const cleaned = (obj[arrField] as string[]).map((s) => s.trim()).filter((s) => s.length > 0);
+      if (cleaned.length > 0) {
+        updates[arrField] = cleaned;
+        hasUpdates = true;
+      }
+    }
+  }
+
+  if (obj.insight_mode === "business" || obj.insight_mode === "data") {
+    updates.insight_mode = obj.insight_mode;
+    hasUpdates = true;
+  }
+
+  return hasUpdates ? updates : undefined;
 }

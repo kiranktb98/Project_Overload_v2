@@ -164,6 +164,35 @@ describe("web chat interface", () => {
         });
       }
 
+      if (url.endsWith("/connections/tables") && method === "GET") {
+        return new Response(JSON.stringify({
+          relations: [{
+            schema_name: "analytics", relation_name: "sales",
+            qualified_name: "analytics.sales",
+            has_select_privilege: true,
+            rls_active_for_me: false,
+            policies_count_for_me: 0,
+            status: "OK",
+            status_label: "OK"
+          }]
+        }), {
+          status: 200,
+          headers: { "content-type": "application/json" }
+        });
+      }
+
+      if (url.endsWith("/connections/query") && method === "POST") {
+        return new Response(JSON.stringify({
+          rows: [{ row_count: 1500 }],
+          row_count: 1,
+          governed_sql: "SELECT COUNT(*) AS row_count FROM analytics.sales",
+          warnings: []
+        }), {
+          status: 200,
+          headers: { "content-type": "application/json" }
+        });
+      }
+
       return new Response(
         JSON.stringify({
           message: `Unhandled request: ${method} ${url}`
@@ -340,6 +369,24 @@ describe("web chat interface", () => {
         });
       }
 
+      if (url.endsWith("/connections/tables") && method === "GET") {
+        return new Response(JSON.stringify({
+          relations: [{
+            schema_name: "analytics", relation_name: "sales",
+            qualified_name: "analytics.sales",
+            has_select_privilege: true, rls_active_for_me: false, policies_count_for_me: 0,
+            status: "OK", status_label: "OK"
+          }]
+        }), { status: 200, headers: { "content-type": "application/json" } });
+      }
+
+      if (url.endsWith("/connections/query") && method === "POST") {
+        return new Response(JSON.stringify({
+          rows: [{ row_count: 1500 }], row_count: 1,
+          governed_sql: "SELECT COUNT(*)", warnings: []
+        }), { status: 200, headers: { "content-type": "application/json" } });
+      }
+
       return new Response(
         JSON.stringify({
           message: `Unhandled request: ${method} ${url}`
@@ -432,7 +479,7 @@ describe("web chat interface", () => {
       mode: "deterministic" as const,
       async respond(input) {
         seen.push(input.user_message);
-        return `[AI] ${input.action_context}`;
+        return { message: `[AI] ${input.action_context}` };
       }
     };
 
@@ -759,10 +806,21 @@ describe("web chat interface", () => {
         );
       }
 
+      if (url.endsWith("/connections/tables") && method === "GET") {
+        return new Response(JSON.stringify({
+          relations: [
+            { schema_name: "public", relation_name: "orders", qualified_name: "public.orders", has_select_privilege: true, rls_active_for_me: false, policies_count_for_me: 0, status: "OK", status_label: "OK" },
+            { schema_name: "public", relation_name: "customers", qualified_name: "public.customers", has_select_privilege: true, rls_active_for_me: false, policies_count_for_me: 0, status: "OK", status_label: "OK" },
+            { schema_name: "public", relation_name: "products", qualified_name: "public.products", has_select_privilege: true, rls_active_for_me: false, policies_count_for_me: 0, status: "OK", status_label: "OK" },
+            { schema_name: "analytics", relation_name: "sales", qualified_name: "analytics.sales", has_select_privilege: true, rls_active_for_me: false, policies_count_for_me: 0, status: "OK", status_label: "OK" }
+          ]
+        }), { status: 200, headers: { "content-type": "application/json" } });
+      }
+
       if (url.endsWith("/connections/query") && method === "POST") {
         return new Response(
           JSON.stringify({
-            rows: [{ id: 1, total_amount: 250.00, region: "NA" }],
+            rows: [{ id: 1, total_amount: 250.00, region: "NA", row_count: 1500 }],
             row_count: 1,
             governed_sql: "SELECT id, total_amount, region FROM public.orders LIMIT 10",
             warnings: []
@@ -827,7 +885,7 @@ describe("web chat interface", () => {
           business_context: input.business_context,
           action_context: input.action_context
         };
-        return input.action_context;
+        return { message: input.action_context };
       }
     };
 
@@ -862,7 +920,7 @@ describe("web chat interface", () => {
       mode: "deterministic" as const,
       async respond(input) {
         capturedContexts.push(input.catalog_summary ?? "");
-        return input.action_context;
+        return { message: input.action_context };
       }
     };
 
@@ -930,7 +988,7 @@ describe("web chat interface", () => {
       mode: "deterministic" as const,
       async respond(input) {
         capturedCatalog = input.catalog_summary ?? "";
-        return input.action_context;
+        return { message: input.action_context };
       }
     };
 
@@ -960,7 +1018,7 @@ describe("web chat interface", () => {
       mode: "deterministic" as const,
       async respond(input) {
         capturedAction = input.action_context;
-        return input.action_context;
+        return { message: input.action_context };
       }
     };
 
@@ -992,7 +1050,7 @@ describe("web chat interface", () => {
       mode: "deterministic" as const,
       async respond(input) {
         capturedAction = input.action_context;
-        return input.action_context;
+        return { message: input.action_context };
       }
     };
 
