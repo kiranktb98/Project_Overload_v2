@@ -9,16 +9,19 @@ import {
 import type { DataPlane } from "@project-overload/dataplane";
 import type {
   AnalystClient,
+  PlannerClient,
   QueryStrategistClient,
   ReportComposerClient,
   ReportComposerInput
 } from "@project-overload/llm-client";
+import type { PlannerOutput } from "@project-overload/shared";
 import type { MetadataStore } from "../store";
 
 export type RunReportContractResult = {
   run: ReportRun;
   exec_brief: ExecBrief;
   html: string;
+  planner_summary?: string;
 };
 
 export async function runReportContractPipeline(input: {
@@ -28,12 +31,16 @@ export async function runReportContractPipeline(input: {
   analyst_client: AnalystClient;
   query_strategist: QueryStrategistClient;
   report_composer: ReportComposerClient;
+  planner_client: PlannerClient;
   catalog_summary: string;
 }): Promise<RunReportContractResult> {
   const startedAt = new Date().toISOString();
   const insightMode = input.contract.insight_mode ?? "business";
 
-  // Step 1: Query Strategist — LLM generates targeted SQL from catalog
+  // Step 0: Planner — explore data, build informed plan
+  const { plannerContext, plannerSummary } = await runPlannerPhase(input, insightMode);
+
+  // Step 1: Query Strategist — LLM generates targeted SQL from catalog + planner context
   const strategy = await input.query_strategist.planQueries({
     catalog_summary: input.catalog_summary || "No catalog available.",
     report_goal: `${input.contract.name} — ${insightMode} analysis`,
@@ -41,7 +48,8 @@ export async function runReportContractPipeline(input: {
     insight_mode: insightMode,
     metric_ids: input.contract.metric_ids,
     dimension_ids: input.contract.dimension_ids,
-    allowed_relations: input.contract.guardrails.allowed_relations
+    allowed_relations: input.contract.guardrails.allowed_relations,
+    planner_context: plannerContext
   });
 
   await input.store.appendAuditLog("query_strategy", {
@@ -250,8 +258,114 @@ export async function runReportContractPipeline(input: {
   return {
     run,
     exec_brief: execBrief,
-    html
+    html,
+    planner_summary: plannerSummary
   };
+}
+
+/**
+ * Step 0: Planner phase — explores data with lightweight queries, then builds an informed plan.
+ */
+async function runPlannerPhase(
+  input: {
+    contract: ReportContract;
+    store: MetadataStore;
+    data_plane: DataPlane;
+    planner_client: PlannerClient;
+    catalog_summary: string;
+  },
+  insightMode: "business" | "data"
+): Promise<{ plannerContext: string; plannerSummary: string }> {
+  const plannerInput = {
+    catalog_summary: input.catalog_summary || "No catalog available.",
+    user_goal: input.contract.name,
+    audience: input.contract.audience,
+    insight_mode: insightMode,
+    allowed_relations: input.contract.guardrails.allowed_relations,
+    allowed_schemas: input.contract.guardrails.allowed_schemas
+  };
+
+  // Phase 1: LLM generates exploratory queries
+  const exploration = await input.planner_client.explore(plannerInput);
+
+  await input.store.appendAuditLog("planner_explore", {
+    contract_id: input.contract.id,
+    query_count: exploration.queries.length,
+    purposes: exploration.queries.map(q => q.purpose)
+  });
+
+  // Execute exploratory queries (short timeout, small row cap, error-tolerant)
+  const explorationResults: string[] = [];
+  for (const eq of exploration.queries) {
+    try {
+      const safeSql = sanitizeLlmSql(eq.sql);
+      const result = await input.data_plane.execute({
+        request_id: `${input.contract.id}_explore_${randomUUID().slice(0, 8)}`,
+        sql: safeSql,
+        policy: {
+          allowed_relations: input.contract.guardrails.allowed_relations,
+          allowed_schemas: input.contract.guardrails.allowed_schemas,
+          timeout_ms: 5000,
+          row_cap: 50,
+          pii_fields: []
+        }
+      });
+
+      const preview = result.rows.slice(0, 20)
+        .map(r => JSON.stringify(r))
+        .join("\n");
+      explorationResults.push(
+        `--- ${eq.purpose} (${eq.query_type}) ---\n${eq.sql}\nRows returned: ${result.row_count}\n${preview}`
+      );
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : "query failed";
+      explorationResults.push(`--- ${eq.purpose} --- ERROR: ${msg}`);
+    }
+  }
+
+  // Phase 2: LLM reads exploration results, produces concrete plan
+  const plan = await input.planner_client.plan({
+    ...plannerInput,
+    exploration_results: explorationResults.join("\n\n")
+  });
+
+  await input.store.appendAuditLog("planner_plan", {
+    contract_id: input.contract.id,
+    discoveries: plan.data_discoveries.length,
+    approaches: plan.recommended_approaches.length,
+    warnings: plan.data_warnings
+  });
+
+  return {
+    plannerContext: serializePlannerContext(plan),
+    plannerSummary: plan.plan_summary
+  };
+}
+
+function serializePlannerContext(plan: PlannerOutput): string {
+  const lines: string[] = [];
+
+  lines.push("═══ DATA DISCOVERIES (from exploratory queries) ═══");
+  for (const d of plan.data_discoveries) {
+    lines.push(`${d.table}.${d.column}: ${d.finding}`);
+  }
+
+  lines.push("");
+  lines.push("═══ RECOMMENDED QUERY APPROACHES ═══");
+  for (const a of plan.recommended_approaches) {
+    lines.push(`Q: ${a.question}`);
+    lines.push(`  Approach: ${a.approach}`);
+    if (a.key_columns.length > 0) lines.push(`  Key columns: ${a.key_columns.join(", ")}`);
+    if (a.relevant_tables.length > 0) lines.push(`  Tables: ${a.relevant_tables.join(", ")}`);
+  }
+
+  if (plan.data_warnings.length > 0) {
+    lines.push("");
+    lines.push("═══ DATA WARNINGS ═══");
+    for (const w of plan.data_warnings) lines.push(`- ${w}`);
+  }
+
+  return lines.join("\n");
 }
 
 /**

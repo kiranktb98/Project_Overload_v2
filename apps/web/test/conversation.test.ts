@@ -28,7 +28,8 @@ const TURN_INPUT: ConversationTurnInput = {
     last_run_id: null,
     last_exec_brief: null,
     conversation_history: [],
-    scope_pending: false
+    scope_pending: false,
+    planner_summary: null
   }
 };
 

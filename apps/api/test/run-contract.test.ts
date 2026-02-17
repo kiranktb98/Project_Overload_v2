@@ -3,11 +3,13 @@ import { LocalStubDataPlane } from "@project-overload/dataplane";
 import type { DataPlane, DataPlaneQueryRequest, DataPlaneQueryResult } from "@project-overload/dataplane";
 import {
   createStubAnalystClient,
+  createStubPlannerClient,
   createStubQueryStrategistClient,
   createStubReportComposerClient
 } from "@project-overload/llm-client";
 import type {
   AnalystClient,
+  PlannerClient,
   QueryStrategistClient,
   ReportComposerClient,
   ReportComposerInput
@@ -116,6 +118,7 @@ describe("Case 2: standalone queries", () => {
       analyst_client: analyst.client,
       query_strategist: strategist,
       report_composer: createStubReportComposerClient(),
+      planner_client: createStubPlannerClient(),
       catalog_summary: "public.sales [TABLE]: id, amount, region"
     });
 
@@ -151,6 +154,7 @@ describe("Case 2: standalone queries", () => {
       analyst_client: analyst.client,
       query_strategist: strategist,
       report_composer: createStubReportComposerClient(),
+      planner_client: createStubPlannerClient(),
       catalog_summary: "empty"
     });
 
@@ -182,6 +186,7 @@ describe("Case 2: standalone queries", () => {
       analyst_client: analyst.client,
       query_strategist: strategist,
       report_composer: createStubReportComposerClient(),
+      planner_client: createStubPlannerClient(),
       catalog_summary: "broken"
     });
 
@@ -204,6 +209,7 @@ describe("Case 2: standalone queries", () => {
       analyst_client: createStubAnalystClient(),
       query_strategist: strategist,
       report_composer: createStubReportComposerClient(),
+      planner_client: createStubPlannerClient(),
       catalog_summary: "public.sales"
     });
 
@@ -234,6 +240,7 @@ describe("Case 1: grouped queries", () => {
       analyst_client: analyst.client,
       query_strategist: strategist,
       report_composer: createStubReportComposerClient(),
+      planner_client: createStubPlannerClient(),
       catalog_summary: "public.sales [TABLE]: id, amount, region"
     });
 
@@ -269,6 +276,7 @@ describe("Case 1: grouped queries", () => {
       analyst_client: analyst.client,
       query_strategist: strategist,
       report_composer: createStubReportComposerClient(),
+      planner_client: createStubPlannerClient(),
       catalog_summary: "public.sales"
     });
 
@@ -279,15 +287,18 @@ describe("Case 1: grouped queries", () => {
 
   it("handles partial group failure — one query fails, other succeeds", async () => {
     const analyst = spyAnalyst();
-    let callCount = 0;
+    let mainCallCount = 0;
 
     const partialFailDataPlane: DataPlane = {
       async execute(request: DataPlaneQueryRequest): Promise<DataPlaneQueryResult> {
-        callCount++;
-        if (callCount === 1) {
-          throw new Error("Table not found");
+        // Skip planner exploratory queries (row_cap=50); only count main pipeline queries (row_cap=200)
+        const isMainQuery = request.policy.row_cap === 200;
+        if (isMainQuery) {
+          mainCallCount++;
+          if (mainCallCount === 1) {
+            throw new Error("Table not found");
+          }
         }
-        // Second query succeeds
         const rows = makeRows(30);
         return {
           rows,
@@ -320,6 +331,7 @@ describe("Case 1: grouped queries", () => {
       analyst_client: analyst.client,
       query_strategist: strategist,
       report_composer: createStubReportComposerClient(),
+      planner_client: createStubPlannerClient(),
       catalog_summary: "public.sales"
     });
 
@@ -354,6 +366,7 @@ describe("Case 1: grouped queries", () => {
       analyst_client: analyst.client,
       query_strategist: strategist,
       report_composer: createStubReportComposerClient(),
+      planner_client: createStubPlannerClient(),
       catalog_summary: "public.sales"
     });
 
@@ -386,6 +399,7 @@ describe("Case 1: grouped queries", () => {
       analyst_client: trackingAnalyst,
       query_strategist: strategist,
       report_composer: createStubReportComposerClient(),
+      planner_client: createStubPlannerClient(),
       catalog_summary: "public.sales"
     });
 
@@ -417,6 +431,7 @@ describe("mixed Case 1 + Case 2", () => {
       analyst_client: analyst.client,
       query_strategist: strategist,
       report_composer: createStubReportComposerClient(),
+      planner_client: createStubPlannerClient(),
       catalog_summary: "public.sales"
     });
 
@@ -452,6 +467,7 @@ describe("mixed Case 1 + Case 2", () => {
       analyst_client: analyst.client,
       query_strategist: strategist,
       report_composer: createStubReportComposerClient(),
+      planner_client: createStubPlannerClient(),
       catalog_summary: "public.sales"
     });
 
@@ -491,6 +507,7 @@ describe("insight mode", () => {
       analyst_client: trackingAnalyst,
       query_strategist: strategist,
       report_composer: createStubReportComposerClient(),
+      planner_client: createStubPlannerClient(),
       catalog_summary: "x"
     });
 
@@ -519,6 +536,7 @@ describe("insight mode", () => {
       analyst_client: trackingAnalyst,
       query_strategist: strategist,
       report_composer: createStubReportComposerClient(),
+      planner_client: createStubPlannerClient(),
       catalog_summary: "x"
     });
 
@@ -548,6 +566,7 @@ describe("insight mode", () => {
       analyst_client: trackingAnalyst,
       query_strategist: strategist,
       report_composer: createStubReportComposerClient(),
+      planner_client: createStubPlannerClient(),
       catalog_summary: "x"
     });
 
@@ -575,6 +594,7 @@ describe("audit logging", () => {
       analyst_client: createStubAnalystClient(),
       query_strategist: strategist,
       report_composer: createStubReportComposerClient(),
+      planner_client: createStubPlannerClient(),
       catalog_summary: "x"
     });
 
@@ -613,6 +633,7 @@ describe("report composer receives correct analyses", () => {
       analyst_client: createStubAnalystClient(),
       query_strategist: strategist,
       report_composer: trackingComposer,
+      planner_client: createStubPlannerClient(),
       catalog_summary: "x"
     });
 
@@ -648,6 +669,7 @@ describe("report composer receives correct analyses", () => {
       analyst_client: createStubAnalystClient(),
       query_strategist: strategist,
       report_composer: trackingComposer,
+      planner_client: createStubPlannerClient(),
       catalog_summary: "x"
     });
 

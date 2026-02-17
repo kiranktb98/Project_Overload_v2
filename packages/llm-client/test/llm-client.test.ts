@@ -1,9 +1,10 @@
 import { describe, expect, it } from "vitest";
-import type { AnalystInput, BatchAnalysis, QueryStrategyInput } from "@project-overload/shared";
+import type { AnalystInput, BatchAnalysis, PlannerInput, QueryStrategyInput } from "@project-overload/shared";
 import {
   createAnalystClient,
   createAnalystClientFromEnv,
   createStubAnalystClient,
+  createStubPlannerClient,
   createStubQueryStrategistClient,
   createStubReportComposerClient
 } from "../src";
@@ -256,6 +257,53 @@ describe("stub report composer", () => {
     });
 
     expect(html).toContain("Data Quality Assessment");
+  });
+});
+
+describe("stub planner", () => {
+  const basePlannerInput: PlannerInput = {
+    catalog_summary: "TABLE: public.sales\n  - id : integer\n  - amount : numeric\n  - region : text",
+    user_goal: "Analyze sales trends",
+    audience: "Executive",
+    insight_mode: "business",
+    allowed_relations: ["public.sales"],
+    allowed_schemas: ["public"]
+  };
+
+  it("explore returns exploratory queries", async () => {
+    const client = createStubPlannerClient();
+    const result = await client.explore(basePlannerInput);
+
+    expect(result.queries.length).toBeGreaterThanOrEqual(1);
+    expect(result.queries.length).toBeLessThanOrEqual(6);
+    for (const q of result.queries) {
+      expect(q.purpose).toBeDefined();
+      expect(q.sql).toBeDefined();
+      expect(["distinct", "count", "sample", "range", "schema"]).toContain(q.query_type);
+    }
+  });
+
+  it("plan returns structured plan with discoveries and approaches", async () => {
+    const client = createStubPlannerClient();
+    const result = await client.plan({
+      ...basePlannerInput,
+      exploration_results: "--- Sample rows ---\nSELECT * FROM public.sales LIMIT 5\nRows returned: 5\n{\"id\":1,\"amount\":100,\"region\":\"NA\"}"
+    });
+
+    expect(result.data_discoveries.length).toBeGreaterThanOrEqual(1);
+    expect(result.recommended_approaches.length).toBeGreaterThanOrEqual(1);
+    expect(result.plan_summary).toBeDefined();
+    expect(result.plan_summary.length).toBeGreaterThan(0);
+  });
+
+  it("plan summary includes user goal", async () => {
+    const client = createStubPlannerClient();
+    const result = await client.plan({
+      ...basePlannerInput,
+      exploration_results: "test results"
+    });
+
+    expect(result.plan_summary).toContain("Analyze sales trends");
   });
 });
 

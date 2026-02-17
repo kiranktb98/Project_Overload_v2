@@ -2,9 +2,14 @@ import { analyzeBatch as analyzeBatchStub } from "@project-overload/evidence";
 import {
   AnalystInputSchema,
   BatchAnalysisSchema,
+  PlannerExplorationSchema,
+  PlannerOutputSchema,
   QueryStrategyOutputSchema,
   type AnalystInput,
   type BatchAnalysis,
+  type PlannerExploration,
+  type PlannerInput,
+  type PlannerOutput,
   type QueryStrategyInput,
   type QueryStrategyOutput
 } from "@project-overload/shared";
@@ -38,6 +43,12 @@ export type ReportComposerInput = {
 export interface ReportComposerClient {
   provider: LlmProvider;
   composeReport(input: ReportComposerInput): Promise<string>;
+}
+
+export interface PlannerClient {
+  provider: LlmProvider;
+  explore(input: PlannerInput): Promise<PlannerExploration>;
+  plan(input: PlannerInput & { exploration_results: string }): Promise<PlannerOutput>;
 }
 
 export type Fetcher = typeof fetch;
@@ -359,62 +370,327 @@ function wrapStrategistWithFallback(
 
 function queryStrategistSystemPrompt(input: QueryStrategyInput): string {
   const mode = input.insight_mode === "data"
-    ? "DATA QUALITY mode: Write queries to assess data completeness, null rates, duplicate rates, value distributions, outliers, and anomalies. Help the user understand if their data is trustworthy and what needs fixing."
-    : "BUSINESS INSIGHTS mode: Write queries that produce aggregated, summarized data for business analysis. Use GROUP BY, SUM, COUNT, AVG, JOINs across tables. The data is trustworthy — focus on trends, comparisons, breakdowns by dimension, and actionable patterns.";
+    ? "DATA QUALITY mode: Write queries to assess data completeness, null rates, duplicate rates, value distributions, outliers, and anomalies."
+    : "BUSINESS INSIGHTS mode: Write queries that produce aggregated, summarized data for business analysis. Use GROUP BY, SUM, COUNT, AVG, JOINs across tables. Focus on trends, comparisons, breakdowns, and actionable patterns.";
 
   return [
     "You are a SQL query strategist for a PostgreSQL database.",
-    "Your job is to generate 2-4 focused SQL queries, each answering ONE specific question about the data.",
+    "Your job is to generate 2-4 focused SQL queries that answer the user's report goal.",
     "",
     `MODE: ${mode}`,
     "",
-    "QUERY GROUPING:",
-    "Each query can optionally include a \"group_id\" string field.",
-    "- Queries that share the SAME group_id will have their results MERGED into one combined dataset and analyzed together in a single analyst call. Use this when multiple queries produce complementary data that must be compared side-by-side (e.g., revenue by region + revenue by product category for a combined breakdown).",
-    "- Queries WITHOUT a group_id are analyzed INDEPENDENTLY — each gets its own separate analyst call. Use this when each query answers a self-contained question (e.g., 'top customers' is independent from 'monthly trend').",
-    "- Most reports should use a MIX: group related queries together, keep unrelated ones standalone.",
+    "═══ CRITICAL: TABLE AND COLUMN NAMES ═══",
+    "The DATABASE CATALOG section in the user message lists EVERY table and column available to you.",
+    "You MUST use ONLY the exact table names and column names from that catalog.",
+    "- Always use fully-qualified table names: schema.table (e.g., public.orders, NOT just orders).",
+    "- When using aliases, the column references must still match the catalog column names exactly.",
+    "- NEVER invent, guess, or assume column names that are not listed in the catalog.",
+    "- If the catalog shows 'order_date', do NOT write 'date', 'created_at', 'purchase_date', etc.",
+    "- If the catalog shows 'amount', do NOT write 'total', 'revenue', 'price', etc.",
+    "- If a column you want doesn't exist in the catalog, DO NOT use it. Adapt your query to use only available columns.",
     "",
-    "RULES:",
+    "EXAMPLE — Given catalog:",
+    "  TABLE: public.orders",
+    "    - id : integer",
+    "    - customer_id : integer",
+    "    - order_date : date",
+    "    - total_amount : numeric",
+    "",
+    "CORRECT: SELECT date_trunc('month', order_date) AS month, SUM(total_amount) FROM public.orders GROUP BY 1",
+    "WRONG:   SELECT date_trunc('month', o.created_at) AS month, SUM(o.revenue) FROM orders o GROUP BY 1",
+    "  (wrong because: 'created_at' and 'revenue' don't exist, 'orders' is not fully qualified)",
+    "",
+    "═══ QUERY RULES ═══",
     "- Each query MUST be exactly ONE valid PostgreSQL SELECT statement.",
-    "- NEVER put multiple statements in a single sql field. NO semicolons separating statements. One SELECT per query object.",
-    "- If you need multiple analyses, create separate query objects in the queries array — do NOT combine them into one sql string.",
-    "- Use only the tables and columns from the catalog provided. Do NOT guess column names.",
-    "- Each query should return at most 200 rows. Use GROUP BY, aggregations, and LIMIT 200 to keep results manageable.",
-    "- Write queries that produce SUMMARIZED data (aggregates, distributions, top-N), not raw row dumps.",
-    "- Each query answers a DIFFERENT question — don't repeat the same analysis.",
-    "- Use JOINs across tables when it adds insight.",
-    "- For business mode: focus on metrics, trends, dimensional breakdowns.",
-    "- For data mode: focus on NULL counts, distinct value counts, distribution checks, outlier detection.",
-    "- When the report goal mentions comparisons (QoQ, YoY, month-over-month), include queries that compare the relevant periods using date/time columns. For example, use WHERE clauses with date_trunc or EXTRACT to separate current vs prior period data.",
-    "- If date/timestamp columns exist, consider adding a time-based comparison query to show trends or period-over-period changes.",
-    "- Always include LIMIT 200 at the end of each query.",
+    "- NO semicolons, NO multiple statements.",
+    "- Always end with LIMIT 200.",
+    "- Write SUMMARIZED data (aggregates, top-N, distributions), not raw row dumps.",
+    "- Each query answers a DIFFERENT question.",
+    "- Use JOINs across tables when it adds insight — but only join on columns that actually exist.",
+    "- When the goal mentions time comparisons (YoY, MoM, QoQ), use date/timestamp columns from the catalog.",
     "",
-    "Return strictly valid JSON matching this shape:",
-    '{"queries": [{"question": "...", "sql": "SELECT ... LIMIT 200", "purpose": "...", "group_id": "optional_group_name"}]}',
-    "No markdown, no extra keys. Each sql value is ONE SELECT statement, no semicolons.",
-    "The group_id field is optional — omit it for standalone queries."
+    "QUERY GROUPING (optional):",
+    "- Queries with the same \"group_id\" get their results MERGED and analyzed together.",
+    "- Queries without group_id are analyzed independently.",
+    "- Group related queries (e.g., revenue by region + revenue by product for combined comparison).",
+    "- Keep unrelated queries standalone.",
+    "",
+    "Return strictly valid JSON:",
+    '{"queries": [{"question": "...", "sql": "SELECT ... LIMIT 200", "purpose": "...", "group_id": "optional"}]}',
+    "No markdown, no extra keys."
   ].join("\n");
 }
 
 function queryStrategistUserPrompt(input: QueryStrategyInput): string {
-  const parts = [
-    `Report goal: ${input.report_goal}`,
-    `Audience: ${input.audience}`,
-    `Insight mode: ${input.insight_mode}`
-  ];
+  const parts: string[] = [];
+
+  // Catalog FIRST — most important context
+  parts.push("═══ DATABASE CATALOG (use ONLY these tables and columns) ═══");
+  parts.push(input.catalog_summary);
+  parts.push("");
+
+  // Allowed tables as a reference checklist
+  if (input.allowed_relations.length > 0) {
+    parts.push(`Allowed tables (fully qualified): ${input.allowed_relations.join(", ")}`);
+    parts.push("");
+  }
+
+  // Planner context — data-informed discoveries from exploratory queries
+  if (input.planner_context) {
+    parts.push("═══ PLANNER ANALYSIS (from exploratory data queries) ═══");
+    parts.push("The planner has already explored the data and discovered the following.");
+    parts.push("Use these discoveries to write more accurate queries with correct column values and filters.");
+    parts.push(input.planner_context);
+    parts.push("");
+  }
+
+  // Report context
+  parts.push("═══ REPORT CONTEXT ═══");
+  parts.push(`Goal: ${input.report_goal}`);
+  parts.push(`Audience: ${input.audience}`);
+  parts.push(`Insight mode: ${input.insight_mode}`);
 
   if (input.metric_ids.length > 0) {
-    parts.push(`Key metrics: ${input.metric_ids.join(", ")}`);
+    parts.push(`Key metrics to focus on: ${input.metric_ids.join(", ")}`);
   }
   if (input.dimension_ids.length > 0) {
-    parts.push(`Dimensions to analyze: ${input.dimension_ids.join(", ")}`);
-  }
-  if (input.allowed_relations.length > 0) {
-    parts.push(`Available tables: ${input.allowed_relations.join(", ")}`);
+    parts.push(`Dimensions to break down by: ${input.dimension_ids.join(", ")}`);
   }
 
-  parts.push("", "DATABASE CATALOG:", input.catalog_summary);
-  parts.push("", "Generate targeted SQL queries. Return JSON only.");
+  parts.push("");
+  parts.push("Generate 2-4 SQL queries using ONLY the tables and columns listed above. Return JSON only.");
+
+  return parts.join("\n");
+}
+
+// ---------------------------------------------------------------------------
+// Planner Client
+// ---------------------------------------------------------------------------
+
+export function createStubPlannerClient(): PlannerClient {
+  return {
+    provider: "stub",
+    async explore(input: PlannerInput): Promise<PlannerExploration> {
+      const firstTable = input.allowed_relations[0] ?? "public.unknown_table";
+      return {
+        queries: [
+          { purpose: "Sample rows", sql: `SELECT * FROM ${firstTable} LIMIT 5`, query_type: "sample" as const },
+          { purpose: "Row count", sql: `SELECT COUNT(*) AS cnt FROM ${firstTable} LIMIT 1`, query_type: "count" as const }
+        ]
+      };
+    },
+    async plan(input: PlannerInput & { exploration_results: string }): Promise<PlannerOutput> {
+      return {
+        data_discoveries: [
+          { table: input.allowed_relations[0] ?? "unknown", column: "*", finding: "Stub planner: no real data explored." }
+        ],
+        recommended_approaches: [
+          { question: input.user_goal, approach: "Direct query against available tables", key_columns: [], relevant_tables: input.allowed_relations }
+        ],
+        data_warnings: [],
+        plan_summary: `Planning for: ${input.user_goal}. Using tables: ${input.allowed_relations.join(", ")}.`
+      };
+    }
+  };
+}
+
+export function createPlannerClientFromEnv(
+  overrides: Partial<CreateAnalystClientOptions> = {}
+): PlannerClient {
+  const provider = parseProvider(overrides.provider ?? process.env.LLM_PROVIDER);
+  if (provider === "stub") {
+    return createStubPlannerClient();
+  }
+
+  const options = resolveClientOptions(overrides);
+  return createPlannerClient(options);
+}
+
+export function createPlannerClient(options: CreateAnalystClientOptions): PlannerClient {
+  const timeoutMs = (options.timeoutMs ?? DEFAULT_TIMEOUT_MS) * 2; // double timeout for planning
+  const fallbackToStub = options.fallbackToStub ?? true;
+  const fetcher = options.fetcher ?? fetch;
+  const stub = createStubPlannerClient();
+
+  if (options.provider !== "openrouter" || !options.openrouterApiKey) {
+    return stub;
+  }
+
+  const remote: PlannerClient = {
+    provider: "openrouter",
+    async explore(input: PlannerInput): Promise<PlannerExploration> {
+      const request = buildOpenRouterGenericRequest(
+        plannerExploreSystemPrompt(),
+        plannerExploreUserPrompt(input),
+        options
+      );
+
+      const response = await fetchWithTimeout(fetcher, request.endpoint, {
+        method: "POST",
+        headers: request.headers,
+        body: JSON.stringify(request.payload)
+      }, timeoutMs);
+
+      if (!response.ok) {
+        const text = await response.text();
+        throw new Error(`Planner explore failed (${response.status}): ${text}`);
+      }
+
+      const payload = (await response.json()) as unknown;
+      const text = extractTextPayload(payload);
+      if (!text) throw new Error("Unable to parse planner explore response.");
+      const parsed = parseJsonObjectFromText(text);
+      return PlannerExplorationSchema.parse(parsed);
+    },
+
+    async plan(input: PlannerInput & { exploration_results: string }): Promise<PlannerOutput> {
+      const request = buildOpenRouterGenericRequest(
+        plannerPlanSystemPrompt(),
+        plannerPlanUserPrompt(input),
+        options
+      );
+
+      const response = await fetchWithTimeout(fetcher, request.endpoint, {
+        method: "POST",
+        headers: request.headers,
+        body: JSON.stringify(request.payload)
+      }, timeoutMs);
+
+      if (!response.ok) {
+        const text = await response.text();
+        throw new Error(`Planner plan failed (${response.status}): ${text}`);
+      }
+
+      const payload = (await response.json()) as unknown;
+      const text = extractTextPayload(payload);
+      if (!text) throw new Error("Unable to parse planner plan response.");
+      const parsed = parseJsonObjectFromText(text);
+      return PlannerOutputSchema.parse(parsed);
+    }
+  };
+
+  return fallbackToStub ? wrapPlannerWithFallback(remote, stub) : remote;
+}
+
+function wrapPlannerWithFallback(
+  remote: PlannerClient,
+  fallback: PlannerClient
+): PlannerClient {
+  return {
+    provider: remote.provider,
+    async explore(input: PlannerInput): Promise<PlannerExploration> {
+      try {
+        return await remote.explore(input);
+      } catch {
+        return fallback.explore(input);
+      }
+    },
+    async plan(input: PlannerInput & { exploration_results: string }): Promise<PlannerOutput> {
+      try {
+        return await remote.plan(input);
+      } catch {
+        return fallback.plan(input);
+      }
+    }
+  };
+}
+
+function plannerExploreSystemPrompt(): string {
+  return [
+    "You are a data exploration planner for a PostgreSQL database.",
+    "Given a user's analysis goal and the database catalog, generate 3-6 lightweight",
+    "exploratory SQL queries to understand the data BEFORE writing the main analysis queries.",
+    "",
+    "QUERY TYPES (use a mix relevant to the goal):",
+    '- "distinct": SELECT DISTINCT column_name FROM schema.table LIMIT 50',
+    "  Use for: categorical columns, status fields, types, categories",
+    '- "count": SELECT COUNT(*), COUNT(DISTINCT col) FROM schema.table LIMIT 1',
+    "  Use for: table sizes, cardinality",
+    '- "sample": SELECT * FROM schema.table LIMIT 5',
+    "  Use for: understanding row shape, data format, example values",
+    '- "range": SELECT MIN(col), MAX(col) FROM schema.table LIMIT 1',
+    "  Use for: date ranges, numeric ranges, time boundaries",
+    '- "schema": SELECT column_name, data_type FROM information_schema.columns WHERE table_schema=\'...\' AND table_name=\'...\' LIMIT 50',
+    "  Use for: confirming column types when catalog seems ambiguous",
+    "",
+    "RULES:",
+    "- Use ONLY tables and columns from the provided catalog.",
+    "- Always use fully-qualified table names: schema.table.",
+    "- Every query MUST be a single SELECT with LIMIT.",
+    "- Keep queries fast: no JOINs, no subqueries, no complex aggregations.",
+    "- Focus on columns relevant to the user's goal.",
+    "- Prioritize: status/type columns (DISTINCT), date columns (range), key measures (count/range).",
+    "",
+    "Return strictly valid JSON:",
+    '{"queries": [{"purpose": "...", "sql": "SELECT ...", "query_type": "distinct|count|sample|range|schema"}]}',
+    "No markdown, no extra keys."
+  ].join("\n");
+}
+
+function plannerExploreUserPrompt(input: PlannerInput): string {
+  const parts: string[] = [];
+
+  parts.push("═══ DATABASE CATALOG ═══");
+  parts.push(input.catalog_summary);
+  parts.push("");
+
+  if (input.allowed_relations.length > 0) {
+    parts.push(`Allowed tables: ${input.allowed_relations.join(", ")}`);
+    parts.push("");
+  }
+
+  parts.push(`USER GOAL: ${input.user_goal}`);
+  parts.push(`AUDIENCE: ${input.audience}`);
+  parts.push(`MODE: ${input.insight_mode}`);
+  parts.push("");
+  parts.push("Generate 3-6 fast exploratory queries to understand this data. Return JSON only.");
+
+  return parts.join("\n");
+}
+
+function plannerPlanSystemPrompt(): string {
+  return [
+    "You are a data analysis planner. You have just explored a database and received results",
+    "from exploratory queries. Based on what you learned, produce a concrete analysis plan.",
+    "",
+    "Your output must include:",
+    "1. data_discoveries: What you learned about the data — distinct values found, date ranges,",
+    "   row counts, null rates, cardinalities. Each discovery references a specific table.column.",
+    "2. recommended_approaches: 2-4 specific analysis questions with SQL approaches.",
+    "   Include concrete column names, JOIN conditions, filter values based on what you discovered.",
+    "3. data_warnings: Any issues found — high null rates, empty tables, unexpected values, low cardinality.",
+    "4. plan_summary: A 2-3 sentence human-readable summary of the plan for the user.",
+    "",
+    "CRITICAL RULES:",
+    "- Base your plan ENTIRELY on what the exploratory data shows — not assumptions.",
+    "- Reference actual column values you discovered (e.g., \"status has values: shipped, cancelled, refunded\").",
+    "- Your recommended approaches should include specific column names, JOIN conditions, and filter values.",
+    "- The Query Strategist will use your output to write the final SQL, so be precise and concrete.",
+    "- If an exploratory query failed with an error, note it in data_warnings and avoid that table/column.",
+    "",
+    "Return strictly valid JSON:",
+    '{"data_discoveries": [{"table":"...","column":"...","finding":"..."}], "recommended_approaches": [{"question":"...","approach":"...","key_columns":["..."],"relevant_tables":["..."]}], "data_warnings": ["..."], "plan_summary": "..."}',
+    "No markdown, no extra keys."
+  ].join("\n");
+}
+
+function plannerPlanUserPrompt(input: PlannerInput & { exploration_results: string }): string {
+  const parts: string[] = [];
+
+  parts.push("═══ DATABASE CATALOG ═══");
+  parts.push(input.catalog_summary);
+  parts.push("");
+
+  parts.push(`USER GOAL: ${input.user_goal}`);
+  parts.push(`AUDIENCE: ${input.audience}`);
+  parts.push(`MODE: ${input.insight_mode}`);
+  parts.push("");
+
+  parts.push("═══ EXPLORATION RESULTS ═══");
+  parts.push(input.exploration_results);
+  parts.push("");
+
+  parts.push("Based on what you now know about the data, create a concrete analysis plan. Return JSON only.");
 
   return parts.join("\n");
 }

@@ -28,7 +28,8 @@ export const QueryStrategyInputSchema = z.object({
   insight_mode: z.enum(["business", "data"]),
   metric_ids: z.array(z.string().min(1)).default([]),
   dimension_ids: z.array(z.string().min(1)).default([]),
-  allowed_relations: z.array(z.string().min(1)).default([])
+  allowed_relations: z.array(z.string().min(1)).default([]),
+  planner_context: z.string().optional()
 });
 
 export const PlannedQuerySchema = z.object({
@@ -79,3 +80,53 @@ export type ExecBrief = z.infer<typeof ExecBriefSchema>;
 export type QueryStrategyInput = z.infer<typeof QueryStrategyInputSchema>;
 export type PlannedQuery = z.infer<typeof PlannedQuerySchema>;
 export type QueryStrategyOutput = z.infer<typeof QueryStrategyOutputSchema>;
+
+// ---------------------------------------------------------------------------
+// Planner Agent schemas
+// ---------------------------------------------------------------------------
+
+export const PlannerInputSchema = z.object({
+  catalog_summary: z.string().min(1),
+  user_goal: z.string().min(1),
+  audience: z.string().min(1),
+  insight_mode: z.enum(["business", "data"]),
+  allowed_relations: z.array(z.string().min(1)).default([]),
+  allowed_schemas: z.array(z.string().min(1)).default([])
+});
+
+export const ExploratoryQuerySchema = z.object({
+  purpose: z.string().min(1),
+  sql: z.string().min(1),
+  query_type: z.enum(["distinct", "count", "sample", "range", "schema"])
+});
+
+export const PlannerExplorationSchema = z.object({
+  queries: z.array(ExploratoryQuerySchema).min(1).max(6)
+});
+
+export const DataDiscoverySchema = z.object({
+  table: z.string().min(1),
+  column: z.string().min(1),
+  finding: z.string().min(1)
+});
+
+export const RecommendedApproachSchema = z.object({
+  question: z.string().min(1),
+  approach: z.string().min(1),
+  key_columns: z.array(z.string().min(1)).default([]),
+  relevant_tables: z.array(z.string().min(1)).default([])
+});
+
+export const PlannerOutputSchema = z.object({
+  data_discoveries: z.array(DataDiscoverySchema).min(1).max(20),
+  recommended_approaches: z.array(RecommendedApproachSchema).min(1).max(5),
+  data_warnings: z.array(z.string().min(1)).default([]),
+  plan_summary: z.string().min(1)
+});
+
+export type PlannerInput = z.infer<typeof PlannerInputSchema>;
+export type ExploratoryQuery = z.infer<typeof ExploratoryQuerySchema>;
+export type PlannerExploration = z.infer<typeof PlannerExplorationSchema>;
+export type DataDiscovery = z.infer<typeof DataDiscoverySchema>;
+export type RecommendedApproach = z.infer<typeof RecommendedApproachSchema>;
+export type PlannerOutput = z.infer<typeof PlannerOutputSchema>;

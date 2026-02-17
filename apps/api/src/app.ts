@@ -4,9 +4,11 @@ import { ZodError } from "zod";
 import { createDataPlaneFromEnv, type DataPlane } from "@project-overload/dataplane";
 import {
   createAnalystClientFromEnv,
+  createPlannerClientFromEnv,
   createQueryStrategistClientFromEnv,
   createReportComposerClientFromEnv,
   type AnalystClient,
+  type PlannerClient,
   type QueryStrategistClient,
   type ReportComposerClient
 } from "@project-overload/llm-client";
@@ -24,6 +26,7 @@ export type ApiDependencies = {
   analyst_client: AnalystClient;
   query_strategist: QueryStrategistClient;
   report_composer: ReportComposerClient;
+  planner_client: PlannerClient;
   connection_manager: RuntimeConnectionManager;
 };
 
@@ -75,6 +78,7 @@ export async function buildApiApp(options: Partial<ApiDependencies> = {}) {
   const analystClient = options.analyst_client ?? createAnalystClientFromEnv();
   const queryStrategist = options.query_strategist ?? createQueryStrategistClientFromEnv();
   const reportComposer = options.report_composer ?? createReportComposerClientFromEnv();
+  const plannerClient = options.planner_client ?? createPlannerClientFromEnv();
 
   const rateLimiter = createRateLimiter({
     window_ms: 60_000,
@@ -92,7 +96,7 @@ export async function buildApiApp(options: Partial<ApiDependencies> = {}) {
   app.get("/health", async () => ({ status: "ok", service: "api" }));
 
   registerSemanticRoutes(app, store);
-  registerContractRoutes(app, store, dataPlane, analystClient, queryStrategist, reportComposer, connectionManager);
+  registerContractRoutes(app, store, dataPlane, analystClient, queryStrategist, reportComposer, plannerClient, connectionManager);
   registerConnectionRoutes(app, connectionManager);
 
   app.setErrorHandler((error: unknown, _request, reply) => {
