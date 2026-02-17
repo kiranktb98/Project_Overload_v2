@@ -239,20 +239,37 @@ export function createStubQueryStrategistClient(): QueryStrategistClient {
 
       const queries: QueryStrategyOutput["queries"] = [];
 
-      if (input.metric_ids.length > 0) {
+      if (input.metric_ids.length > 0 && input.dimension_ids.length > 0) {
+        // Case 1 demo: group metric + dimension queries for combined analysis
         queries.push({
           question: `What are the key trends for ${input.metric_ids.join(", ")}?`,
           sql: `SELECT * FROM ${mainTable} LIMIT 200`,
-          purpose: "Identify primary metric trends and patterns"
+          purpose: "Identify primary metric trends and patterns",
+          group_id: "overview"
         });
-      }
-
-      if (input.dimension_ids.length > 0) {
         queries.push({
           question: `How do metrics break down by ${input.dimension_ids.join(", ")}?`,
           sql: `SELECT * FROM ${mainTable} LIMIT 200`,
-          purpose: "Analyze dimensional breakdown"
+          purpose: "Analyze dimensional breakdown",
+          group_id: "overview"
         });
+      } else {
+        // Case 2: standalone queries
+        if (input.metric_ids.length > 0) {
+          queries.push({
+            question: `What are the key trends for ${input.metric_ids.join(", ")}?`,
+            sql: `SELECT * FROM ${mainTable} LIMIT 200`,
+            purpose: "Identify primary metric trends and patterns"
+          });
+        }
+
+        if (input.dimension_ids.length > 0) {
+          queries.push({
+            question: `How do metrics break down by ${input.dimension_ids.join(", ")}?`,
+            sql: `SELECT * FROM ${mainTable} LIMIT 200`,
+            purpose: "Analyze dimensional breakdown"
+          });
+        }
       }
 
       if (queries.length === 0) {
@@ -351,6 +368,12 @@ function queryStrategistSystemPrompt(input: QueryStrategyInput): string {
     "",
     `MODE: ${mode}`,
     "",
+    "QUERY GROUPING:",
+    "Each query can optionally include a \"group_id\" string field.",
+    "- Queries that share the SAME group_id will have their results MERGED into one combined dataset and analyzed together in a single analyst call. Use this when multiple queries produce complementary data that must be compared side-by-side (e.g., revenue by region + revenue by product category for a combined breakdown).",
+    "- Queries WITHOUT a group_id are analyzed INDEPENDENTLY — each gets its own separate analyst call. Use this when each query answers a self-contained question (e.g., 'top customers' is independent from 'monthly trend').",
+    "- Most reports should use a MIX: group related queries together, keep unrelated ones standalone.",
+    "",
     "RULES:",
     "- Each query MUST be exactly ONE valid PostgreSQL SELECT statement.",
     "- NEVER put multiple statements in a single sql field. NO semicolons separating statements. One SELECT per query object.",
@@ -365,8 +388,9 @@ function queryStrategistSystemPrompt(input: QueryStrategyInput): string {
     "- Always include LIMIT 200 at the end of each query.",
     "",
     "Return strictly valid JSON matching this shape:",
-    '{"queries": [{"question": "...", "sql": "SELECT ... LIMIT 200", "purpose": "..."}]}',
-    "No markdown, no extra keys. Each sql value is ONE SELECT statement, no semicolons."
+    '{"queries": [{"question": "...", "sql": "SELECT ... LIMIT 200", "purpose": "...", "group_id": "optional_group_name"}]}',
+    "No markdown, no extra keys. Each sql value is ONE SELECT statement, no semicolons.",
+    "The group_id field is optional — omit it for standalone queries."
   ].join("\n");
 }
 
@@ -592,6 +616,8 @@ function analystSystemPrompt(input: AnalystInput): string {
     "",
     modeGuidance,
     questionContext,
+    "",
+    "COMBINED DATA NOTE: If the rows contain a '_source_query' field, the data was merged from multiple SQL queries. Use this field to understand which rows came from which query and cross-reference the datasets in your analysis.",
     "",
     "Return strictly valid JSON matching this shape:",
     '{"request_id": "...", "batch_index": 0, "total_batches": 1, "highlights": ["..."], "risks": ["..."], "recommendations": ["..."], "confidence_score": 0.85, "appendix_refs": ["..."]}',

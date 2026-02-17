@@ -34,7 +34,12 @@ export const QueryStrategyInputSchema = z.object({
 export const PlannedQuerySchema = z.object({
   question: z.string().min(1),
   sql: z.string().min(1),
-  purpose: z.string().min(1)
+  purpose: z.string().min(1),
+  /** Optional group ID. Queries sharing the same group_id are executed
+   *  separately but their rows are merged into ONE evidence packet and
+   *  sent to a single analyst call (Case 1).
+   *  Queries with no group_id are each analyzed independently (Case 2). */
+  group_id: z.string().min(1).optional()
 });
 
 export const QueryStrategyOutputSchema = z.object({

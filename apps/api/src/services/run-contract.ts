@@ -50,61 +50,40 @@ export async function runReportContractPipeline(input: {
     questions: strategy.queries.map((q) => q.question)
   });
 
-  // Step 2: Execute each query and analyze results
+  // Step 2: Execute queries and analyze — supports both Case 1 (grouped) and Case 2 (standalone)
   const analyses: ReportComposerInput["analyses"] = [];
-  const queryDetails: Array<{ question: string; sql: string; row_count: number }> = [];
+  const queryDetails: Array<{ question: string; sql: string; row_count: number; group_id?: string }> = [];
+
+  // Separate queries into groups (Case 1) and standalone (Case 2)
+  const groups = new Map<string, typeof strategy.queries>();
+  const standalone: typeof strategy.queries = [];
 
   for (const planned of strategy.queries) {
-    let rows: Record<string, unknown>[] = [];
-    let queryError: string | null = null;
-
-    // Safety: extract only the first SELECT statement if LLM returned multiple
-    const safeSql = sanitizeLlmSql(planned.sql);
-
-    try {
-      const result = await input.data_plane.execute({
-        request_id: `${input.contract.id}_${randomUUID().slice(0, 8)}`,
-        sql: safeSql,
-        policy: {
-          allowed_relations: input.contract.guardrails.allowed_relations,
-          allowed_schemas: input.contract.guardrails.allowed_schemas,
-          timeout_ms: input.contract.guardrails.timeout_ms,
-          row_cap: input.contract.guardrails.evidence_row_cap,
-          pii_fields: []
-        }
-      });
-
-      rows = result.rows;
-
-      await input.store.appendAuditLog("dataplane_execute", {
-        question: planned.question,
-        sql: safeSql,
-        row_count: rows.length
-      });
-    } catch (error) {
-      queryError = error instanceof Error ? error.message : "Query execution failed";
-      await input.store.appendAuditLog("dataplane_error", {
-        question: planned.question,
-        sql: safeSql,
-        error: queryError
-      });
+    if (planned.group_id) {
+      const existing = groups.get(planned.group_id) ?? [];
+      existing.push(planned);
+      groups.set(planned.group_id, existing);
+    } else {
+      standalone.push(planned);
     }
+  }
 
-    if (queryError || rows.length === 0) {
+  // --- Case 2: Standalone queries — each query gets its own analyst call ---
+  for (const planned of standalone) {
+    const { rows, error } = await executeQuery(input, planned);
+    queryDetails.push({ question: planned.question, sql: sanitizeLlmSql(planned.sql), row_count: rows.length });
+
+    if (error || rows.length === 0) {
       analyses.push({
         question: planned.question,
         highlights: [],
-        risks: [queryError ?? "No data returned for this query."],
+        risks: [error ?? "No data returned for this query."],
         recommendations: ["Verify the query or check that the relevant tables contain data."],
-        data_summary: `Query for "${planned.question}" returned no results. ${queryError ?? ""}`
+        data_summary: `Query for "${planned.question}" returned no results. ${error ?? ""}`
       });
-      queryDetails.push({ question: planned.question, sql: safeSql, row_count: 0 });
       continue;
     }
 
-    queryDetails.push({ question: planned.question, sql: safeSql, row_count: rows.length });
-
-    // Step 3: Analyst — analyze this specific dataset for its specific question
     const analysis = await input.analyst_client.analyzeBatch({
       request_id: `${input.contract.id}_analysis`,
       batch_index: 0,
@@ -127,6 +106,72 @@ export async function runReportContractPipeline(input: {
       risks: analysis.risks,
       recommendations: analysis.recommendations,
       data_summary: `${rows.length} rows analyzed. Confidence: ${(analysis.confidence_score * 100).toFixed(0)}%. ${planned.purpose}`
+    });
+  }
+
+  // --- Case 1: Grouped queries — execute all in group, merge rows, one analyst call per group ---
+  for (const [groupId, groupQueries] of groups) {
+    const mergedRows: Record<string, unknown>[] = [];
+    const groupQuestions: string[] = [];
+    const groupPurposes: string[] = [];
+    let groupError: string | null = null;
+
+    for (const planned of groupQueries) {
+      const { rows, error } = await executeQuery(input, planned);
+      queryDetails.push({ question: planned.question, sql: sanitizeLlmSql(planned.sql), row_count: rows.length, group_id: groupId });
+
+      if (error) {
+        groupError = groupError ? `${groupError}; ${error}` : error;
+        continue;
+      }
+
+      // Tag each row with source query for the analyst's context
+      for (const row of rows) {
+        mergedRows.push({ _source_query: planned.question, ...row });
+      }
+
+      groupQuestions.push(planned.question);
+      groupPurposes.push(planned.purpose);
+    }
+
+    const combinedQuestion = groupQuestions.join(" + ");
+
+    if (mergedRows.length === 0) {
+      analyses.push({
+        question: combinedQuestion || `Group ${groupId}`,
+        highlights: [],
+        risks: [groupError ?? "No data returned for any query in this group."],
+        recommendations: ["Verify the queries or check that the relevant tables contain data."],
+        data_summary: `Grouped queries for "${combinedQuestion}" returned no results. ${groupError ?? ""}`
+      });
+      continue;
+    }
+
+    // Cap merged rows to evidence_row_cap
+    const cappedRows = mergedRows.slice(0, input.contract.guardrails.evidence_row_cap);
+
+    const analysis = await input.analyst_client.analyzeBatch({
+      request_id: `${input.contract.id}_group_${groupId}`,
+      batch_index: 0,
+      total_batches: 1,
+      summary_word_budget: 400, // larger budget for combined analysis
+      question: combinedQuestion,
+      insight_mode: insightMode,
+      evidence_packet: {
+        request_id: `${input.contract.id}_evidence_group_${groupId}`,
+        batch_index: 0,
+        total_batches: 1,
+        rows: cappedRows,
+        row_count: cappedRows.length
+      }
+    });
+
+    analyses.push({
+      question: combinedQuestion,
+      highlights: analysis.highlights,
+      risks: analysis.risks,
+      recommendations: analysis.recommendations,
+      data_summary: `${cappedRows.length} merged rows from ${groupQueries.length} queries (group: ${groupId}). Confidence: ${(analysis.confidence_score * 100).toFixed(0)}%. ${groupPurposes.join("; ")}`
     });
   }
 
@@ -162,6 +207,49 @@ export async function runReportContractPipeline(input: {
     exec_brief: execBrief,
     html
   };
+}
+
+/**
+ * Execute a single planned query against the data plane with sanitization and audit logging.
+ */
+async function executeQuery(
+  input: {
+    contract: ReportContract;
+    store: MetadataStore;
+    data_plane: DataPlane;
+  },
+  planned: { question: string; sql: string }
+): Promise<{ rows: Record<string, unknown>[]; error: string | null }> {
+  const safeSql = sanitizeLlmSql(planned.sql);
+  try {
+    const result = await input.data_plane.execute({
+      request_id: `${input.contract.id}_${randomUUID().slice(0, 8)}`,
+      sql: safeSql,
+      policy: {
+        allowed_relations: input.contract.guardrails.allowed_relations,
+        allowed_schemas: input.contract.guardrails.allowed_schemas,
+        timeout_ms: input.contract.guardrails.timeout_ms,
+        row_cap: input.contract.guardrails.evidence_row_cap,
+        pii_fields: []
+      }
+    });
+
+    await input.store.appendAuditLog("dataplane_execute", {
+      question: planned.question,
+      sql: safeSql,
+      row_count: result.rows.length
+    });
+
+    return { rows: result.rows, error: null };
+  } catch (error) {
+    const message = error instanceof Error ? error.message : "Query execution failed";
+    await input.store.appendAuditLog("dataplane_error", {
+      question: planned.question,
+      sql: safeSql,
+      error: message
+    });
+    return { rows: [], error: message };
+  }
 }
 
 /**
