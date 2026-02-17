@@ -1,0 +1,26 @@
+{
+  "name": "project-overload-v2",
+  "version": "0.1.0",
+  "private": true,
+  "packageManager": "pnpm@10.16.1",
+  "scripts": {
+    "dev": "pnpm -r --parallel --filter @project-overload/api --filter @project-overload/worker --filter @project-overload/web dev",
+    "test": "pnpm -w exec vitest run",
+    "build": "pnpm -r --if-present build",
+    "lint": "pnpm -w exec eslint . --ext .ts",
+    "db:migrate": "pnpm --filter @project-overload/api db:migrate"
+  },
+  "pnpm": {
+    "onlyBuiltDependencies": ["puppeteer"]
+  },
+  "devDependencies": {
+    "@types/node": "^22.13.10",
+    "@types/pg": "^8.11.10",
+    "@typescript-eslint/eslint-plugin": "^7.18.0",
+    "@typescript-eslint/parser": "^7.18.0",
+    "eslint": "^8.57.1",
+    "typescript": "^5.8.2",
+    "tsx": "^4.19.3",
+    "vitest": "^3.0.5"
+  }
+}

@@ -1,0 +1,97 @@
+import { describe, expect, it } from "vitest";
+import {
+  createConversationClient,
+  createPassthroughConversationClient,
+  type ConversationTurnInput
+} from "../src/conversation";
+
+const TURN_INPUT: ConversationTurnInput = {
+  user_message: "hello",
+  action_context: "Base response",
+  history: [],
+  state: {
+    draft: {
+      name: "",
+      audience: "Executive",
+      timezone: "UTC",
+      schedule_cron: null,
+      sql_template: "SELECT * FROM analytics.sales",
+      metric_ids: ["metric_revenue"],
+      dimension_ids: ["region"],
+      allowed_relations: ["analytics.sales"],
+      allowed_schemas: ["analytics"],
+      insight_mode: "business" as const
+    },
+    contract_id: null,
+    last_run_id: null,
+    last_exec_brief: null,
+    conversation_history: [],
+    scope_pending: false
+  }
+};
+
+describe("conversation client", () => {
+  it("returns deterministic response in passthrough mode", async () => {
+    const client = createPassthroughConversationClient();
+    const response = await client.respond(TURN_INPUT);
+    expect(response).toBe("Base response");
+  });
+
+  it("uses provider response text when available", async () => {
+    const calls: Array<{ input: RequestInfo | URL; init?: RequestInit }> = [];
+    const client = createConversationClient({
+      provider: "openrouter",
+      openrouter_api_key: "key",
+      fallback_to_deterministic: false,
+      fetch_impl: async (input, init) => {
+        calls.push({ input, init });
+
+        return new Response(
+          JSON.stringify({
+            choices: [
+              {
+                message: {
+                  content: "Natural AI response"
+                }
+              }
+            ]
+          }),
+          {
+            status: 200,
+            headers: { "content-type": "application/json" }
+          }
+        );
+      }
+    });
+
+    const response = await client.respond(TURN_INPUT);
+    expect(response).toBe("Natural AI response");
+
+    const rawBody = typeof calls[0].init?.body === "string" ? calls[0].init?.body : "{}";
+    expect(rawBody).toContain("Conversation history:");
+    expect(rawBody).toContain("User message:");
+  });
+
+  it("falls back to deterministic when provider call fails and fallback is enabled", async () => {
+    const client = createConversationClient({
+      provider: "openai",
+      openai_api_key: "key",
+      fallback_to_deterministic: true,
+      fetch_impl: async () => {
+        throw new Error("network down");
+      }
+    });
+
+    const response = await client.respond(TURN_INPUT);
+    expect(response).toBe("Base response");
+  });
+
+  it("throws when strict provider mode is enabled without keys", () => {
+    expect(() =>
+      createConversationClient({
+        provider: "openrouter",
+        require_provider: true
+      })
+    ).toThrow("WEB_CHAT_REQUIRE_PROVIDER is true");
+  });
+});

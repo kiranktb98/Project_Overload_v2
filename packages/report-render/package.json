@@ -1,0 +1,17 @@
+{
+  "name": "@project-overload/report-render",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "scripts": {
+    "build": "tsc -p tsconfig.json --noEmit"
+  },
+  "dependencies": {
+    "@project-overload/shared": "workspace:*",
+    "@puppeteer/browsers": "^2.12.1",
+    "puppeteer-core": "^24.37.3"
+  }
+}
