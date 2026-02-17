@@ -32,7 +32,8 @@ export const ChatStateSchema = z.object({
   last_run_id: z.string().nullable(),
   last_exec_brief: ExecBriefSchema.nullable(),
   conversation_history: z.array(ChatHistoryTurnSchema).max(40).default([]),
-  scope_pending: z.boolean().default(false)
+  scope_pending: z.boolean().default(false),
+  planner_summary: z.string().nullable().default(null)
 });
 
 export const ChatTurnRequestSchema = z.object({
@@ -68,6 +69,7 @@ export interface WebApiClient {
     run_id: string;
     exec_brief: ExecBriefRecord;
     exec_brief_html?: string;
+    planner_summary?: string;
     pdf_path?: string;
   }>;
   downloadRunPdf(runId: string): Promise<Response>;
@@ -81,6 +83,7 @@ const RunContractResponseSchema = z.object({
   run_id: z.string().min(1),
   exec_brief: ExecBriefSchema,
   exec_brief_html: z.string().optional(),
+  planner_summary: z.string().optional(),
   pdf_path: z.string().min(1).optional()
 });
 
@@ -170,7 +173,8 @@ export function createInitialChatState(): ChatState {
     last_run_id: null,
     last_exec_brief: null,
     conversation_history: [],
-    scope_pending: false
+    scope_pending: false,
+    planner_summary: null
   };
 }
 
@@ -193,7 +197,8 @@ export function parseChatState(value: unknown): ChatState {
     last_run_id: parsed.data.last_run_id,
     last_exec_brief: parsed.data.last_exec_brief,
     conversation_history: [...parsed.data.conversation_history],
-    scope_pending: parsed.data.scope_pending ?? false
+    scope_pending: parsed.data.scope_pending ?? false,
+    planner_summary: parsed.data.planner_summary ?? null
   };
 }
 
@@ -762,15 +767,23 @@ async function executeRun(state: ChatState, apiClient: WebApiClient): Promise<Ch
   const run = await apiClient.runContract(nextState.contract_id!);
   nextState.last_run_id = run.run_id;
   nextState.last_exec_brief = run.exec_brief;
+  nextState.planner_summary = run.planner_summary ?? null;
 
   const brief = run.exec_brief;
-  const briefLines = [
+  const briefLines: string[] = [];
+
+  if (run.planner_summary) {
+    briefLines.push(`**Planning:** ${run.planner_summary}`);
+    briefLines.push("");
+  }
+
+  briefLines.push(
     `What changed: ${brief.what_changed.join("; ") || "nothing notable"}`,
     `Why: ${brief.why.join("; ") || "unknown"}`,
     `So what: ${brief.so_what.join("; ") || "no impact noted"}`,
     `Recommended: ${brief.what_to_do.join("; ") || "no action needed"}`,
     `Confidence: ${(brief.confidence.score * 100).toFixed(0)}%`
-  ];
+  );
 
   return {
     assistant_message: `Report executed. Run ID: ${run.run_id}.\n${briefLines.join("\n")}\nPDF available.`,

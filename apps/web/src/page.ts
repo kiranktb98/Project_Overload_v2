@@ -351,6 +351,7 @@ export function renderChatPage(): string {
         /* ── Thinking indicator ── */
         const thinkingMessages = {
           chatting: ["Thinking...", "Pondering your question...", "Mulling it over..."],
+          planning: ["Exploring the data...", "Mapping the terrain...", "Scouting the columns...", "Learning the data shapes..."],
           analyzing: ["Cooking insights...", "Sherlocking the data...", "Connecting the dots..."],
           running: ["Scouring the seven seas...", "Crunching the numbers...", "Mining for gold..."]
         };
@@ -537,7 +538,8 @@ export function renderChatPage(): string {
 
           appendMessage("user", value);
           setBusy(true);
-          showThinking("chatting");
+          const isRunConfirm = /^(confirm|yes|go ahead|proceed|looks good|lgtm|run it|do it|execute|approved|ok|okay|sure|start)\b/i.test(value);
+          showThinking(isRunConfirm ? "planning" : "chatting");
 
           try {
             const response = await fetch("/api/chat", {

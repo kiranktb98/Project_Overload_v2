@@ -2,7 +2,7 @@ import { randomUUID } from "node:crypto";
 import type { FastifyInstance } from "fastify";
 import { ExecBriefSchema, ReportContractSchema, ReportGuardrailsSchema } from "@project-overload/shared";
 import type { DataPlane } from "@project-overload/dataplane";
-import type { AnalystClient, QueryStrategistClient, ReportComposerClient } from "@project-overload/llm-client";
+import type { AnalystClient, PlannerClient, QueryStrategistClient, ReportComposerClient } from "@project-overload/llm-client";
 import { renderExecBriefHtml, renderPdfFromHtml } from "@project-overload/report-render";
 import type { MetadataStore } from "../store";
 import type { RuntimeConnectionManager } from "../dataplane/connection-manager";
@@ -15,6 +15,7 @@ export function registerContractRoutes(
   analystClient: AnalystClient,
   queryStrategist: QueryStrategistClient,
   reportComposer: ReportComposerClient,
+  plannerClient: PlannerClient,
   connectionManager: RuntimeConnectionManager
 ): void {
   app.post("/report-contracts", async (request, reply) => {
@@ -56,6 +57,7 @@ export function registerContractRoutes(
         analyst_client: analystClient,
         query_strategist: queryStrategist,
         report_composer: reportComposer,
+        planner_client: plannerClient,
         catalog_summary: catalogSummary
       });
 
@@ -64,6 +66,7 @@ export function registerContractRoutes(
         contract_id: id,
         exec_brief: result.exec_brief,
         exec_brief_html: result.html,
+        planner_summary: result.planner_summary,
         pdf_path: `/report-runs/${result.run.id}/pdf`
       });
     } catch (error) {
@@ -147,15 +150,16 @@ function buildCatalogSummary(connectionManager: RuntimeConnectionManager): strin
     return "No catalog available.";
   }
 
-  const lines: string[] = [];
+  const sections: string[] = [];
   for (const table of catalog.tables.slice(0, 20)) {
-    const cols = table.columns.slice(0, 20).map((c: { column_name: string; data_type: string }) =>
-      `${c.column_name}(${c.data_type})`
-    ).join(", ");
-    const extra = table.columns.length > 20 ? ` +${table.columns.length - 20} more` : "";
-    const rowInfo = table.row_count_estimate > 0 ? ` ~${table.row_count_estimate} rows` : "";
-    lines.push(`${table.qualified_name} [${table.relation_type}]${rowInfo}: ${cols}${extra}`);
+    const rowInfo = table.row_count_estimate > 0 ? ` (~${table.row_count_estimate} rows)` : "";
+    const header = `TABLE: ${table.qualified_name}${rowInfo}`;
+    const colLines = table.columns.slice(0, 30).map((c: { column_name: string; data_type: string }) =>
+      `  - ${c.column_name} : ${c.data_type}`
+    );
+    const extra = table.columns.length > 30 ? [`  ... +${table.columns.length - 30} more columns`] : [];
+    sections.push([header, ...colLines, ...extra].join("\n"));
   }
 
-  return lines.join("\n");
+  return sections.join("\n\n");
 }
