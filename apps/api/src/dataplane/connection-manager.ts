@@ -139,6 +139,26 @@ export type DataCatalog = {
   cataloged_at: string;
 };
 
+export type ColumnValidation = {
+  name: string;
+  data_type: string;
+  accessible: boolean;
+  error?: string;
+};
+
+export type TableValidation = {
+  name: string;
+  accessible: boolean;
+  error?: string;
+  columns: ColumnValidation[];
+};
+
+export type AllowlistValidationResult = {
+  ok: boolean;
+  tables: TableValidation[];
+  summary: string;
+};
+
 type ActiveConnection = {
   id: string;
   name: string;
@@ -444,6 +464,71 @@ export class RuntimeConnectionManager {
     const available = this.active.relations_health.map((entry) => entry.qualified_name);
     this.active.allowed_relations = normalizeAllowlist(allowedRelations, available);
     return this.getContext();
+  }
+
+  async validateAllowlistAccess(): Promise<AllowlistValidationResult> {
+    if (!this.active) {
+      throw new Error("No active database connection.");
+    }
+
+    const pool = this.active.pool;
+    const allowed = this.active.allowed_relations;
+    const tables: TableValidation[] = [];
+    let tablesOk = 0;
+    let totalCols = 0;
+    let colsOk = 0;
+
+    for (const qualifiedName of allowed) {
+      const parts = qualifiedName.split(".");
+      if (parts.length !== 2) {
+        tables.push({ name: qualifiedName, accessible: false, error: "Invalid qualified name", columns: [] });
+        continue;
+      }
+
+      const [schema, table] = parts;
+      const tableVal: TableValidation = { name: qualifiedName, accessible: false, columns: [] };
+
+      try {
+        await pool.query(`SELECT * FROM "${schema}"."${table}" LIMIT 0`);
+        tableVal.accessible = true;
+        tablesOk++;
+      } catch (err) {
+        tableVal.error = err instanceof Error ? err.message : "SELECT failed";
+        tables.push(tableVal);
+        continue;
+      }
+
+      try {
+        const colResult = await pool.query<{ column_name: string; data_type: string }>(
+          `SELECT column_name, data_type FROM information_schema.columns WHERE table_schema = $1 AND table_name = $2 ORDER BY ordinal_position`,
+          [schema, table]
+        );
+
+        for (const col of colResult.rows) {
+          totalCols++;
+          const colVal: ColumnValidation = { name: col.column_name, data_type: col.data_type, accessible: false };
+
+          try {
+            await pool.query(`SELECT "${col.column_name}" FROM "${schema}"."${table}" LIMIT 1`);
+            colVal.accessible = true;
+            colsOk++;
+          } catch (err) {
+            colVal.error = err instanceof Error ? err.message : "Column SELECT failed";
+          }
+
+          tableVal.columns.push(colVal);
+        }
+      } catch (err) {
+        tableVal.error = `Table accessible but column introspection failed: ${err instanceof Error ? err.message : "unknown"}`;
+      }
+
+      tables.push(tableVal);
+    }
+
+    const ok = tablesOk === allowed.length && colsOk === totalCols;
+    const summary = `${tablesOk}/${allowed.length} tables OK, ${colsOk}/${totalCols} columns accessible`;
+
+    return { ok, tables, summary };
   }
 
   generateFixScript(input: FixScriptInput): string {

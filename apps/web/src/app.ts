@@ -181,6 +181,17 @@ export function buildWebApp(options: WebAppDependencies = {}) {
     });
   });
 
+  app.post("/api/db/validate", async (_request, reply) => {
+    return proxyToApi({
+      fetch_impl: options.fetch_impl,
+      api_base_url: apiBaseUrl,
+      method: "POST",
+      path: "/connections/validate",
+      body: {},
+      reply
+    });
+  });
+
   app.post("/api/db/fix-script", async (request, reply) => {
     return proxyToApi({
       fetch_impl: options.fetch_impl,

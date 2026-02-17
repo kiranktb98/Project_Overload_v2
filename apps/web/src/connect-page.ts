@@ -255,6 +255,82 @@ export function renderConnectionPage(): string {
         white-space: pre-wrap;
       }
 
+      .validation-panel {
+        margin-top: 12px;
+        border: 1px solid var(--line);
+        border-radius: 14px;
+        background: rgba(255, 255, 255, 0.92);
+        overflow: hidden;
+      }
+
+      .validation-summary {
+        padding: 10px 14px;
+        font-size: 0.82rem;
+        font-weight: 600;
+        border-bottom: 1px solid var(--line);
+      }
+
+      .validation-summary.all-ok {
+        background: rgba(34, 197, 94, 0.1);
+        color: #166534;
+      }
+
+      .validation-summary.has-errors {
+        background: rgba(239, 68, 68, 0.1);
+        color: #991b1b;
+      }
+
+      .val-table {
+        padding: 8px 14px;
+        border-bottom: 1px solid rgba(15, 23, 42, 0.06);
+        font-size: 0.78rem;
+      }
+
+      .val-table:last-child {
+        border-bottom: none;
+      }
+
+      .val-table-header {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        font-weight: 600;
+        cursor: pointer;
+      }
+
+      .val-icon-ok { color: #22c55e; }
+      .val-icon-fail { color: #ef4444; }
+
+      .val-cols {
+        margin-top: 6px;
+        padding-left: 22px;
+        display: none;
+      }
+
+      .val-cols.expanded {
+        display: block;
+      }
+
+      .val-col {
+        display: flex;
+        align-items: center;
+        gap: 6px;
+        padding: 2px 0;
+        color: var(--ink-soft);
+      }
+
+      .val-col.fail {
+        color: #991b1b;
+      }
+
+      .val-spinner {
+        text-align: center;
+        padding: 12px;
+        color: var(--ink-soft);
+        font-size: 0.82rem;
+        font-style: italic;
+      }
+
       .callout {
         border-radius: 14px;
         border: 1px solid rgba(245, 158, 11, 0.35);
@@ -402,6 +478,7 @@ export function renderConnectionPage(): string {
           <button class="danger" id="open-fix-script">Fix-it script</button>
         </div>
         <div class="table-list" id="table-list"></div>
+        <div id="validation-container"></div>
       </section>
 
       <section class="card">
@@ -474,7 +551,8 @@ export function renderConnectionPage(): string {
           copyFixScriptBtn: document.getElementById("copy-fix-script"),
           ranFixScriptBtn: document.getElementById("ran-fix-script"),
           businessContext: document.getElementById("business-context"),
-          saveBusinessContextBtn: document.getElementById("save-business-context")
+          saveBusinessContextBtn: document.getElementById("save-business-context"),
+          validationContainer: document.getElementById("validation-container")
         };
 
         const state = {
@@ -485,6 +563,62 @@ export function renderConnectionPage(): string {
 
         function showOutput(value) {
           elements.output.textContent = typeof value === "string" ? value : JSON.stringify(value, null, 2);
+        }
+
+        function renderValidation(result) {
+          const container = elements.validationContainer;
+          const summaryClass = result.ok ? "all-ok" : "has-errors";
+          const icon = result.ok ? "&#10004;" : "&#10008;";
+
+          let html = '<div class="validation-panel">';
+          html += '<div class="validation-summary ' + summaryClass + '">' + icon + ' ' + escapeHtml(result.summary) + '</div>';
+
+          if (Array.isArray(result.tables)) {
+            for (const table of result.tables) {
+              const tIcon = table.accessible ? '<span class="val-icon-ok">&#10004;</span>' : '<span class="val-icon-fail">&#10008;</span>';
+              const tableId = "val-" + table.name.replace(/[^a-z0-9]/gi, "-");
+
+              html += '<div class="val-table">';
+              html += '<div class="val-table-header" data-toggle="' + tableId + '">' + tIcon + ' ' + escapeHtml(table.name);
+              if (table.error) {
+                html += ' <span style="font-weight:400;color:#991b1b">(' + escapeHtml(table.error) + ')</span>';
+              }
+              if (table.columns && table.columns.length > 0) {
+                const failCount = table.columns.filter(function(c) { return !c.accessible; }).length;
+                if (failCount > 0) {
+                  html += ' <span style="font-weight:400;color:#991b1b">(' + failCount + ' column' + (failCount > 1 ? 's' : '') + ' inaccessible)</span>';
+                }
+              }
+              html += '</div>';
+
+              if (table.columns && table.columns.length > 0) {
+                html += '<div class="val-cols" id="' + tableId + '">';
+                for (const col of table.columns) {
+                  const cIcon = col.accessible ? '<span class="val-icon-ok">&#10004;</span>' : '<span class="val-icon-fail">&#10008;</span>';
+                  const cClass = col.accessible ? "val-col" : "val-col fail";
+                  html += '<div class="' + cClass + '">' + cIcon + ' ' + escapeHtml(col.name) + ' <span style="opacity:0.6">(' + escapeHtml(col.data_type) + ')</span>';
+                  if (col.error) {
+                    html += ' — ' + escapeHtml(col.error);
+                  }
+                  html += '</div>';
+                }
+                html += '</div>';
+              }
+
+              html += '</div>';
+            }
+          }
+
+          html += '</div>';
+          container.innerHTML = html;
+
+          // Toggle column details on table header click
+          container.addEventListener("click", function(e) {
+            const target = e.target.closest("[data-toggle]");
+            if (!target) return;
+            const colsEl = document.getElementById(target.dataset.toggle);
+            if (colsEl) colsEl.classList.toggle("expanded");
+          });
         }
 
         function escapeHtml(value) {
@@ -895,6 +1029,15 @@ export function renderConnectionPage(): string {
             state.selected = new Set(Array.isArray(context.allowed_relations) ? context.allowed_relations.map((v) => String(v).toLowerCase()) : []);
             renderRelations();
             showOutput(context);
+
+            // Auto-validate after save
+            elements.validationContainer.innerHTML = '<div class="val-spinner">Validating access to all tables and columns...</div>';
+            try {
+              const validation = await request("/api/db/validate", "POST", {});
+              renderValidation(validation);
+            } catch (valError) {
+              elements.validationContainer.innerHTML = '<div class="callout"><strong>Validation failed:</strong> ' + escapeHtml(valError instanceof Error ? valError.message : "Unknown error") + '</div>';
+            }
           } catch (error) {
             showOutput(error instanceof Error ? error.message : "Unknown error");
           }
