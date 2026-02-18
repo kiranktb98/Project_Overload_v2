@@ -86,6 +86,7 @@ export function buildWebApp(options: WebAppDependencies = {}) {
       if (conversationResponse.draft_updates) {
         stateAfterLlm = applyLlmDraftUpdates(response.state, conversationResponse.draft_updates);
       }
+      stateAfterLlm = syncDecisionStateFromAssistantMessage(stateAfterLlm, aiMessage);
       const nextState = appendConversationTurn(stateAfterLlm, parsed.data.message, aiMessage);
 
       return reply.code(200).send({
@@ -297,11 +298,45 @@ function enforceExecutionTruth(modelMessage: string, actionContext: string): str
   if (!reportExecuted && looksLikeReportExecutionClaim(modelMessage)) {
     return [
       "I haven't executed a report run yet.",
-      "Say `run` and then `confirm` to execute the report."
+      "Use the decision buttons in chat: `Run Data Preparation`, then `Finish scoping and run analysis`."
     ].join("\n");
   }
 
   return modelMessage;
+}
+
+function syncDecisionStateFromAssistantMessage(state: unknown, assistantMessage: string) {
+  const nextState = parseChatState(state);
+
+  if (
+    nextState.pending_query_sql ||
+    nextState.prep_pending ||
+    nextState.scope_pending ||
+    nextState.awaiting_pdf_confirmation ||
+    nextState.awaiting_save_confirmation ||
+    nextState.awaiting_schedule_confirmation ||
+    nextState.awaiting_schedule_mode_selection ||
+    nextState.awaiting_custom_day_input
+  ) {
+    return nextState;
+  }
+
+  const lower = assistantMessage.toLowerCase();
+  const prepSignal = /\brun data preparation\b/.test(lower);
+  const prepContext = /\b(scope|ready|locked|go ahead|choose|click|hit)\b/.test(lower);
+  if (prepSignal && prepContext && !nextState.prep_complete) {
+    nextState.prep_pending = true;
+    nextState.scope_pending = false;
+    return nextState;
+  }
+
+  const analysisSignal = /\bfinish scoping and run analysis\b/.test(lower);
+  if (analysisSignal && nextState.prep_complete) {
+    nextState.scope_pending = true;
+    nextState.prep_pending = false;
+  }
+
+  return nextState;
 }
 
 function looksLikeQueryExecutionClaim(message: string): boolean {

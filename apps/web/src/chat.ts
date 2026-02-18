@@ -33,10 +33,75 @@ export const ChatStateSchema = z.object({
   last_query_id: z.string().nullable().default(null),
   last_exec_brief: ExecBriefSchema.nullable(),
   conversation_history: z.array(ChatHistoryTurnSchema).max(40).default([]),
+  prep_pending: z.boolean().default(false),
+  prep_complete: z.boolean().default(false),
   scope_pending: z.boolean().default(false),
   pending_query_sql: z.string().nullable().default(null),
   pending_query_limit: z.number().int().positive().nullable().default(null),
-  planner_summary: z.string().nullable().default(null)
+  planner_summary: z.string().nullable().default(null),
+  preparation_summary: z.string().nullable().default(null),
+  prepared_payloads: z.array(
+    z.object({
+      question_id: z.string(),
+      question_number: z.number().int().min(1).optional(),
+      question: z.string(),
+      purpose: z.string(),
+      group_id: z.string().optional(),
+      source_query_count: z.number().int().min(1).optional(),
+      row_count_before_reduction: z.number().int().min(0),
+      prepared_row_count: z.number().int().min(0),
+      validation: z
+        .object({
+          expected_months: z.number().int().min(1).nullable().optional(),
+          observed_months: z.number().int().min(0),
+          missing_months: z.array(z.string()).default([]),
+          monthly_row_counts: z
+            .array(
+              z.object({
+                month: z.string(),
+                row_count: z.number().int().min(0)
+              })
+            )
+            .default([]),
+          metric_column: z.string().nullable().optional(),
+          monthly_metric_totals: z
+            .array(
+              z.object({
+                month: z.string(),
+                total: z.number()
+              })
+            )
+            .default([])
+        })
+        .optional(),
+      preparation_notes: z.array(z.string()).default([]),
+      warnings: z.array(z.string()).default([])
+    })
+  ).default([]),
+  awaiting_pdf_confirmation: z.boolean().default(false),
+  awaiting_save_confirmation: z.boolean().default(false),
+  awaiting_schedule_confirmation: z.boolean().default(false),
+  awaiting_schedule_mode_selection: z.boolean().default(false),
+  schedule_mode_pending: z.enum(["weekly", "monthly", "quarterly"]).nullable().default(null),
+  schedule_day_kind: z.enum(["weekday", "monthday"]).nullable().default(null),
+  awaiting_custom_day_input: z.boolean().default(false),
+  last_concise_summary: z.string().nullable().default(null),
+  last_token_usage: z
+    .object({
+      input_tokens: z.number().int().min(0),
+      output_tokens: z.number().int().min(0),
+      total_tokens: z.number().int().min(0),
+      by_agent: z.record(
+        z.string(),
+        z.object({
+          input_tokens: z.number().int().min(0),
+          output_tokens: z.number().int().min(0),
+          total_tokens: z.number().int().min(0)
+        })
+      )
+    })
+    .nullable()
+    .default(null)
 });
 
 export const ChatTurnRequestSchema = z.object({
@@ -68,26 +133,142 @@ export type CreateWebApiClientOptions = {
 export interface WebApiClient {
   createContract(payload: ReportContractRecord): Promise<ReportContractRecord>;
   listContracts(): Promise<ReportContractRecord[]>;
+  approveContract(contractId: string): Promise<ReportContractRecord>;
+  lockContract(contractId: string): Promise<ReportContractRecord>;
+  prepareContract(contractId: string): Promise<{
+    contract_id: string;
+    planner_summary?: string;
+    prepared_payloads: PreparedPayloadRecord[];
+    token_usage?: TokenUsageRecord;
+  }>;
   runContract(contractId: string): Promise<{
     run_id: string;
     exec_brief: ExecBriefRecord;
     exec_brief_html?: string;
     planner_summary?: string;
+    concise_summary?: string;
+    prepared_payloads?: PreparedPayloadRecord[];
+    token_usage?: TokenUsageRecord;
     pdf_path?: string;
   }>;
   downloadRunPdf(runId: string): Promise<Response>;
+  askRunQuestion(runId: string, question: string): Promise<{
+    answer: string;
+    citations: string[];
+    grounded: boolean;
+  }>;
+  saveRun(runId: string): Promise<{
+    run_id: string;
+    contract_id: string;
+    saved: boolean;
+    logged_at: string;
+  }>;
+  scheduleContract(
+    contractId: string,
+    payload: {
+      frequency: "weekly" | "monthly" | "quarterly";
+      timezone?: string;
+      day_of_week?: number;
+      day_of_month?: number;
+      hour_utc?: number;
+      minute_utc?: number;
+    }
+  ): Promise<{
+    contract_id: string;
+    frequency: "weekly" | "monthly" | "quarterly";
+    timezone: string;
+    schedule_cron: string;
+  }>;
   getConnectionContext(): Promise<ConnectionContextRecord>;
   runSafeQuery(sql: string, limit?: number): Promise<SafeQueryResponseRecord>;
   getCatalog(): Promise<DataCatalogRecord>;
   getTableHealth(): Promise<RelationHealthRecord[]>;
 }
 
+const TokenUsageSchema = z.object({
+  input_tokens: z.number().int().min(0),
+  output_tokens: z.number().int().min(0),
+  total_tokens: z.number().int().min(0),
+  by_agent: z.record(
+    z.string(),
+    z.object({
+      input_tokens: z.number().int().min(0),
+      output_tokens: z.number().int().min(0),
+      total_tokens: z.number().int().min(0)
+    })
+  )
+});
+
+const PreparedPayloadSchema = z.object({
+  question_id: z.string().min(1),
+  question_number: z.number().int().min(1).optional(),
+  question: z.string().min(1),
+  purpose: z.string().min(1),
+  group_id: z.string().optional(),
+  source_query_count: z.number().int().min(1).optional(),
+  row_count_before_reduction: z.number().int().min(0),
+  prepared_row_count: z.number().int().min(0),
+  validation: z
+    .object({
+      expected_months: z.number().int().min(1).nullable().optional(),
+      observed_months: z.number().int().min(0),
+      missing_months: z.array(z.string()).default([]),
+      monthly_row_counts: z
+        .array(
+          z.object({
+            month: z.string(),
+            row_count: z.number().int().min(0)
+          })
+        )
+        .default([]),
+      metric_column: z.string().nullable().optional(),
+      monthly_metric_totals: z
+        .array(
+          z.object({
+            month: z.string(),
+            total: z.number()
+          })
+        )
+        .default([])
+    })
+    .optional(),
+  preparation_notes: z.array(z.string()).default([]),
+  warnings: z.array(z.string()).default([])
+});
+
+type TokenUsageRecord = z.output<typeof TokenUsageSchema>;
+type PreparedPayloadRecord = z.output<typeof PreparedPayloadSchema>;
+
 const RunContractResponseSchema = z.object({
   run_id: z.string().min(1),
   exec_brief: ExecBriefSchema,
   exec_brief_html: z.string().optional(),
   planner_summary: z.string().optional(),
+  concise_summary: z.string().optional(),
+  prepared_payloads: z.array(PreparedPayloadSchema).optional(),
+  token_usage: TokenUsageSchema.optional(),
   pdf_path: z.string().min(1).optional()
+});
+
+const PrepareContractResponseSchema = z.object({
+  contract_id: z.string().min(1),
+  planner_summary: z.string().optional(),
+  prepared_payloads: z.array(PreparedPayloadSchema).default([]),
+  token_usage: TokenUsageSchema.optional()
+});
+
+const SaveRunResponseSchema = z.object({
+  run_id: z.string().min(1),
+  contract_id: z.string().min(1),
+  saved: z.boolean(),
+  logged_at: z.string().min(1)
+});
+
+const ScheduleContractResponseSchema = z.object({
+  contract_id: z.string().min(1),
+  frequency: z.enum(["weekly", "monthly", "quarterly"]),
+  timezone: z.string().min(1),
+  schedule_cron: z.string().min(1)
 });
 
 const ConnectionContextSchema = z.object({
@@ -184,10 +365,23 @@ export function createInitialChatState(): ChatState {
     last_query_id: null,
     last_exec_brief: null,
     conversation_history: [],
+    prep_pending: false,
+    prep_complete: false,
     scope_pending: false,
     pending_query_sql: null,
     pending_query_limit: null,
-    planner_summary: null
+    planner_summary: null,
+    preparation_summary: null,
+    prepared_payloads: [],
+    awaiting_pdf_confirmation: false,
+    awaiting_save_confirmation: false,
+    awaiting_schedule_confirmation: false,
+    awaiting_schedule_mode_selection: false,
+    schedule_mode_pending: null,
+    schedule_day_kind: null,
+    awaiting_custom_day_input: false,
+    last_concise_summary: null,
+    last_token_usage: null
   };
 }
 
@@ -211,10 +405,23 @@ export function parseChatState(value: unknown): ChatState {
     last_query_id: parsed.data.last_query_id ?? null,
     last_exec_brief: parsed.data.last_exec_brief,
     conversation_history: [...parsed.data.conversation_history],
+    prep_pending: parsed.data.prep_pending ?? false,
+    prep_complete: parsed.data.prep_complete ?? false,
     scope_pending: parsed.data.scope_pending ?? false,
     pending_query_sql: parsed.data.pending_query_sql ?? null,
     pending_query_limit: parsed.data.pending_query_limit ?? null,
-    planner_summary: parsed.data.planner_summary ?? null
+    planner_summary: parsed.data.planner_summary ?? null,
+    preparation_summary: parsed.data.preparation_summary ?? null,
+    prepared_payloads: [...parsed.data.prepared_payloads],
+    awaiting_pdf_confirmation: parsed.data.awaiting_pdf_confirmation ?? false,
+    awaiting_save_confirmation: parsed.data.awaiting_save_confirmation ?? false,
+    awaiting_schedule_confirmation: parsed.data.awaiting_schedule_confirmation ?? false,
+    awaiting_schedule_mode_selection: parsed.data.awaiting_schedule_mode_selection ?? false,
+    schedule_mode_pending: parsed.data.schedule_mode_pending ?? null,
+    schedule_day_kind: parsed.data.schedule_day_kind ?? null,
+    awaiting_custom_day_input: parsed.data.awaiting_custom_day_input ?? false,
+    last_concise_summary: parsed.data.last_concise_summary ?? null,
+    last_token_usage: parsed.data.last_token_usage ?? null
   };
 }
 
@@ -311,7 +518,7 @@ export function applyLlmDraftUpdates(state: ChatState, updates: DraftUpdates): C
   }
 
   if (changed) {
-    next.contract_id = null;
+    resetPreparedState(next);
   }
 
   return next;
@@ -443,6 +650,33 @@ export function createWebApiClient(options: CreateWebApiClientOptions): WebApiCl
 
       return parseJsonResponse(response, z.array(ReportContractSchema));
     },
+    async approveContract(contractId) {
+      const response = await fetcher(`${baseUrl}/report-contracts/${encodeURIComponent(contractId)}/approve`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: "{}"
+      });
+
+      return parseJsonResponse(response, ReportContractSchema);
+    },
+    async lockContract(contractId) {
+      const response = await fetcher(`${baseUrl}/report-contracts/${encodeURIComponent(contractId)}/lock`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: "{}"
+      });
+
+      return parseJsonResponse(response, ReportContractSchema);
+    },
+    async prepareContract(contractId) {
+      const response = await fetcher(`${baseUrl}/report-contracts/${encodeURIComponent(contractId)}/prepare`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: "{}"
+      });
+
+      return parseJsonResponse(response, PrepareContractResponseSchema);
+    },
     async runContract(contractId) {
       const response = await fetcher(`${baseUrl}/report-contracts/${encodeURIComponent(contractId)}/run`, {
         method: "POST",
@@ -463,6 +697,37 @@ export function createWebApiClient(options: CreateWebApiClientOptions): WebApiCl
       }
 
       return response;
+    },
+    async askRunQuestion(runId, question) {
+      const response = await fetcher(`${baseUrl}/report-runs/${encodeURIComponent(runId)}/qa`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ question })
+      });
+
+      return parseJsonResponse(response, z.object({
+        answer: z.string().min(1),
+        citations: z.array(z.string()).default([]),
+        grounded: z.boolean().default(false)
+      }));
+    },
+    async saveRun(runId) {
+      const response = await fetcher(`${baseUrl}/report-runs/${encodeURIComponent(runId)}/save`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: "{}"
+      });
+
+      return parseJsonResponse(response, SaveRunResponseSchema);
+    },
+    async scheduleContract(contractId, payload) {
+      const response = await fetcher(`${baseUrl}/report-contracts/${encodeURIComponent(contractId)}/schedule`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify(payload)
+      });
+
+      return parseJsonResponse(response, ScheduleContractResponseSchema);
     },
     async getConnectionContext() {
       const response = await fetcher(`${baseUrl}/connections/active`, {
@@ -544,7 +809,226 @@ export async function handleChatTurn(input: {
     };
   }
 
-  // --- Analysis scope confirmation gate ---
+  // --- PDF confirmation gate ---
+
+  if (nextState.awaiting_pdf_confirmation) {
+    if (isPdfGenerateYesChoice(command)) {
+      nextState.awaiting_pdf_confirmation = false;
+      if (!nextState.last_run_id) {
+        return {
+          assistant_message: "No run is available for PDF generation yet.",
+          state: nextState
+        };
+      }
+      nextState.awaiting_save_confirmation = true;
+      return {
+        assistant_message: `PDF is ready for run ${nextState.last_run_id}.\nWould you like to save this run to report logs?`,
+        state: nextState,
+        pdf_download_url: `/api/runs/${nextState.last_run_id}/pdf`
+      };
+    }
+
+    if (isPdfGenerateNoChoice(command)) {
+      nextState.awaiting_pdf_confirmation = false;
+      return {
+        assistant_message: "Okay, PDF generation skipped for now. You can ask follow-up questions from this run payload.",
+        state: nextState
+      };
+    }
+
+    if (nextState.last_run_id && looksLikePayloadQaQuestion(rawMessage)) {
+      return executePayloadQa(nextState, rawMessage, input.api_client);
+    }
+
+    return {
+      assistant_message: 'Please choose one option first: "Generate report PDF" or "Not yet".',
+      state: nextState
+    };
+  }
+
+  // --- Save report confirmation gate ---
+
+  if (nextState.awaiting_save_confirmation) {
+    if (isSaveReportYesChoice(command)) {
+      if (!nextState.last_run_id) {
+        nextState.awaiting_save_confirmation = false;
+        return {
+          assistant_message: "No run is available to save.",
+          state: nextState
+        };
+      }
+
+      await input.api_client.saveRun(nextState.last_run_id);
+      nextState.awaiting_save_confirmation = false;
+      nextState.awaiting_schedule_confirmation = true;
+      return {
+        assistant_message: "Saved to report logs.\nWould you like help scheduling this report for future runs?",
+        state: nextState
+      };
+    }
+
+    if (isSaveReportNoChoice(command)) {
+      nextState.awaiting_save_confirmation = false;
+      nextState.awaiting_schedule_confirmation = true;
+      return {
+        assistant_message: "Okay, skipped saving.\nWould you like help scheduling this report for future runs?",
+        state: nextState
+      };
+    }
+
+    if (nextState.last_run_id && looksLikePayloadQaQuestion(rawMessage)) {
+      return executePayloadQa(nextState, rawMessage, input.api_client);
+    }
+
+    return {
+      assistant_message: 'Please choose one option first: "Save report log" or "Skip save".',
+      state: nextState
+    };
+  }
+
+  // --- Schedule confirmation gate ---
+
+  if (nextState.awaiting_schedule_confirmation) {
+    if (isScheduleSetupYesChoice(command)) {
+      nextState.awaiting_schedule_confirmation = false;
+      nextState.awaiting_schedule_mode_selection = true;
+      return {
+        assistant_message: "Great. Choose a schedule cadence: weekly, monthly, or quarterly.",
+        state: nextState
+      };
+    }
+
+    if (isScheduleSetupNoChoice(command)) {
+      nextState.awaiting_schedule_confirmation = false;
+      return {
+        assistant_message: "No problem. Scheduling skipped for now.",
+        state: nextState
+      };
+    }
+
+    return {
+      assistant_message: 'Please choose one option first: "Schedule report" or "Not now".',
+      state: nextState
+    };
+  }
+
+  // --- Schedule mode selection gate ---
+
+  if (nextState.awaiting_schedule_mode_selection) {
+    if (isScheduleModeWeeklyChoice(command)) {
+      nextState.awaiting_schedule_mode_selection = false;
+      nextState.schedule_mode_pending = "weekly";
+      nextState.schedule_day_kind = "weekday";
+      return {
+        assistant_message: "Choose the weekday to run this weekly schedule (UTC).",
+        state: nextState
+      };
+    }
+
+    if (isScheduleModeMonthlyChoice(command)) {
+      nextState.awaiting_schedule_mode_selection = false;
+      nextState.schedule_mode_pending = "monthly";
+      nextState.schedule_day_kind = "monthday";
+      return {
+        assistant_message: "Choose day 1, 15, 28, or type a custom day number (1-28).",
+        state: nextState
+      };
+    }
+
+    if (isScheduleModeQuarterlyChoice(command)) {
+      nextState.awaiting_schedule_mode_selection = false;
+      nextState.schedule_mode_pending = "quarterly";
+      nextState.schedule_day_kind = "monthday";
+      return {
+        assistant_message: "Choose day 1, 15, 28, or type a custom day number (1-28) for quarterly runs.",
+        state: nextState
+      };
+    }
+
+    return {
+      assistant_message: 'Please choose one option first: "Weekly", "Monthly", or "Quarterly".',
+      state: nextState
+    };
+  }
+
+  // --- Schedule day selection gate ---
+
+  if (nextState.schedule_mode_pending && nextState.schedule_day_kind === "weekday") {
+    const weekday = parseWeekdayChoice(command);
+    if (weekday === null) {
+      return {
+        assistant_message: "Choose a weekday button first (Mon-Sun).",
+        state: nextState
+      };
+    }
+
+    return executeSchedule(nextState, input.api_client, {
+      frequency: "weekly",
+      day_of_week: weekday
+    });
+  }
+
+  if (nextState.schedule_mode_pending && nextState.schedule_day_kind === "monthday") {
+    if (isScheduleCustomDayChoice(command)) {
+      nextState.awaiting_custom_day_input = true;
+      nextState.schedule_day_kind = null;
+      return {
+        assistant_message: "Type a day of month between 1 and 28.",
+        state: nextState
+      };
+    }
+
+    const dayFromButton = parseMonthDayChoice(command);
+    if (dayFromButton !== null) {
+      return executeSchedule(nextState, input.api_client, {
+        frequency: nextState.schedule_mode_pending,
+        day_of_month: dayFromButton
+      });
+    }
+
+    return {
+      assistant_message: "Choose day 1, 15, 28, or type a custom day number (1-28).",
+      state: nextState
+    };
+  }
+
+  if (nextState.schedule_mode_pending && nextState.awaiting_custom_day_input) {
+    const customDay = parseCustomMonthDay(rawMessage);
+    if (customDay === null) {
+      return {
+        assistant_message: "Please type a valid day number from 1 to 28.",
+        state: nextState
+      };
+    }
+
+    return executeSchedule(nextState, input.api_client, {
+      frequency: nextState.schedule_mode_pending,
+      day_of_month: customDay
+    });
+  }
+
+  // --- Data preparation gate ---
+
+  if (nextState.prep_pending) {
+    if (isRunPreparationChoice(command)) {
+      return executePreparation(nextState, input.api_client);
+    }
+
+    if (isScopeContinueChoice(command)) {
+      nextState.prep_pending = false;
+      return {
+        assistant_message: "Sounds good. Continue scoping and tell me what to refine before we prepare data.",
+        state: nextState
+      };
+    }
+
+    return {
+      assistant_message: 'Please choose one option first: "Run Data Preparation" or "Continue scoping".',
+      state: nextState
+    };
+  }
+
+  // --- Analysis confirmation gate ---
 
   if (nextState.scope_pending) {
     if (isScopeRunChoice(command)) {
@@ -568,12 +1052,35 @@ export async function handleChatTurn(input: {
 
   // --- Explicit actions ---
 
+  if (/^__ui_run_data_preparation__$/.test(command)) {
+    if (nextState.prep_pending) {
+      return executePreparation(nextState, input.api_client);
+    }
+
+    if (nextState.prep_complete) {
+      return buildAnalysisConfirmation(nextState);
+    }
+
+    return maybePrepareOrRun(nextState, input.api_client);
+  }
+
+  if (/^__ui_finish_scoping_run_analysis__$/.test(command)) {
+    if (nextState.prep_complete) {
+      return executeRun(nextState, input.api_client);
+    }
+
+    return {
+      assistant_message: 'Run Data Preparation first so analysis uses validated payloads.',
+      state: nextState
+    };
+  }
+
   if (command === "save") {
     return executeSave(nextState, input.api_client);
   }
 
-  if (command === "run") {
-    return maybeScopeConfirmOrRun(nextState, input.api_client);
+  if (command === "run" || command === "run analysis" || command === "prepare") {
+    return maybePrepareOrRun(nextState, input.api_client);
   }
 
   if (command === "preview" || command === "/preview") {
@@ -587,10 +1094,10 @@ export async function handleChatTurn(input: {
     if (!nextState.last_run_id) {
       return { assistant_message: "No report has been run yet.", state: nextState };
     }
+    nextState.awaiting_pdf_confirmation = true;
     return {
-      assistant_message: `PDF available for run ${nextState.last_run_id}.`,
-      state: nextState,
-      pdf_download_url: `/api/runs/${nextState.last_run_id}/pdf`
+      assistant_message: 'Ready to generate the customer-facing PDF. Choose "Generate report PDF" or "Not yet".',
+      state: nextState
     };
   }
 
@@ -631,7 +1138,7 @@ export async function handleChatTurn(input: {
   const insightMode = detectInsightMode(command);
   if (insightMode) {
     nextState.draft.insight_mode = insightMode;
-    nextState.contract_id = null;
+    resetPreparedState(nextState);
     const label = insightMode === "data" ? "Data Quality" : "Business Insights";
     return {
       assistant_message: `Insight mode set to **${label}**. ${insightMode === "data" ? "I'll focus on data quality, completeness, anomalies, and issues you can fix." : "I'll focus on business trends, opportunities, risks, and actionable recommendations — treating your data as trustworthy."}`,
@@ -668,6 +1175,10 @@ export async function handleChatTurn(input: {
     };
   }
 
+  if (nextState.last_run_id && looksLikePayloadQaQuestion(rawMessage)) {
+    return executePayloadQa(nextState, rawMessage, input.api_client);
+  }
+
   // --- Simple intent inference ---
 
   const inferred = inferSimpleIntent(rawMessage, nextState);
@@ -676,7 +1187,7 @@ export async function handleChatTurn(input: {
   // --- Conversational action mentions (e.g. "let's run it") ---
 
   const action = detectConversationalAction(command);
-  if (action === "run") return maybeScopeConfirmOrRun(nextState, input.api_client);
+  if (action === "run") return maybePrepareOrRun(nextState, input.api_client);
   if (action === "save") return executeSave(nextState, input.api_client);
   if (action === "list") {
     const contracts = await input.api_client.listContracts();
@@ -764,19 +1275,17 @@ async function executePendingQuery(state: ChatState, apiClient: WebApiClient): P
   }
 }
 
-async function maybeScopeConfirmOrRun(state: ChatState, apiClient: WebApiClient): Promise<ChatTurnResponse> {
-  if (state.scope_pending) {
+async function maybePrepareOrRun(state: ChatState, apiClient: WebApiClient): Promise<ChatTurnResponse> {
+  if (state.prep_complete) {
     // Already confirmed scope in a previous turn — run now
-    const nextState = parseChatState(state);
-    nextState.scope_pending = false;
-    return executeRun(nextState, apiClient);
+    return buildAnalysisConfirmation(state);
   }
 
   // Show scope confirmation first
-  return buildScopeConfirmation(state, apiClient);
+  return buildPreparationConfirmation(state, apiClient);
 }
 
-async function buildScopeConfirmation(state: ChatState, apiClient: WebApiClient): Promise<ChatTurnResponse> {
+async function buildPreparationConfirmation(state: ChatState, apiClient: WebApiClient): Promise<ChatTurnResponse> {
   const missing = getMissingDraftFields(state);
   if (missing.length > 0) {
     return { assistant_message: `Cannot run yet: ${missing.join(", ")}.`, state };
@@ -792,11 +1301,12 @@ async function buildScopeConfirmation(state: ChatState, apiClient: WebApiClient)
   }
 
   const nextState = parseChatState(state);
-  nextState.scope_pending = true;
+  nextState.prep_pending = true;
+  nextState.scope_pending = false;
 
   const draft = nextState.draft;
   const tables = draft.allowed_relations.length > 0 ? draft.allowed_relations.join(", ") : "default tables";
-  const metrics = draft.metric_ids.length > 0 ? draft.metric_ids.map(m => m.replace(/^metric_/, "")).join(", ") : "all available";
+  const metrics = draft.metric_ids.length > 0 ? draft.metric_ids.map((m) => m.replace(/^metric_/, "")).join(", ") : "all available";
   const dimensions = draft.dimension_ids.length > 0 ? draft.dimension_ids.join(", ") : "none specified";
   const modeLabel = draft.insight_mode === "data" ? "Data Quality" : "Business Insights";
 
@@ -826,7 +1336,7 @@ async function buildScopeConfirmation(state: ChatState, apiClient: WebApiClient)
     : [];
 
   const scopeMessage = [
-    `Ready to run: "${reportName}"`,
+    `Ready to prepare data for: "${reportName}"`,
     "",
     "Scope summary:",
     `- Tables: ${tables}`,
@@ -836,11 +1346,30 @@ async function buildScopeConfirmation(state: ChatState, apiClient: WebApiClient)
     `- Timeline: ${timelineHint}`,
     ...verificationLines,
     "",
-    'Choose "Finish scoping and run analysis" to execute now, or "Continue scoping" to keep refining.'
+    'Choose "Run Data Preparation" to build payloads, or "Continue scoping" to keep refining.'
   ].join("\n");
 
   return {
     assistant_message: scopeMessage,
+    state: nextState
+  };
+}
+
+function buildAnalysisConfirmation(state: ChatState): ChatTurnResponse {
+  const nextState = parseChatState(state);
+  nextState.scope_pending = true;
+  nextState.prep_pending = false;
+
+  const payloadCount = nextState.prepared_payloads.length;
+  const payloadLine = payloadCount > 0
+    ? `Prepared payloads: ${payloadCount} question${payloadCount === 1 ? "" : "s"}.`
+    : "Prepared payloads are ready.";
+
+  return {
+    assistant_message: [
+      payloadLine,
+      'Choose "Finish scoping and run analysis" to execute now, or "Continue scoping" to keep refining.'
+    ].join("\n"),
     state: nextState
   };
 }
@@ -874,13 +1403,180 @@ function isScopeContinueChoice(command: string): boolean {
   );
 }
 
+function isRunPreparationChoice(command: string): boolean {
+  return (
+    /^__ui_run_data_preparation__$/.test(command) ||
+    /^(run data preparation|prepare data|run preparation)\b/.test(command)
+  );
+}
+
+function isPdfGenerateYesChoice(command: string): boolean {
+  return (
+    /^__ui_generate_pdf_yes__$/.test(command) ||
+    /^(yes|generate pdf|create pdf|download pdf)\b/.test(command)
+  );
+}
+
+function isPdfGenerateNoChoice(command: string): boolean {
+  return (
+    /^__ui_generate_pdf_no__$/.test(command) ||
+    /^(not yet|no|skip pdf|later)\b/.test(command)
+  );
+}
+
+function isSaveReportYesChoice(command: string): boolean {
+  return (
+    /^__ui_save_report_yes__$/.test(command) ||
+    /^(save report|save log|yes save)\b/.test(command)
+  );
+}
+
+function isSaveReportNoChoice(command: string): boolean {
+  return (
+    /^__ui_save_report_no__$/.test(command) ||
+    /^(skip save|dont save|don't save|no save)\b/.test(command)
+  );
+}
+
+function isScheduleSetupYesChoice(command: string): boolean {
+  return (
+    /^__ui_schedule_setup_yes__$/.test(command) ||
+    /^(schedule report|yes schedule|set schedule)\b/.test(command)
+  );
+}
+
+function isScheduleSetupNoChoice(command: string): boolean {
+  return (
+    /^__ui_schedule_setup_no__$/.test(command) ||
+    /^(not now|skip schedule|no schedule)\b/.test(command)
+  );
+}
+
+function isScheduleModeWeeklyChoice(command: string): boolean {
+  return /^__ui_schedule_mode_weekly__$/.test(command) || /^(weekly)\b/.test(command);
+}
+
+function isScheduleModeMonthlyChoice(command: string): boolean {
+  return /^__ui_schedule_mode_monthly__$/.test(command) || /^(monthly)\b/.test(command);
+}
+
+function isScheduleModeQuarterlyChoice(command: string): boolean {
+  return /^__ui_schedule_mode_quarterly__$/.test(command) || /^(quarterly)\b/.test(command);
+}
+
+function isScheduleCustomDayChoice(command: string): boolean {
+  return /^__ui_schedule_day_custom__$/.test(command) || /custom day/.test(command);
+}
+
+function parseMonthDayChoice(command: string): number | null {
+  if (/^__ui_schedule_day_1__$/.test(command)) return 1;
+  if (/^__ui_schedule_day_15__$/.test(command)) return 15;
+  if (/^__ui_schedule_day_28__$/.test(command)) return 28;
+  return null;
+}
+
+function parseCustomMonthDay(rawMessage: string): number | null {
+  const match = rawMessage.match(/\b([1-9]|1\d|2[0-8])\b/);
+  if (!match) {
+    return null;
+  }
+  const value = Number.parseInt(match[1], 10);
+  if (Number.isNaN(value) || value < 1 || value > 28) {
+    return null;
+  }
+  return value;
+}
+
+function parseWeekdayChoice(command: string): number | null {
+  const normalized = command.trim().toLowerCase();
+  if (/^__ui_schedule_weekday_mon__$/.test(normalized) || /\bmonday\b/.test(normalized)) return 1;
+  if (/^__ui_schedule_weekday_tue__$/.test(normalized) || /\btuesday\b/.test(normalized)) return 2;
+  if (/^__ui_schedule_weekday_wed__$/.test(normalized) || /\bwednesday\b/.test(normalized)) return 3;
+  if (/^__ui_schedule_weekday_thu__$/.test(normalized) || /\bthursday\b/.test(normalized)) return 4;
+  if (/^__ui_schedule_weekday_fri__$/.test(normalized) || /\bfriday\b/.test(normalized)) return 5;
+  if (/^__ui_schedule_weekday_sat__$/.test(normalized) || /\bsaturday\b/.test(normalized)) return 6;
+  if (/^__ui_schedule_weekday_sun__$/.test(normalized) || /\bsunday\b/.test(normalized)) return 0;
+  return null;
+}
+
+async function executePreparation(state: ChatState, apiClient: WebApiClient): Promise<ChatTurnResponse> {
+  const missing = getMissingDraftFields(state);
+  if (missing.length > 0) {
+    return { assistant_message: `Cannot prepare data yet: ${missing.join(", ")}.`, state };
+  }
+
+  const nextState = parseChatState(state);
+  nextState.prep_pending = false;
+
+  if (!nextState.contract_id) {
+    const contract = buildContractPayload(nextState);
+    const created = await apiClient.createContract(contract);
+    nextState.contract_id = created.id;
+  }
+
+  const prepared = await apiClient.prepareContract(nextState.contract_id!);
+  nextState.prep_complete = true;
+  nextState.scope_pending = true;
+  nextState.prepared_payloads = prepared.prepared_payloads;
+  nextState.preparation_summary = prepared.planner_summary ?? null;
+  if (prepared.token_usage) {
+    nextState.last_token_usage = prepared.token_usage;
+  }
+
+  const payloadLines = prepared.prepared_payloads
+    .slice(0, 6)
+    .map((payload) => formatPreparedPayloadSummary(payload));
+
+  return {
+    assistant_message: [
+      "Data preparation completed with validation checks and correction trace.",
+      payloadLines.length > 0 ? payloadLines.join("\n\n") : "- No prepared payloads.",
+      "",
+      'Choose "Finish scoping and run analysis" to execute now, or "Continue scoping" to keep refining.'
+    ].join("\n"),
+    state: nextState
+  };
+}
+
+async function executePayloadQa(
+  state: ChatState,
+  question: string,
+  apiClient: WebApiClient
+): Promise<ChatTurnResponse> {
+  const nextState = parseChatState(state);
+  if (!nextState.last_run_id) {
+    return {
+      assistant_message: "No completed run found yet. Run analysis first.",
+      state: nextState
+    };
+  }
+
+  const response = await apiClient.askRunQuestion(nextState.last_run_id, question);
+  const citationLine = response.citations.length > 0
+    ? `\nReferences: ${response.citations.join(", ")}`
+    : "";
+
+  return {
+    assistant_message: `${response.answer}${citationLine}`,
+    state: nextState
+  };
+}
+
 async function executeRun(state: ChatState, apiClient: WebApiClient): Promise<ChatTurnResponse> {
   const missing = getMissingDraftFields(state);
   if (missing.length > 0) {
     return { assistant_message: `Cannot run yet: ${missing.join(", ")}.`, state };
   }
 
+  if (!state.prep_complete) {
+    return {
+      assistant_message: 'Run Data Preparation first so analysis uses validated payloads.',
+      state
+    };
+  }
+
   const nextState = parseChatState(state);
+  nextState.prep_pending = false;
   nextState.scope_pending = false;
   nextState.pending_query_sql = null;
   nextState.pending_query_limit = null;
@@ -895,6 +1591,12 @@ async function executeRun(state: ChatState, apiClient: WebApiClient): Promise<Ch
   nextState.last_run_id = run.run_id;
   nextState.last_exec_brief = run.exec_brief;
   nextState.planner_summary = run.planner_summary ?? null;
+  nextState.last_concise_summary = run.concise_summary ?? null;
+  nextState.prepared_payloads = run.prepared_payloads ?? nextState.prepared_payloads;
+  nextState.awaiting_pdf_confirmation = true;
+  if (run.token_usage) {
+    nextState.last_token_usage = run.token_usage;
+  }
 
   const brief = run.exec_brief;
   const briefLines: string[] = [];
@@ -908,16 +1610,195 @@ async function executeRun(state: ChatState, apiClient: WebApiClient): Promise<Ch
     `What changed: ${brief.what_changed.join("; ") || "nothing notable"}`,
     `Why: ${brief.why.join("; ") || "unknown"}`,
     `So what: ${brief.so_what.join("; ") || "no impact noted"}`,
-    `Recommended: ${brief.what_to_do.join("; ") || "no action needed"}`,
-    `Confidence: ${(brief.confidence.score * 100).toFixed(0)}%`
+    `Recommended: ${brief.what_to_do.join("; ") || "no action needed"}`
   );
 
+  const tokenUsageLine = run.token_usage
+    ? `Tokens used - input: ${run.token_usage.input_tokens}, output: ${run.token_usage.output_tokens}, total: ${run.token_usage.total_tokens}.`
+    : "";
+
   return {
-    assistant_message: `Report executed. Run ID: ${run.run_id}.\n${briefLines.join("\n")}\nPDF available.`,
+    assistant_message: [
+      `Report executed. Run ID: ${run.run_id}.`,
+      run.concise_summary ?? "",
+      briefLines.join("\n"),
+      tokenUsageLine,
+      'Choose "Generate report PDF" or "Not yet".'
+    ].filter((line) => line.length > 0).join("\n\n"),
     state: nextState,
-    pdf_download_url: `/api/runs/${run.run_id}/pdf`,
     exec_brief_html: run.exec_brief_html
   };
+}
+
+async function executeSchedule(
+  state: ChatState,
+  apiClient: WebApiClient,
+  payload: {
+    frequency: "weekly" | "monthly" | "quarterly";
+    day_of_week?: number;
+    day_of_month?: number;
+  }
+): Promise<ChatTurnResponse> {
+  const nextState = parseChatState(state);
+
+  if (!nextState.contract_id) {
+    const contract = buildContractPayload(nextState);
+    const created = await apiClient.createContract(contract);
+    nextState.contract_id = created.id;
+  }
+
+  try {
+    await apiClient.approveContract(nextState.contract_id!);
+    await apiClient.lockContract(nextState.contract_id!);
+
+    const scheduled = await apiClient.scheduleContract(nextState.contract_id!, {
+      frequency: payload.frequency,
+      day_of_week: payload.day_of_week,
+      day_of_month: payload.day_of_month,
+      timezone: nextState.draft.timezone
+    });
+
+    nextState.draft.timezone = scheduled.timezone;
+    nextState.draft.schedule_cron = scheduled.schedule_cron;
+    nextState.awaiting_schedule_confirmation = false;
+    nextState.awaiting_schedule_mode_selection = false;
+    nextState.schedule_mode_pending = null;
+    nextState.schedule_day_kind = null;
+    nextState.awaiting_custom_day_input = false;
+
+    return {
+      assistant_message: `Scheduled ${scheduled.frequency} runs in ${scheduled.timezone} (cron: \`${scheduled.schedule_cron}\`).`,
+      state: nextState
+    };
+  } catch (error) {
+    const message = error instanceof Error ? error.message : "Failed to schedule report.";
+    return {
+      assistant_message: `Could not create schedule: ${message}`,
+      state: nextState
+    };
+  }
+}
+
+function formatPreparedPayloadSummary(payload: PreparedPayloadRecord): string {
+  const label = payload.question_number ? `Q${payload.question_number}` : "Question";
+  const lines: string[] = [
+    `- ${label}: ${payload.question}`,
+    `  Rows: ${payload.row_count_before_reduction} raw -> ${payload.prepared_row_count} prepared`
+  ];
+
+  if (payload.source_query_count && payload.source_query_count > 1) {
+    lines.push(`  Sources merged: ${payload.source_query_count} queries${payload.group_id ? ` (group: ${payload.group_id})` : ""}`);
+  }
+
+  const qualitySummary = summarizeQueryQuality(payload.preparation_notes);
+  if (qualitySummary) {
+    lines.push(`  Query quality: ${qualitySummary}`);
+  }
+
+  const autoCorrections = collectAutoCorrections(payload.preparation_notes, payload.warnings);
+  if (autoCorrections.length > 0) {
+    lines.push(`  Auto-corrections: ${autoCorrections.join(" | ")}`);
+  }
+
+  const unresolvedWarnings = collectUnresolvedWarnings(payload.warnings);
+  if (unresolvedWarnings.length > 0) {
+    lines.push(`  Remaining hiccups: ${unresolvedWarnings.join(" | ")}`);
+  } else {
+    lines.push("  Remaining hiccups: none");
+  }
+
+  if (payload.validation) {
+    const expectedMonths = payload.validation.expected_months ?? null;
+    if (expectedMonths) {
+      const coveragePct = expectedMonths > 0
+        ? Math.round((payload.validation.observed_months / expectedMonths) * 100)
+        : 0;
+      const status = payload.validation.missing_months.length === 0 && payload.validation.observed_months >= expectedMonths
+        ? "PASS"
+        : "GAP";
+      const missing = payload.validation.missing_months.length > 0
+        ? ` | missing: ${payload.validation.missing_months.join(", ")}`
+        : "";
+      lines.push(
+        `  Validation timeline: ${status} (${payload.validation.observed_months}/${expectedMonths} months, ${coveragePct}%)${missing}`
+      );
+    } else if (payload.validation.observed_months > 0) {
+      lines.push(`  Validation timeline: ${payload.validation.observed_months} month(s) detected`);
+    } else {
+      lines.push("  Validation timeline: no valid month keys detected");
+    }
+
+    if (payload.validation.monthly_row_counts.length > 0) {
+      const monthlyRows = payload.validation.monthly_row_counts
+        .slice(-6)
+        .map((entry) => `${entry.month}=${entry.row_count}`)
+        .join(", ");
+      const coveredMonths = payload.validation.monthly_row_counts.filter((entry) => entry.row_count > 0).length;
+      lines.push(
+        `  Validation monthly rows: ${monthlyRows} (non-zero months: ${coveredMonths}/${payload.validation.monthly_row_counts.length})`
+      );
+    }
+
+    if (payload.validation.metric_column && payload.validation.monthly_metric_totals.length > 0) {
+      const monthly = payload.validation.monthly_metric_totals
+        .slice(-6)
+        .map((entry) => `${entry.month}=${entry.total}`)
+        .join(", ");
+      lines.push(`  MoM ${payload.validation.metric_column}: ${monthly}`);
+    }
+  }
+
+  return lines.join("\n");
+}
+
+function summarizeQueryQuality(preparationNotes: string[]): string | null {
+  const scores = preparationNotes
+    .map((note) => {
+      const match = note.match(/Source query\s+(\d+).*quality score:\s*(\d+)\/100/i);
+      if (!match) {
+        return null;
+      }
+      return `Q${match[1]}=${match[2]}/100`;
+    })
+    .filter((entry): entry is string => entry !== null);
+
+  if (scores.length === 0) {
+    return null;
+  }
+
+  return scores.join(", ");
+}
+
+function collectAutoCorrections(preparationNotes: string[], warnings: string[]): string[] {
+  const candidates = [...preparationNotes, ...warnings];
+  const patterns = [
+    /auto-repaired/i,
+    /fallback candidate/i,
+    /applied .*reduction/i,
+    /re-prepared dataset/i,
+    /enforce requested month-over-month comparison coverage/i
+  ];
+
+  const corrections = candidates
+    .filter((entry) => patterns.some((pattern) => pattern.test(entry)))
+    .map((entry) => entry.replace(/^Source query \d+:\s*/i, "").trim())
+    .filter((entry) => entry.length > 0);
+
+  return Array.from(new Set(corrections)).slice(0, 4);
+}
+
+function collectUnresolvedWarnings(warnings: string[]): string[] {
+  const resolvedPatterns = [
+    /auto-repaired/i,
+    /fallback candidate/i
+  ];
+
+  const unresolved = warnings
+    .filter((warning) => !resolvedPatterns.some((pattern) => pattern.test(warning)))
+    .map((warning) => warning.replace(/^Source query \d+:\s*/i, "").trim())
+    .filter((warning) => warning.length > 0);
+
+  return Array.from(new Set(unresolved)).slice(0, 4);
 }
 
 // ---------------------------------------------------------------------------
@@ -948,18 +1829,23 @@ function buildStateContext(state: ChatState): string {
 
   if (state.last_exec_brief) {
     const eb = state.last_exec_brief;
-    parts.push(
-      `Last analysis: ${eb.what_changed.join("; ")}. ` +
-      `Confidence: ${(eb.confidence.score * 100).toFixed(0)}%.`
-    );
+    parts.push(`Last analysis: ${eb.what_changed.join("; ")}.`);
   }
 
   if (state.pending_query_sql) {
     parts.push("A query is pending confirmation.");
   }
 
+  if (state.prep_pending) {
+    parts.push("Data preparation is waiting for confirmation.");
+  }
+
   if (state.scope_pending) {
     parts.push("Analysis execution is waiting for scope confirmation.");
+  }
+
+  if (state.awaiting_pdf_confirmation) {
+    parts.push("PDF generation is waiting for confirmation.");
   }
 
   parts.push("No specific action was executed for this message.");
@@ -1041,51 +1927,51 @@ function applySetCommand(state: ChatState, field: string, value: string): { stat
   switch (field) {
     case "name":
       next.draft.name = value;
-      next.contract_id = null;
+      resetPreparedState(next);
       return { state: next, updated: true };
     case "audience":
       next.draft.audience = value;
-      next.contract_id = null;
+      resetPreparedState(next);
       return { state: next, updated: true };
     case "timezone":
       next.draft.timezone = value;
-      next.contract_id = null;
+      resetPreparedState(next);
       return { state: next, updated: true };
     case "schedule":
     case "schedule_cron":
       next.draft.schedule_cron = value.toLowerCase() === "none" ? null : value;
-      next.contract_id = null;
+      resetPreparedState(next);
       return { state: next, updated: true };
     case "sql":
     case "sql_template":
       next.draft.sql_template = value;
-      next.contract_id = null;
+      resetPreparedState(next);
       return { state: next, updated: true };
     case "metrics":
     case "metric_ids":
       next.draft.metric_ids = parseCsv(value);
-      next.contract_id = null;
+      resetPreparedState(next);
       return { state: next, updated: true };
     case "dimensions":
     case "dimension_ids":
       next.draft.dimension_ids = parseCsv(value);
-      next.contract_id = null;
+      resetPreparedState(next);
       return { state: next, updated: true };
     case "relations":
     case "allowed_relations":
       next.draft.allowed_relations = parseCsv(value);
-      next.contract_id = null;
+      resetPreparedState(next);
       return { state: next, updated: true };
     case "schemas":
     case "allowed_schemas":
       next.draft.allowed_schemas = parseCsv(value);
-      next.contract_id = null;
+      resetPreparedState(next);
       return { state: next, updated: true };
     case "insight_mode":
     case "mode":
       if (value === "data" || value === "business") {
         next.draft.insight_mode = value;
-        next.contract_id = null;
+        resetPreparedState(next);
         return { state: next, updated: true };
       }
       return { state: next, updated: false };
@@ -1105,6 +1991,22 @@ function parseCsv(input: string): string[] {
   );
 }
 
+function resetPreparedState(state: ChatState): void {
+  state.contract_id = null;
+  state.prep_pending = false;
+  state.prep_complete = false;
+  state.scope_pending = false;
+  state.preparation_summary = null;
+  state.prepared_payloads = [];
+  state.awaiting_pdf_confirmation = false;
+  state.awaiting_save_confirmation = false;
+  state.awaiting_schedule_confirmation = false;
+  state.awaiting_schedule_mode_selection = false;
+  state.schedule_mode_pending = null;
+  state.schedule_day_kind = null;
+  state.awaiting_custom_day_input = false;
+}
+
 function inferSimpleIntent(message: string, state: ChatState): ChatTurnResponse | null {
   const lowered = message.toLowerCase();
   const nextState = parseChatState(state);
@@ -1114,42 +2016,42 @@ function inferSimpleIntent(message: string, state: ChatState): ChatTurnResponse 
     const guessedName = message.replace(/^(create|new report)\s*/i, "").trim();
     if (guessedName.length > 0) {
       nextState.draft.name = guessedName;
-      nextState.contract_id = null;
+      resetPreparedState(nextState);
       changes.push(`name to "${guessedName}"`);
     }
   }
 
   if (changes.length === 0 && looksLikeReportTitle(lowered)) {
     nextState.draft.name = message.trim();
-    nextState.contract_id = null;
+    resetPreparedState(nextState);
     changes.push(`name to "${message.trim()}"`);
   }
 
   const audience = extractAudience(lowered);
   if (audience && nextState.draft.audience !== audience) {
     nextState.draft.audience = audience;
-    nextState.contract_id = null;
+    resetPreparedState(nextState);
     changes.push(`audience to ${audience}`);
   }
 
   if (lowered.includes("by region") && !nextState.draft.dimension_ids.includes("region")) {
     nextState.draft.dimension_ids = Array.from(new Set([...nextState.draft.dimension_ids, "region"]));
-    nextState.contract_id = null;
+    resetPreparedState(nextState);
     changes.push("added region dimension");
   }
   if (lowered.includes("by channel") && !nextState.draft.dimension_ids.includes("channel")) {
     nextState.draft.dimension_ids = Array.from(new Set([...nextState.draft.dimension_ids, "channel"]));
-    nextState.contract_id = null;
+    resetPreparedState(nextState);
     changes.push("added channel dimension");
   }
 
   if (lowered.includes("weekly") && nextState.draft.schedule_cron !== "0 18 * * 5") {
     nextState.draft.schedule_cron = "0 18 * * 5";
-    nextState.contract_id = null;
+    resetPreparedState(nextState);
     changes.push("schedule to weekly (Fridays at 18:00)");
   } else if (lowered.includes("daily") && nextState.draft.schedule_cron !== "0 9 * * *") {
     nextState.draft.schedule_cron = "0 9 * * *";
-    nextState.contract_id = null;
+    resetPreparedState(nextState);
     changes.push("schedule to daily (09:00)");
   }
 
@@ -1260,6 +2162,23 @@ function asksToUseConnectedTables(command: string): boolean {
   return /\b(use connected tables|sync connected tables|use connected db|use database tables)\b/.test(command);
 }
 
+function looksLikePayloadQaQuestion(message: string): boolean {
+  const trimmed = message.trim().toLowerCase();
+  if (trimmed.length < 4) {
+    return false;
+  }
+  if (parseSetCommand(message) || parseQueryCommand(message)) {
+    return false;
+  }
+  if (detectConversationalAction(trimmed)) {
+    return false;
+  }
+  if (asksForPdf(trimmed) || asksToUseConnectedTables(trimmed)) {
+    return false;
+  }
+  return trimmed.includes("?") || /\b(why|what|which|show|explain|compare|trend|change)\b/.test(trimmed);
+}
+
 function detectInsightMode(command: string): "business" | "data" | null {
   if (/\bdata\s*(insights?|quality|mode|analysis)\b/.test(command)) return "data";
   if (/\bbusiness\s*(insights?|mode|analysis)\b/.test(command)) return "business";
@@ -1269,10 +2188,15 @@ function detectInsightMode(command: string): "business" | "data" | null {
 }
 
 function detectConversationalAction(command: string): "run" | "save" | "list" | null {
-  // Only match explicit, standalone run commands — NOT casual mentions like
-  // "I want to run an analysis on refunds" or "can you run through the data".
-  // The user should explicitly say "run the report", "execute now", etc.
+  // Only match explicit execution intent.
   if (/^(run|run it|run it now|run now|run the report|run report|execute now|execute it|execute the report|start the analysis|launch report|let'?s run it|let'?s run)\s*[.!]?$/.test(command)) {
+    return "run";
+  }
+
+  // Also support approval-style confirmations so users do not need to type "run".
+  if (
+    /^(go ahead|proceed|looks good|lgtm|approved|ready|ready to proceed|ready to run|continue with analysis|continue with run)\s*[.!]?$/.test(command)
+  ) {
     return "run";
   }
 
@@ -1355,7 +2279,7 @@ function applyNaturalLanguageDraftUpdates(
     const parsedName = explicitNameMatch[1].trim();
     if (parsedName.length > 0) {
       next.draft.name = parsedName;
-      next.contract_id = null;
+      resetPreparedState(next);
       updated.add("name");
     }
   }
@@ -1363,7 +2287,7 @@ function applyNaturalLanguageDraftUpdates(
   const audienceMatch = extractAudience(lower);
   if (audienceMatch && next.draft.audience !== audienceMatch) {
     next.draft.audience = audienceMatch;
-    next.contract_id = null;
+    resetPreparedState(next);
     updated.add("audience");
   }
 
@@ -1372,7 +2296,7 @@ function applyNaturalLanguageDraftUpdates(
     const timezone = timezoneMatch[1].trim();
     if (timezone.length > 0) {
       next.draft.timezone = timezone;
-      next.contract_id = null;
+      resetPreparedState(next);
       updated.add("timezone");
     }
   }
@@ -1380,51 +2304,51 @@ function applyNaturalLanguageDraftUpdates(
   if (lower.includes("weekly") || lower.includes("every friday")) {
     if (next.draft.schedule_cron !== "0 18 * * 5") {
       next.draft.schedule_cron = "0 18 * * 5";
-      next.contract_id = null;
+      resetPreparedState(next);
       updated.add("schedule_cron");
     }
   } else if (lower.includes("daily")) {
     if (next.draft.schedule_cron !== "0 9 * * *") {
       next.draft.schedule_cron = "0 9 * * *";
-      next.contract_id = null;
+      resetPreparedState(next);
       updated.add("schedule_cron");
     }
   } else if (lower.includes("monthly")) {
     if (next.draft.schedule_cron !== "0 9 1 * *") {
       next.draft.schedule_cron = "0 9 1 * *";
-      next.contract_id = null;
+      resetPreparedState(next);
       updated.add("schedule_cron");
     }
   }
 
   if (lower.includes("by region") && !next.draft.dimension_ids.includes("region")) {
     next.draft.dimension_ids = Array.from(new Set([...next.draft.dimension_ids, "region"]));
-    next.contract_id = null;
+    resetPreparedState(next);
     updated.add("dimension_ids");
   }
 
   if (lower.includes("by channel") && !next.draft.dimension_ids.includes("channel")) {
     next.draft.dimension_ids = Array.from(new Set([...next.draft.dimension_ids, "channel"]));
-    next.contract_id = null;
+    resetPreparedState(next);
     updated.add("dimension_ids");
   }
 
   if (lower.includes("revenue") && !next.draft.metric_ids.includes("metric_revenue")) {
     next.draft.metric_ids = Array.from(new Set([...next.draft.metric_ids, "metric_revenue"]));
-    next.contract_id = null;
+    resetPreparedState(next);
     updated.add("metric_ids");
   }
 
   if (lower.includes("orders") && !next.draft.metric_ids.includes("metric_orders")) {
     next.draft.metric_ids = Array.from(new Set([...next.draft.metric_ids, "metric_orders"]));
-    next.contract_id = null;
+    resetPreparedState(next);
     updated.add("metric_ids");
   }
 
   if (lower.includes("sales_enriched")) {
     next.draft.allowed_relations = Array.from(new Set([...next.draft.allowed_relations, "analytics.sales_enriched"]));
     next.draft.allowed_schemas = Array.from(new Set([...next.draft.allowed_schemas, "analytics"]));
-    next.contract_id = null;
+    resetPreparedState(next);
     updated.add("allowed_relations");
   }
 
@@ -1434,7 +2358,7 @@ function applyNaturalLanguageDraftUpdates(
   ) {
     next.draft.sql_template =
       "SELECT region, SUM(amount) AS amount, MIN(event_time) AS event_time FROM analytics.sales GROUP BY region";
-    next.contract_id = null;
+    resetPreparedState(next);
     updated.add("sql_template");
   }
 
@@ -1470,7 +2394,7 @@ async function syncConnectedTables(state: ChatState, apiClient: WebApiClient): P
     nextState.draft.sql_template = `SELECT * FROM ${firstRelation}`;
   }
 
-  nextState.contract_id = null;
+  resetPreparedState(nextState);
 
   return {
     assistant_message: `Synced ${context.allowed_relations.length} table${context.allowed_relations.length === 1 ? "" : "s"} from connected database. SQL updated to: ${nextState.draft.sql_template}.`,
@@ -1553,3 +2477,5 @@ async function parseJsonResponse<TSchema extends z.ZodTypeAny>(
 
   return schema.parse(payload);
 }
+
+

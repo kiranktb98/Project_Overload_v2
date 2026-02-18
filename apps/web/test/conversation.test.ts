@@ -29,10 +29,23 @@ const TURN_INPUT: ConversationTurnInput = {
     last_query_id: null,
     last_exec_brief: null,
     conversation_history: [],
+    prep_pending: false,
+    prep_complete: false,
     scope_pending: false,
     pending_query_sql: null,
     pending_query_limit: null,
-    planner_summary: null
+    planner_summary: null,
+    preparation_summary: null,
+    prepared_payloads: [],
+    awaiting_pdf_confirmation: false,
+    awaiting_save_confirmation: false,
+    awaiting_schedule_confirmation: false,
+    awaiting_schedule_mode_selection: false,
+    schedule_mode_pending: null,
+    schedule_day_kind: null,
+    awaiting_custom_day_input: false,
+    last_concise_summary: null,
+    last_token_usage: null
   }
 };
 
@@ -76,6 +89,8 @@ describe("conversation client", () => {
     const rawBody = typeof calls[0].init?.body === "string" ? calls[0].init?.body : "{}";
     expect(rawBody).toContain("Conversation history:");
     expect(rawBody).toContain("User message:");
+    expect(rawBody).toContain("break them into numbered items (Q1, Q2, Q3)");
+    expect(rawBody).toContain("CURRENT UTC DATE/TIME:");
   });
 
   it("falls back to deterministic when provider call fails and fallback is enabled", async () => {

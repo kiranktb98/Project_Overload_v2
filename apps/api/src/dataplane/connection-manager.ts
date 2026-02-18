@@ -1,4 +1,4 @@
-import { createCipheriv, createHash, randomBytes, randomUUID } from "node:crypto";
+import { createCipheriv, createDecipheriv, createHash, randomBytes, randomUUID } from "node:crypto";
 import * as tls from "node:tls";
 import { Pool, type PoolClient } from "pg";
 import {
@@ -12,6 +12,7 @@ import {
   generateBusinessId,
   type LowCardinalityColumn
 } from "../agents";
+import type { MetadataStore } from "../store";
 
 const EXCLUDED_SCHEMAS = [
   "pg_catalog",
@@ -122,6 +123,8 @@ export type ConnectionManagerOptions = {
   default_timeout_ms?: number;
   default_limit?: number;
   app_encryption_key?: string;
+  state_store?: Pick<MetadataStore, "setSystemState" | "getSystemState" | "appendAuditLog">;
+  tenant_id?: string;
 };
 
 export type TableColumnInfo = {
@@ -202,6 +205,9 @@ type NormalizedConnection = {
   recommendations: string[];
 };
 
+const CONNECTION_STATE_KEY = "runtime_connection_v1";
+const DEFAULT_TENANT_ID = "default";
+
 export class RuntimeConnectionManager {
   private active: ActiveConnection | null = null;
   private readonly fallbackRowProvider?: ConnectionManagerOptions["fallback_row_provider"];
@@ -211,6 +217,8 @@ export class RuntimeConnectionManager {
   private readonly encryptionKey: Buffer;
   private readonly queryLogs: QueryAuditLog[] = [];
   private lastTest: LastTestSnapshot | null = null;
+  private readonly stateStore: Pick<MetadataStore, "setSystemState" | "getSystemState" | "appendAuditLog"> | null;
+  private readonly tenantId: string;
 
   constructor(private readonly options: ConnectionManagerOptions = {}) {
     this.fallbackRowProvider = options.fallback_row_provider;
@@ -218,9 +226,16 @@ export class RuntimeConnectionManager {
     this.defaultTimeoutMs = options.default_timeout_ms ?? 5000;
     this.defaultLimit = options.default_limit ?? 200;
     this.encryptionKey = deriveEncryptionKey(options.app_encryption_key ?? process.env.APP_ENCRYPTION_KEY);
+    this.stateStore = options.state_store ?? null;
+    this.tenantId = options.tenant_id?.trim() || DEFAULT_TENANT_ID;
   }
 
   async initFromEnv(env: Record<string, string | undefined> = process.env): Promise<void> {
+    const restored = await this.restorePersistedConnection();
+    if (restored) {
+      return;
+    }
+
     const source = (env.DATAPLANE_LOCAL_SOURCE ?? "").trim().toLowerCase();
     const connectionString = env.DATAPLANE_LOCAL_PG_URL ?? env.DATABASE_URL;
 
@@ -370,6 +385,8 @@ export class RuntimeConnectionManager {
         await previous.pool.end();
       }
 
+      await this.persistActiveConnectionState();
+
       return this.getContext();
     } catch (error) {
       await pool.end();
@@ -384,6 +401,7 @@ export class RuntimeConnectionManager {
 
     await this.active.pool.end();
     this.active = null;
+    await this.persistActiveConnectionState();
   }
 
   getContext(): ConnectionContext {
@@ -446,6 +464,7 @@ export class RuntimeConnectionManager {
       throw new Error("No active connection with catalog.");
     }
     this.active.catalog.business_context = context;
+    void this.persistActiveConnectionState();
   }
 
   async refreshCatalog(): Promise<DataCatalog | null> {
@@ -460,6 +479,7 @@ export class RuntimeConnectionManager {
       this.active.catalog?.business_context ?? ""
     );
     this.active.catalog = catalog;
+    await this.persistActiveConnectionState();
     return catalog;
   }
 
@@ -482,6 +502,7 @@ export class RuntimeConnectionManager {
 
     const available = this.active.relations_health.map((entry) => entry.qualified_name);
     this.active.allowed_relations = normalizeAllowlist(allowedRelations, available);
+    void this.persistActiveConnectionState();
     return this.getContext();
   }
 
@@ -674,6 +695,96 @@ export class RuntimeConnectionManager {
       await this.active.pool.end();
       this.active = null;
     }
+  }
+
+  private async restorePersistedConnection(): Promise<boolean> {
+    if (!this.stateStore) {
+      return false;
+    }
+
+    try {
+      const state = await this.stateStore.getSystemState(CONNECTION_STATE_KEY, {
+        tenant_id: this.tenantId
+      });
+      if (!state) {
+        return false;
+      }
+
+      const encryptedPayload = typeof state.encrypted_connection_string === "string"
+        ? state.encrypted_connection_string
+        : null;
+      const encryptedIv = typeof state.encrypted_iv === "string" ? state.encrypted_iv : null;
+      const encryptedTag = typeof state.encrypted_tag === "string" ? state.encrypted_tag : null;
+
+      if (!encryptedPayload || !encryptedIv || !encryptedTag) {
+        return false;
+      }
+
+      const connectionString = decryptConnectionString(
+        encryptedPayload,
+        encryptedIv,
+        encryptedTag,
+        this.encryptionKey
+      );
+
+      const name = typeof state.name === "string" && state.name.trim().length > 0 ? state.name : "restored";
+      const allowedRelations = Array.isArray(state.allowed_relations)
+        ? state.allowed_relations.filter((value): value is string => typeof value === "string")
+        : [];
+      const businessContext = typeof state.business_context === "string" ? state.business_context : "";
+
+      await this.connect(
+        {
+          name,
+          connection_string: connectionString,
+          allowed_relations: allowedRelations,
+          business_context: businessContext
+        },
+        "runtime"
+      );
+
+      await this.stateStore.appendAuditLog(
+        "connection_state_restored",
+        {
+          tenant_id: this.tenantId,
+          restored_at: new Date().toISOString(),
+          name
+        },
+        { tenant_id: this.tenantId }
+      );
+
+      return true;
+    } catch {
+      return false;
+    }
+  }
+
+  private async persistActiveConnectionState(): Promise<void> {
+    if (!this.stateStore) {
+      return;
+    }
+
+    if (!this.active) {
+      await this.stateStore.setSystemState(CONNECTION_STATE_KEY, null, {
+        tenant_id: this.tenantId
+      });
+      return;
+    }
+
+    await this.stateStore.setSystemState(
+      CONNECTION_STATE_KEY,
+      {
+        name: this.active.name,
+        database: this.active.database,
+        connected_at: this.active.connected_at,
+        encrypted_connection_string: this.active.encrypted_connection_string,
+        encrypted_iv: this.active.encrypted_iv,
+        encrypted_tag: this.active.encrypted_tag,
+        allowed_relations: [...this.active.allowed_relations],
+        business_context: this.active.catalog?.business_context ?? ""
+      },
+      { tenant_id: this.tenantId }
+    );
   }
 
   private appendQueryLog(input: Omit<QueryAuditLog, "id" | "timestamp">): void {
@@ -1072,6 +1183,20 @@ function encryptConnectionString(value: string, key: Buffer): { payload: string;
     iv: iv.toString("base64"),
     tag: tag.toString("base64")
   };
+}
+
+function decryptConnectionString(payload: string, iv: string, tag: string, key: Buffer): string {
+  const decipher = createDecipheriv(
+    "aes-256-gcm",
+    key,
+    Buffer.from(iv, "base64")
+  );
+  decipher.setAuthTag(Buffer.from(tag, "base64"));
+  const decrypted = Buffer.concat([
+    decipher.update(Buffer.from(payload, "base64")),
+    decipher.final()
+  ]);
+  return decrypted.toString("utf8");
 }
 
 function sanitizeRoleName(raw: string): string {

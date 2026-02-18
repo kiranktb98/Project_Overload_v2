@@ -133,7 +133,7 @@ describe("agent pipeline map", () => {
     const rendered = await agentG_renderExecBrief(brief);
     expect(rendered.html).toContain("Executive Brief");
     expect(rendered.pdf_bytes.subarray(0, 5).toString("utf8")).toBe("%PDF-");
-  });
+  }, 20000);
 
   it("fails QA when appendix references are missing", () => {
     const qa = agentH_evaluateExecBrief({

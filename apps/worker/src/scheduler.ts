@@ -19,6 +19,9 @@ export type ScheduledContract = {
 export type ScheduledJob = {
   contract_id: string;
   scheduled_for: string;
+  attempt?: number;
+  retry_of_run_id?: string | null;
+  next_eligible_at?: string | null;
 };
 
 const CRON_FIELD_BOUNDS: Array<[number, number]> = [
@@ -98,7 +101,10 @@ export class DeterministicScheduler {
       if (schedule.next_run_at.getTime() <= now.getTime()) {
         dueJobs.push({
           contract_id: schedule.contract_id,
-          scheduled_for: schedule.next_run_at.toISOString()
+          scheduled_for: schedule.next_run_at.toISOString(),
+          attempt: 1,
+          retry_of_run_id: null,
+          next_eligible_at: null
         });
 
         schedule.next_run_at = computeNextRun(schedule.schedule, now);

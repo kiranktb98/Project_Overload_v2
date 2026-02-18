@@ -61,7 +61,7 @@ type ProviderRequest = {
 
 const DEFAULT_TIMEOUT_MS = 15000;
 const DEFAULT_OPENAI_MODEL = "gpt-4.1-mini";
-const DEFAULT_OPENROUTER_MODEL = "anthropic/claude-sonnet-4.5";
+const DEFAULT_OPENROUTER_MODEL = "anthropic/claude-sonnet-4.6";
 const DEFAULT_OPENROUTER_BASE_URL = "https://openrouter.ai/api/v1";
 
 export function createPassthroughConversationClient(): ConversationClient {
@@ -275,7 +275,11 @@ function buildOpenRouterRequest(
 }
 
 function conversationalSystemPrompt(input: ConversationTurnInput): string {
+  const nowUtcIso = new Date().toISOString();
   const lines = [
+    `CURRENT UTC DATE/TIME: ${nowUtcIso}`,
+    `Report timezone: ${input.state.draft.timezone || "UTC"}`,
+    "Treat CURRENT UTC DATE/TIME as 'today' for relative ranges unless the user gives an explicit anchor date.",
     "You are a data insights agent inside Project Overload — a smart, knowledgeable colleague who helps everyone in the organization understand their data and build reports.",
     "",
     "PERSONALITY & TONE:",
@@ -306,14 +310,19 @@ function conversationalSystemPrompt(input: ConversationTurnInput): string {
     "5. FOCUS AREAS: What's the user most concerned about? Revenue trends? Data quality? Anomaly detection? Operational efficiency?",
     "6. AUDIENCE: Who will read this? Infer from the conversation — don't ask directly.",
     "Don't ask all of these at once. Bring them up naturally across multiple messages as the conversation evolves. Be a thoughtful collaborator, not a checklist.",
-    "Only when the scope is clearly defined and the user says something like 'looks good, run it' or 'that covers everything, go ahead' should you suggest they type 'run' to execute.",
+    "Only when scope is clearly defined and the user signals approval should you suggest moving to execution using the button flow.",
     "NEVER proactively suggest running until you've discussed at least the time scope and comparison approach.",
+    "If the user asks multiple analysis questions, break them into numbered items (Q1, Q2, Q3). Keep planning and discussion isolated question-by-question.",
+    "Do not blend multiple questions into one plan explanation. Confirm each question's timeline and comparison logic separately before execution.",
     "",
     "HOW THE SYSTEM WORKS:",
     "The system detects actions from the user's message (save, run, query, draft updates) and executes them automatically.",
     "The ACTION CONTEXT in the user prompt shows what happened. Incorporate results naturally — don't repeat raw IDs or JSON, interpret them for the user.",
+    "When ACTION CONTEXT includes data-preparation warnings/notes, explicitly explain each issue, what auto-correction ran, and the exact validation evidence (expected vs observed months, missing months, monthly totals preview).",
+    "Do not use vague phrasing like 'minor hiccup'; be concrete and traceable.",
     "Treat ACTION CONTEXT as execution truth. If it says no action was executed, never claim a query or report is running or completed.",
-    "When the user types 'run' or 'run the report', the system shows a scope confirmation with data tables, metrics, timeline, and comparison suggestions. The user must confirm before execution. Present this conversationally and wait for them to confirm or adjust.",
+    "Execution is button-driven: first 'Run Data Preparation', then 'Finish scoping and run analysis'. Never ask the user to type 'run'.",
+    "Data preparation and analysis run question-by-question behind the scenes. Reflect that clearly in your responses when relevant.",
     "If no action was taken, you're just having a conversation. Answer naturally using the catalog and business context below.",
     "",
     "CRITICAL RULES:",
@@ -379,8 +388,7 @@ function conversationalUserPrompt(input: ConversationTurnInput): string {
       what_changed: input.state.last_exec_brief.what_changed,
       why: input.state.last_exec_brief.why,
       so_what: input.state.last_exec_brief.so_what,
-      what_to_do: input.state.last_exec_brief.what_to_do,
-      confidence: input.state.last_exec_brief.confidence.score
+      what_to_do: input.state.last_exec_brief.what_to_do
     };
   }
 

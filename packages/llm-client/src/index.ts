@@ -16,14 +16,26 @@ import {
 
 export type LlmProvider = "stub" | "openai" | "openrouter";
 
+export type TokenUsageEvent = {
+  agent: string;
+  provider: Exclude<LlmProvider, "stub">;
+  model: string;
+  input_tokens: number;
+  output_tokens: number;
+  total_tokens: number;
+  at: string;
+};
+
 export interface AnalystClient {
   provider: LlmProvider;
   analyzeBatch(input: AnalystInput): Promise<BatchAnalysis>;
+  drainUsageEvents?(): TokenUsageEvent[];
 }
 
 export interface QueryStrategistClient {
   provider: LlmProvider;
   planQueries(input: QueryStrategyInput): Promise<QueryStrategyOutput>;
+  drainUsageEvents?(): TokenUsageEvent[];
 }
 
 export type ReportComposerInput = {
@@ -43,12 +55,14 @@ export type ReportComposerInput = {
 export interface ReportComposerClient {
   provider: LlmProvider;
   composeReport(input: ReportComposerInput): Promise<string>;
+  drainUsageEvents?(): TokenUsageEvent[];
 }
 
 export interface PlannerClient {
   provider: LlmProvider;
   explore(input: PlannerInput): Promise<PlannerExploration>;
   plan(input: PlannerInput & { exploration_results: string }): Promise<PlannerOutput>;
+  drainUsageEvents?(): TokenUsageEvent[];
 }
 
 export type Fetcher = typeof fetch;
@@ -73,9 +87,14 @@ type ProviderRequest = {
   payload: Record<string, unknown>;
 };
 
+type UsageEventBuffer = {
+  push(event: TokenUsageEvent): void;
+  drain(): TokenUsageEvent[];
+};
+
 const DEFAULT_TIMEOUT_MS = 15000;
 const DEFAULT_OPENAI_MODEL = "gpt-4.1-mini";
-const DEFAULT_OPENROUTER_MODEL = "anthropic/claude-sonnet-4.5";
+const DEFAULT_OPENROUTER_MODEL = "anthropic/claude-sonnet-4.6";
 const DEFAULT_OPENROUTER_BASE_URL = "https://openrouter.ai/api/v1";
 
 // ---------------------------------------------------------------------------
@@ -87,6 +106,9 @@ export function createStubAnalystClient(): AnalystClient {
     provider: "stub",
     async analyzeBatch(input: AnalystInput): Promise<BatchAnalysis> {
       return analyzeBatchStub(input);
+    },
+    drainUsageEvents() {
+      return [];
     }
   };
 }
@@ -125,6 +147,7 @@ export function createAnalystClient(options: CreateAnalystClientOptions): Analys
   const fallbackToStub = options.fallbackToStub ?? true;
   const fetcher = options.fetcher ?? fetch;
   const stub = createStubAnalystClient();
+  const usageBuffer = createUsageEventBuffer();
 
   if (options.provider === "openai") {
     if (!options.openaiApiKey) {
@@ -135,7 +158,8 @@ export function createAnalystClient(options: CreateAnalystClientOptions): Analys
       provider: "openai",
       timeoutMs,
       fetcher,
-      requestFactory: (input) => buildOpenAiAnalystRequest(input, options)
+      requestFactory: (input) => buildOpenAiAnalystRequest(input, options),
+      usageBuffer
     });
 
     return fallbackToStub ? wrapAnalystWithFallback(remote, stub) : remote;
@@ -150,7 +174,8 @@ export function createAnalystClient(options: CreateAnalystClientOptions): Analys
       provider: "openrouter",
       timeoutMs,
       fetcher,
-      requestFactory: (input) => buildOpenRouterAnalystRequest(input, options)
+      requestFactory: (input) => buildOpenRouterAnalystRequest(input, options),
+      usageBuffer
     });
 
     return fallbackToStub ? wrapAnalystWithFallback(remote, stub) : remote;
@@ -164,6 +189,7 @@ type RemoteAnalystClientOptions = {
   timeoutMs: number;
   fetcher: Fetcher;
   requestFactory: (input: AnalystInput) => ProviderRequest;
+  usageBuffer: UsageEventBuffer;
 };
 
 function createRemoteAnalystClient(options: RemoteAnalystClientOptions): AnalystClient {
@@ -190,7 +216,17 @@ function createRemoteAnalystClient(options: RemoteAnalystClientOptions): Analyst
       }
 
       const payload = (await response.json()) as unknown;
+      recordUsageEventFromPayload(
+        options.usageBuffer,
+        payload,
+        options.provider,
+        pickModelFromRequest(request),
+        "batch_analyst"
+      );
       return parseBatchAnalysisPayload(payload);
+    },
+    drainUsageEvents() {
+      return options.usageBuffer.drain();
     }
   };
 }
@@ -204,6 +240,11 @@ function wrapAnalystWithFallback(remote: AnalystClient, fallback: AnalystClient)
       } catch {
         return fallback.analyzeBatch(input);
       }
+    },
+    drainUsageEvents() {
+      const remoteEvents = remote.drainUsageEvents ? remote.drainUsageEvents() : [];
+      const fallbackEvents = fallback.drainUsageEvents ? fallback.drainUsageEvents() : [];
+      return [...remoteEvents, ...fallbackEvents];
     }
   };
 }
@@ -292,6 +333,9 @@ export function createStubQueryStrategistClient(): QueryStrategistClient {
       }
 
       return { queries };
+    },
+    drainUsageEvents() {
+      return [];
     }
   };
 }
@@ -304,7 +348,14 @@ export function createQueryStrategistClientFromEnv(
     return createStubQueryStrategistClient();
   }
 
-  const options = resolveClientOptions(overrides);
+  const options = resolveClientOptions({
+    ...overrides,
+    openrouterModel:
+      overrides.openrouterModel ??
+      process.env.QUERY_STRATEGIST_MODEL ??
+      process.env.DATA_PREPARATION_MODEL ??
+      "anthropic/claude-opus-4.6"
+  });
   return createQueryStrategistClient(options);
 }
 
@@ -313,6 +364,7 @@ export function createQueryStrategistClient(options: CreateAnalystClientOptions)
   const fallbackToStub = options.fallbackToStub ?? true;
   const fetcher = options.fetcher ?? fetch;
   const stub = createStubQueryStrategistClient();
+  const usageBuffer = createUsageEventBuffer();
 
   const buildRequest = (input: QueryStrategyInput): ProviderRequest => {
     return buildOpenRouterGenericRequest(
@@ -342,10 +394,20 @@ export function createQueryStrategistClient(options: CreateAnalystClientOptions)
       }
 
       const payload = (await response.json()) as unknown;
+      recordUsageEventFromPayload(
+        usageBuffer,
+        payload,
+        "openrouter",
+        pickModelFromRequest(request),
+        "query_strategist"
+      );
       const text = extractTextPayload(payload);
       if (!text) throw new Error("Unable to parse query strategist response.");
       const parsed = parseJsonObjectFromText(text);
       return QueryStrategyOutputSchema.parse(parsed);
+    },
+    drainUsageEvents() {
+      return usageBuffer.drain();
     }
   };
 
@@ -364,6 +426,11 @@ function wrapStrategistWithFallback(
       } catch {
         return fallback.planQueries(input);
       }
+    },
+    drainUsageEvents() {
+      const remoteEvents = remote.drainUsageEvents ? remote.drainUsageEvents() : [];
+      const fallbackEvents = fallback.drainUsageEvents ? fallback.drainUsageEvents() : [];
+      return [...remoteEvents, ...fallbackEvents];
     }
   };
 }
@@ -403,20 +470,22 @@ function queryStrategistSystemPrompt(input: QueryStrategyInput): string {
     "═══ QUERY RULES ═══",
     "- Each query MUST be exactly ONE valid PostgreSQL SELECT statement.",
     "- NO semicolons, NO multiple statements.",
-    "- Always end with LIMIT 200.",
+    "- Include LIMIT only when needed; prefer aggregated queries over raw row dumps.",
     "- Write SUMMARIZED data (aggregates, top-N, distributions), not raw row dumps.",
     "- Each query answers a DIFFERENT question.",
     "- Use JOINs across tables when it adds insight — but only join on columns that actually exist.",
     "- When the goal mentions time comparisons (YoY, MoM, QoQ), use date/timestamp columns from the catalog.",
+    "- If the goal says 'last N months vs previous N months', include both windows explicitly.",
     "",
-    "QUERY GROUPING (optional):",
-    "- Queries with the same \"group_id\" get their results MERGED and analyzed together.",
-    "- Queries without group_id are analyzed independently.",
-    "- Group related queries (e.g., revenue by region + revenue by product for combined comparison).",
-    "- Keep unrelated queries standalone.",
+    "QUESTION ISOLATION:",
+    "- Keep one concrete business question per query.",
+    "- Avoid bundling multiple business questions into one SQL statement.",
+    "- Preserve question order deterministically (Q1, Q2, Q3) based on user intent.",
+    "- Use group_id only when multiple SQL queries are required to answer one single question.",
+    "- Do not share one SQL output across unrelated questions.",
     "",
     "Return strictly valid JSON:",
-    '{"queries": [{"question": "...", "sql": "SELECT ... LIMIT 200", "purpose": "...", "group_id": "optional"}]}',
+    '{"queries": [{"question": "...", "sql": "SELECT ...", "purpose": "...", "group_id": "optional"}]}',
     "No markdown, no extra keys."
   ].join("\n");
 }
@@ -490,6 +559,9 @@ export function createStubPlannerClient(): PlannerClient {
         data_warnings: [],
         plan_summary: `Planning for: ${input.user_goal}. Using tables: ${input.allowed_relations.join(", ")}.`
       };
+    },
+    drainUsageEvents() {
+      return [];
     }
   };
 }
@@ -502,7 +574,14 @@ export function createPlannerClientFromEnv(
     return createStubPlannerClient();
   }
 
-  const options = resolveClientOptions(overrides);
+  const options = resolveClientOptions({
+    ...overrides,
+    openrouterModel:
+      overrides.openrouterModel ??
+      process.env.DATA_PREPARATION_MODEL ??
+      process.env.QUERY_STRATEGIST_MODEL ??
+      "anthropic/claude-opus-4.6"
+  });
   return createPlannerClient(options);
 }
 
@@ -511,6 +590,7 @@ export function createPlannerClient(options: CreateAnalystClientOptions): Planne
   const fallbackToStub = options.fallbackToStub ?? true;
   const fetcher = options.fetcher ?? fetch;
   const stub = createStubPlannerClient();
+  const usageBuffer = createUsageEventBuffer();
 
   if (options.provider !== "openrouter" || !options.openrouterApiKey) {
     return stub;
@@ -537,6 +617,13 @@ export function createPlannerClient(options: CreateAnalystClientOptions): Planne
       }
 
       const payload = (await response.json()) as unknown;
+      recordUsageEventFromPayload(
+        usageBuffer,
+        payload,
+        "openrouter",
+        pickModelFromRequest(request),
+        "planner_explore"
+      );
       const text = extractTextPayload(payload);
       if (!text) throw new Error("Unable to parse planner explore response.");
       const parsed = parseJsonObjectFromText(text);
@@ -562,10 +649,20 @@ export function createPlannerClient(options: CreateAnalystClientOptions): Planne
       }
 
       const payload = (await response.json()) as unknown;
+      recordUsageEventFromPayload(
+        usageBuffer,
+        payload,
+        "openrouter",
+        pickModelFromRequest(request),
+        "planner_plan"
+      );
       const text = extractTextPayload(payload);
       if (!text) throw new Error("Unable to parse planner plan response.");
       const parsed = parseJsonObjectFromText(text);
       return PlannerOutputSchema.parse(parsed);
+    },
+    drainUsageEvents() {
+      return usageBuffer.drain();
     }
   };
 
@@ -591,6 +688,11 @@ function wrapPlannerWithFallback(
       } catch {
         return fallback.plan(input);
       }
+    },
+    drainUsageEvents() {
+      const remoteEvents = remote.drainUsageEvents ? remote.drainUsageEvents() : [];
+      const fallbackEvents = fallback.drainUsageEvents ? fallback.drainUsageEvents() : [];
+      return [...remoteEvents, ...fallbackEvents];
     }
   };
 }
@@ -704,6 +806,9 @@ export function createStubReportComposerClient(): ReportComposerClient {
     provider: "stub",
     async composeReport(input: ReportComposerInput): Promise<string> {
       return renderStubReportHtml(input);
+    },
+    drainUsageEvents() {
+      return [];
     }
   };
 }
@@ -725,6 +830,7 @@ export function createReportComposerClient(options: CreateAnalystClientOptions):
   const fallbackToStub = options.fallbackToStub ?? true;
   const fetcher = options.fetcher ?? fetch;
   const stub = createStubReportComposerClient();
+  const usageBuffer = createUsageEventBuffer();
 
   if (options.provider !== "openrouter" || !options.openrouterApiKey) {
     return stub;
@@ -751,11 +857,21 @@ export function createReportComposerClient(options: CreateAnalystClientOptions):
       }
 
       const payload = (await response.json()) as unknown;
+      recordUsageEventFromPayload(
+        usageBuffer,
+        payload,
+        "openrouter",
+        pickModelFromRequest(request),
+        "report_composer"
+      );
       const text = extractTextPayload(payload);
       if (!text) throw new Error("Unable to parse report composer response.");
 
       // The LLM returns HTML — extract it if wrapped in markdown code fences
       return extractHtmlFromResponse(text);
+    },
+    drainUsageEvents() {
+      return usageBuffer.drain();
     }
   };
 
@@ -774,6 +890,11 @@ function wrapComposerWithFallback(
       } catch {
         return fallback.composeReport(input);
       }
+    },
+    drainUsageEvents() {
+      const remoteEvents = remote.drainUsageEvents ? remote.drainUsageEvents() : [];
+      const fallbackEvents = fallback.drainUsageEvents ? fallback.drainUsageEvents() : [];
+      return [...remoteEvents, ...fallbackEvents];
     }
   };
 }
@@ -1024,6 +1145,107 @@ function resolveClientOptions(overrides: Partial<CreateAnalystClientOptions>): C
 }
 
 // ---------------------------------------------------------------------------
+// Usage Tracking
+// ---------------------------------------------------------------------------
+
+function createUsageEventBuffer(): UsageEventBuffer {
+  const events: TokenUsageEvent[] = [];
+  return {
+    push(event: TokenUsageEvent) {
+      events.push(event);
+    },
+    drain() {
+      const snapshot = [...events];
+      events.length = 0;
+      return snapshot;
+    }
+  };
+}
+
+function recordUsageEventFromPayload(
+  buffer: UsageEventBuffer,
+  payload: unknown,
+  provider: Exclude<LlmProvider, "stub">,
+  model: string,
+  agent: string
+): void {
+  const usage = parseUsageFromPayload(payload);
+  if (!usage) {
+    return;
+  }
+
+  buffer.push({
+    agent,
+    provider,
+    model,
+    input_tokens: usage.input_tokens,
+    output_tokens: usage.output_tokens,
+    total_tokens: usage.total_tokens,
+    at: new Date().toISOString()
+  });
+}
+
+function parseUsageFromPayload(payload: unknown): {
+  input_tokens: number;
+  output_tokens: number;
+  total_tokens: number;
+} | null {
+  if (!isRecord(payload)) {
+    return null;
+  }
+
+  const usage = payload.usage;
+  if (!isRecord(usage)) {
+    return null;
+  }
+
+  const input = toSafeNonNegativeInt(
+    usage.input_tokens ??
+      usage.prompt_tokens ??
+      usage.promptTokens ??
+      usage.inputTokens
+  );
+  const output = toSafeNonNegativeInt(
+    usage.output_tokens ??
+      usage.completion_tokens ??
+      usage.completionTokens ??
+      usage.outputTokens
+  );
+  const totalCandidate = usage.total_tokens ?? usage.totalTokens;
+  const total = toSafeNonNegativeInt(
+    totalCandidate === undefined || totalCandidate === null ? input + output : totalCandidate
+  );
+
+  if (input === 0 && output === 0 && total === 0) {
+    return null;
+  }
+
+  return {
+    input_tokens: input,
+    output_tokens: output,
+    total_tokens: total > 0 ? total : input + output
+  };
+}
+
+function toSafeNonNegativeInt(value: unknown): number {
+  const parsed = typeof value === "number" ? value : Number.parseInt(String(value ?? "0"), 10);
+  if (!Number.isFinite(parsed) || Number.isNaN(parsed) || parsed < 0) {
+    return 0;
+  }
+
+  return Math.trunc(parsed);
+}
+
+function pickModelFromRequest(request: ProviderRequest): string {
+  const model = request.payload.model;
+  if (typeof model === "string" && model.trim().length > 0) {
+    return model;
+  }
+
+  return "unknown";
+}
+
+// ---------------------------------------------------------------------------
 // Shared Utilities
 // ---------------------------------------------------------------------------
 
@@ -1177,3 +1399,5 @@ function escapeHtml(value: string): string {
     .replace(/"/g, "&quot;")
     .replace(/'/g, "&#39;");
 }
+
+

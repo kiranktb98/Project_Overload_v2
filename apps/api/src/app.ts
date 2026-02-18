@@ -19,6 +19,7 @@ import { registerContractRoutes } from "./routes/contracts";
 import { createLocalRowProviderFromEnv } from "./dataplane/local-row-provider";
 import { registerConnectionRoutes } from "./routes/connections";
 import { RuntimeConnectionManager } from "./dataplane/connection-manager";
+import { validateApiAuth } from "./security/request-context";
 
 export type ApiDependencies = {
   store: MetadataStore;
@@ -64,7 +65,8 @@ export async function buildApiApp(options: Partial<ApiDependencies> = {}) {
       fallback_row_provider: localRowProviderRuntime.row_provider,
       fallback_source: localRowProviderRuntime.source,
       default_timeout_ms: Number.parseInt(process.env.DEFAULT_QUERY_TIMEOUT_MS ?? "15000", 10),
-      default_limit: Number.parseInt(process.env.DEFAULT_QUERY_ROW_LIMIT ?? "200", 10)
+      default_limit: Number.parseInt(process.env.DEFAULT_QUERY_ROW_LIMIT ?? "200", 10),
+      state_store: store
     });
   await connectionManager.initFromEnv();
 
@@ -80,16 +82,33 @@ export async function buildApiApp(options: Partial<ApiDependencies> = {}) {
   const reportComposer = options.report_composer ?? createReportComposerClientFromEnv();
   const plannerClient = options.planner_client ?? createPlannerClientFromEnv();
 
-  const rateLimiter = createRateLimiter({
-    window_ms: 60_000,
-    max_requests: Number.parseInt(process.env.RATE_LIMIT_RPM ?? "120", 10)
-  });
+  const configuredRateLimit = Number.parseInt(process.env.RATE_LIMIT_RPM ?? "0", 10);
+  const rateLimiter =
+    Number.isFinite(configuredRateLimit) && configuredRateLimit > 0
+      ? createRateLimiter({
+          window_ms: 60_000,
+          max_requests: configuredRateLimit
+        })
+      : null;
+
+  if (rateLimiter) {
+    app.addHook("onRequest", async (request: FastifyRequest, reply: FastifyReply) => {
+      if (request.url === "/health") return;
+      const ip = request.ip || "unknown";
+      if (!rateLimiter.check(ip)) {
+        return reply.code(429).send({ message: "Too many requests. Please slow down." });
+      }
+    });
+  }
 
   app.addHook("onRequest", async (request: FastifyRequest, reply: FastifyReply) => {
-    if (request.url === "/health") return;
-    const ip = request.ip || "unknown";
-    if (!rateLimiter.check(ip)) {
-      return reply.code(429).send({ message: "Too many requests. Please slow down." });
+    if (request.url === "/health") {
+      return;
+    }
+
+    const auth = validateApiAuth(request);
+    if (!auth.ok) {
+      return reply.code(401).send({ message: auth.message });
     }
   });
 
@@ -119,7 +138,9 @@ export async function buildApiApp(options: Partial<ApiDependencies> = {}) {
   });
 
   app.addHook("onClose", async () => {
-    rateLimiter.destroy();
+    if (rateLimiter) {
+      rateLimiter.destroy();
+    }
     await store.close();
     await connectionManager.close();
     await localRowProviderRuntime.close();

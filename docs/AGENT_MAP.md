@@ -47,3 +47,13 @@
 - Path: `apps/api/src/agents/pipeline.ts`
 - Function: `agentH_evaluateExecBrief`
 - Role: score final output and return `QualityEval` with fix instructions.
+
+## Agent I - Data Preparation
+- Path: `apps/api/src/services/run-contract.ts`
+- Function: `prepareReportContractData`, `runDataPreparationAgent`
+- Role: executes one or more governed queries per question, reduces to evidence-safe payloads, enforces explicit comparison windows when detected.
+
+## Agent J - Payload QA (Live Follow-ups)
+- Path: `apps/api/src/services/run-contract.ts`
+- Function: `answerRunPayloadQuestion`
+- Role: answers post-run follow-up questions strictly from stored run payloads (no invented numbers).

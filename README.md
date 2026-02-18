@@ -1,6 +1,34 @@
 # Project_Overload_v2
 AI Data Architect + Scheduled Narrative Reports (PDF) + KT
 
+## Dependencies (Tester Setup)
+Install these before running the project:
+- Git
+- Node.js `22.x` (LTS recommended)
+- pnpm `10.16.1` (or newer `10.x`)
+- Docker Desktop (or Docker Engine) with Docker Compose v2
+
+Install pnpm globally if needed:
+- `npm install -g pnpm@10.16.1`
+
+## Docker Configuration
+This repo ships local infra in `infra/docker-compose.yml`:
+- `postgres` (`postgres:16`)
+  - container: `po_v2_postgres`
+  - host port: `54321`
+  - db: `po_v2`
+  - user/password: `po` / `po`
+  - named volume: `po_v2_pgdata`
+- `redis` (`redis:7`)
+  - container: `po_v2_redis`
+  - host port: `63791`
+
+Common Docker commands:
+- Start: `docker compose -f infra/docker-compose.yml up -d`
+- Stop: `docker compose -f infra/docker-compose.yml down`
+- Stop + remove data volume: `docker compose -f infra/docker-compose.yml down -v`
+- Check services: `docker compose -f infra/docker-compose.yml ps`
+
 ## Runtime map
 - Agent map: `docs/AGENT_MAP.md`
 - API health: `GET /health` on `http://localhost:4000`
@@ -9,16 +37,40 @@ AI Data Architect + Scheduled Narrative Reports (PDF) + KT
 - Worker loop: `apps/worker` (scheduler + queue + run dispatcher)
 
 ## Quick start
-1. Install deps:
+1. Create local env file:
+   - `cp .env.example .env` (PowerShell: `Copy-Item .env.example .env`)
+2. Set required local secret in `.env`:
+   - `APP_ENCRYPTION_KEY` must be set (32+ chars recommended)
+   - Example generator: `node -e "console.log(require('crypto').randomBytes(32).toString('hex'))"`
+3. Install deps:
    - `pnpm install`
-2. Start infra:
+4. Approve/build Puppeteer dependency for PDF rendering if prompted:
+   - `pnpm approve-builds`
+5. Start infra:
    - `docker compose -f infra/docker-compose.yml up -d`
-3. Apply migrations (includes analytics seed data):
+6. Apply migrations (includes analytics seed data):
    - `pnpm db:migrate`
-4. Start all services:
+7. Start all services:
    - `pnpm dev`
-5. Run test suite:
+8. Run test suite:
    - `pnpm test`
+9. Optional quality gates:
+   - `pnpm build`
+   - `pnpm lint`
+
+## Tester Smoke Test Checklist
+After `pnpm dev`:
+1. API health:
+   - Open `http://localhost:4000/health`
+2. Web app:
+   - Open `http://localhost:3000`
+3. DB connector wizard:
+   - Open `http://localhost:3000/connect`
+   - Test local connection: `postgresql://po:po@localhost:54321/po_v2`
+4. Regression run:
+   - `pnpm test`
+   - `pnpm build`
+   - `pnpm lint`
 
 ## Local Analytics Test Dataset (Docker)
 1. Start local infra:
