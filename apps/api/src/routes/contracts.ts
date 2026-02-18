@@ -113,7 +113,8 @@ export function registerContractRoutes(
           ? run.report_html
           : renderExecBriefHtml(ExecBriefSchema.parse(run.exec_brief));
 
-      const pdf = await renderPdfFromHtml(html);
+      const customerFacingHtml = stripConfidenceFromCustomerHtml(html);
+      const pdf = await renderPdfFromHtml(customerFacingHtml);
 
       return reply
         .code(200)
@@ -125,6 +126,15 @@ export function registerContractRoutes(
       return reply.code(500).send({ message });
     }
   });
+}
+
+function stripConfidenceFromCustomerHtml(html: string): string {
+  return html
+    .replace(/<[^>]*class=["'][^"']*\bconfidence\b[^"']*["'][^>]*>[\s\S]*?<\/[^>]+>/gi, "")
+    .replace(/<p[^>]*>\s*Confidence\s*:[^<]*<\/p>/gi, "")
+    .replace(/<li[^>]*>\s*Confidence\s*:[^<]*<\/li>/gi, "")
+    .replace(/<strong[^>]*>\s*Confidence\s*:?\s*<\/strong>/gi, "")
+    .replace(/\bConfidence\s*:\s*\d+(?:\.\d+)?%?/gi, "");
 }
 
 function toReportContract(body: unknown) {
@@ -151,14 +161,28 @@ function buildCatalogSummary(connectionManager: RuntimeConnectionManager): strin
   }
 
   const sections: string[] = [];
+  sections.push(`BUSINESS_ID: ${catalog.business_id}`);
+  sections.push("");
+
   for (const table of catalog.tables.slice(0, 20)) {
+    const tableId = table.table_id ? ` [${table.table_id}]` : "";
     const rowInfo = table.row_count_estimate > 0 ? ` (~${table.row_count_estimate} rows)` : "";
-    const header = `TABLE: ${table.qualified_name}${rowInfo}`;
+    const header = `TABLE: ${table.qualified_name}${tableId}${rowInfo}`;
     const colLines = table.columns.slice(0, 30).map((c: { column_name: string; data_type: string }) =>
       `  - ${c.column_name} : ${c.data_type}`
     );
+    const summaryLines = table.summary ? [`  summary: ${table.summary}`] : [];
+    const lowCardLines = table.low_cardinality_columns.length > 0
+      ? [
+          "  low_cardinality:",
+          ...table.low_cardinality_columns.slice(0, 8).map((entry) => {
+            const values = entry.distinct_values.slice(0, 10).join(", ");
+            return `    - ${entry.column_name}: [${values}]`;
+          })
+        ]
+      : [];
     const extra = table.columns.length > 30 ? [`  ... +${table.columns.length - 30} more columns`] : [];
-    sections.push([header, ...colLines, ...extra].join("\n"));
+    sections.push([header, ...summaryLines, ...lowCardLines, ...colLines, ...extra].join("\n"));
   }
 
   return sections.join("\n\n");

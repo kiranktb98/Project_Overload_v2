@@ -799,6 +799,7 @@ function reportComposerSystemPrompt(input: ReportComposerInput): string {
     "- End with a clear 'Recommended Actions' section.",
     "- Use the Sora or system font stack for clean rendering.",
     "- The report must be printable and look good as a PDF.",
+    "- Do NOT mention confidence scores, confidence thresholds, or confidence percentages in customer-facing content.",
     "- Do NOT use any external dependencies (no CDN links, no JavaScript).",
     "- Return ONLY the HTML document, no markdown fences or explanations."
   ].join("\n");
@@ -903,7 +904,7 @@ function analystSystemPrompt(input: AnalystInput): string {
     "- highlights: The most important findings (3-5 items).",
     "- risks: Issues, concerns, or negative trends (1-3 items).",
     "- recommendations: Specific actionable next steps (2-4 items).",
-    "- confidence_score: 0.0-1.0 based on data quality and coverage. Be rigorous: only score >= 0.9 if the data clearly supports the findings with sufficient volume, coverage, and no obvious gaps. Sections below 0.9 will be excluded from the final report.",
+    "- confidence_score: 0.0-1.0 based on data quality and coverage. Be rigorous and evidence-based.",
     "No markdown, no extra keys."
   ].join("\n");
 }

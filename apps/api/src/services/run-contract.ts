@@ -59,7 +59,6 @@ export async function runReportContractPipeline(input: {
   });
 
   // Step 2: Execute queries and analyze — supports both Case 1 (grouped) and Case 2 (standalone)
-  const MIN_CONFIDENCE = 0.9;
   type ScoredAnalysis = {
     entry: ReportComposerInput["analyses"][number];
     confidence_score: number;
@@ -122,7 +121,7 @@ export async function runReportContractPipeline(input: {
         highlights: analysis.highlights,
         risks: analysis.risks,
         recommendations: analysis.recommendations,
-        data_summary: `${rows.length} rows analyzed. Confidence: ${(analysis.confidence_score * 100).toFixed(0)}%. ${planned.purpose}`
+        data_summary: `${rows.length} rows analyzed. ${planned.purpose}`
       },
       confidence_score: analysis.confidence_score
     });
@@ -194,38 +193,21 @@ export async function runReportContractPipeline(input: {
         highlights: analysis.highlights,
         risks: analysis.risks,
         recommendations: analysis.recommendations,
-        data_summary: `${cappedRows.length} merged rows from ${groupQueries.length} queries (group: ${groupId}). Confidence: ${(analysis.confidence_score * 100).toFixed(0)}%. ${groupPurposes.join("; ")}`
+        data_summary: `${cappedRows.length} merged rows from ${groupQueries.length} queries (group: ${groupId}). ${groupPurposes.join("; ")}`
       },
       confidence_score: analysis.confidence_score
     });
   }
-
-  // Step 3: Filter analyses by confidence threshold (>= 90%)
-  // Error analyses (confidence 0 — query failures, no data) are always kept.
-  // Only actual analyst outputs are subject to the confidence filter.
-  const kept = scoredAnalyses.filter(s => s.confidence_score === 0 || s.confidence_score >= MIN_CONFIDENCE);
-  const droppedCount = scoredAnalyses.length - kept.length;
-
-  const analyses: ReportComposerInput["analyses"] = kept.length > 0
-    ? kept.map(s => s.entry)
+  // Step 3: Keep all analysis sections (no confidence-threshold filtering).
+  const analyses: ReportComposerInput["analyses"] = scoredAnalyses.length > 0
+    ? scoredAnalyses.map((s) => s.entry)
     : [{
-        question: "Confidence threshold not met",
-        highlights: [`All ${scoredAnalyses.length} analysis sections scored below the ${(MIN_CONFIDENCE * 100).toFixed(0)}% confidence threshold.`],
-        risks: ["Insufficient data quality or coverage to produce high-confidence insights."],
-        recommendations: ["Review the data sources and ensure sufficient, clean data is available.", "Consider broadening the query scope or checking for data gaps."],
-        data_summary: `${scoredAnalyses.length} sections analyzed, none met the ${(MIN_CONFIDENCE * 100).toFixed(0)}% confidence bar. Scores: ${scoredAnalyses.map(s => `${(s.confidence_score * 100).toFixed(0)}%`).join(", ")}`
+        question: "Analysis unavailable",
+        highlights: [],
+        risks: ["No analysis sections were produced for this run."],
+        recommendations: ["Review the configured queries and data availability, then run again."],
+        data_summary: "No sections produced."
       }];
-
-  if (droppedCount > 0) {
-    await input.store.appendAuditLog("confidence_filter", {
-      contract_id: input.contract.id,
-      total_analyses: scoredAnalyses.length,
-      passed: kept.length,
-      dropped: droppedCount,
-      threshold: MIN_CONFIDENCE,
-      scores: scoredAnalyses.map(s => ({ question: s.entry.question, score: s.confidence_score }))
-    });
-  }
 
   // Step 4: Report Composer — LLM generates rich HTML report
   const html = await input.report_composer.composeReport({

@@ -13,8 +13,8 @@ export function renderChatPage(): string {
         --ink-soft: #334155;
         --paper: #f8fafc;
         --card: rgba(255, 255, 255, 0.92);
-        --accent: #0ea5e9;
-        --accent-2: #22c55e;
+        --accent: #1e3a8a;
+        --accent-2: #2563eb;
         --accent-3: #f59e0b;
         --line: rgba(15, 23, 42, 0.12);
         --shadow: 0 20px 45px rgba(15, 23, 42, 0.18);
@@ -36,8 +36,8 @@ export function renderChatPage(): string {
       }
 
       .page {
-        width: min(860px, 100% - 32px);
-        margin: 28px auto;
+        width: min(1220px, 100% - 24px);
+        margin: 16px auto;
       }
 
       .chat-shell {
@@ -48,7 +48,7 @@ export function renderChatPage(): string {
         backdrop-filter: blur(10px);
         display: grid;
         grid-template-rows: auto 1fr auto;
-        min-height: 82vh;
+        min-height: 90vh;
       }
 
       .chat-head {
@@ -96,7 +96,7 @@ export function renderChatPage(): string {
       .messages {
         padding: 18px;
         overflow-y: auto;
-        max-height: calc(82vh - 130px);
+        max-height: calc(90vh - 130px);
       }
 
       .bubble {
@@ -287,21 +287,23 @@ export function renderChatPage(): string {
       }
 
       .composer button {
-        border: none;
+        border: 1px solid rgba(30, 58, 138, 0.28);
         border-radius: 12px;
         padding: 0 16px;
         min-height: 44px;
         cursor: pointer;
-        color: #082f49;
-        background: linear-gradient(130deg, var(--accent), var(--accent-2));
+        color: #ffffff;
+        background: linear-gradient(135deg, #1e3a8a, #2563eb);
         font-family: "Sora", sans-serif;
         font-weight: 700;
-        transition: transform 140ms ease, filter 140ms ease;
+        box-shadow: 0 10px 22px rgba(37, 99, 235, 0.24);
+        transition: transform 140ms ease, filter 140ms ease, box-shadow 140ms ease;
       }
 
       .composer button:hover {
         transform: translateY(-1px);
-        filter: saturate(1.08);
+        filter: saturate(1.05);
+        box-shadow: 0 14px 24px rgba(37, 99, 235, 0.3);
       }
 
       .composer button:disabled {
@@ -309,11 +311,44 @@ export function renderChatPage(): string {
         opacity: 0.65;
       }
 
-      .hint {
-        margin-top: 10px;
+      .decision-panel {
+        margin-bottom: 10px;
+        border: 1px solid rgba(15, 23, 42, 0.15);
+        background: rgba(255, 255, 255, 0.85);
+        border-radius: 12px;
+        padding: 10px 12px;
+      }
+
+      .decision-panel.hidden {
+        display: none;
+      }
+
+      .decision-title {
+        font-size: 0.82rem;
         color: var(--ink-soft);
+        margin-bottom: 8px;
+      }
+
+      .decision-actions {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 8px;
+      }
+
+      .decision-btn {
+        border: 1px solid rgba(30, 58, 138, 0.26);
+        border-radius: 999px;
+        background: linear-gradient(135deg, #1e3a8a, #2563eb);
+        color: #ffffff;
+        font-family: "IBM Plex Mono", monospace;
         font-size: 0.75rem;
-        text-align: center;
+        padding: 7px 12px;
+        cursor: pointer;
+        box-shadow: 0 6px 16px rgba(37, 99, 235, 0.22);
+      }
+
+      .decision-btn:hover {
+        filter: saturate(1.06);
       }
     </style>
   </head>
@@ -329,11 +364,11 @@ export function renderChatPage(): string {
         </header>
         <section class="messages" id="messages"></section>
         <section class="composer">
+          <div id="decision-panel" class="decision-panel hidden"></div>
           <form id="composer-form">
             <input id="composer-input" autocomplete="off" placeholder="Describe the report you want, e.g. weekly refund analysis by product category" />
             <button id="composer-send" type="submit">Send</button>
           </form>
-          <div class="hint">Powered by AI &mdash; each message runs through the analysis pipeline</div>
         </section>
       </main>
     </div>
@@ -346,7 +381,12 @@ export function renderChatPage(): string {
         const inputEl = document.getElementById("composer-input");
         const sendButtonEl = document.getElementById("composer-send");
         const formEl = document.getElementById("composer-form");
+        const decisionPanelEl = document.getElementById("decision-panel");
         const runtimeStatusRef = { mode: "checking provider", busy: false };
+        const composerStateRef = { busy: false, locked: false };
+        const decisionRef = { value: null };
+        const defaultInputPlaceholder =
+          "Describe the report you want, e.g. weekly refund analysis by product category";
 
         /* ── Thinking indicator ── */
         const thinkingMessages = {
@@ -483,14 +523,104 @@ export function renderChatPage(): string {
         /* ── Status ── */
         function setBusy(isBusy) {
           runtimeStatusRef.busy = isBusy;
+          composerStateRef.busy = isBusy;
+          syncComposerAvailability();
           renderStatus();
-          sendButtonEl.disabled = isBusy;
-          inputEl.disabled = isBusy;
         }
 
         function renderStatus() {
-          const activity = runtimeStatusRef.busy ? "processing" : "idle";
+          const activity = runtimeStatusRef.busy
+            ? "processing"
+            : decisionRef.value
+              ? "awaiting decision"
+              : "idle";
           statusEl.textContent = runtimeStatusRef.mode + " | " + activity;
+        }
+
+        
+        function getDecisionFromState(state) {
+          if (!state || typeof state !== "object") {
+            return null;
+          }
+
+          if (typeof state.pending_query_sql === "string" && state.pending_query_sql.trim().length > 0) {
+            return {
+              kind: "query",
+              title: "Choose how to proceed with this SQL request.",
+              lockPlaceholder: "Select 'Run query' or 'Other instruction' first.",
+              options: [
+                { label: "Run query", command: "__ui_run_query__" },
+                { label: "Other instruction", command: "__ui_query_other_instruction__" }
+              ]
+            };
+          }
+
+          if (state.scope_pending === true) {
+            return {
+              kind: "analysis",
+              title: "Analysis scope is ready. Choose next step.",
+              lockPlaceholder: "Select 'Finish scoping and run analysis' or 'Continue scoping' first.",
+              options: [
+                { label: "Finish scoping and run analysis", command: "__ui_finish_scoping_run_analysis__" },
+                { label: "Continue scoping", command: "__ui_continue_scoping__" }
+              ]
+            };
+          }
+
+          return null;
+        }
+
+        function syncComposerAvailability() {
+          const disabled = composerStateRef.busy || composerStateRef.locked;
+          sendButtonEl.disabled = disabled;
+          inputEl.disabled = disabled;
+          inputEl.placeholder =
+            composerStateRef.locked && decisionRef.value
+              ? decisionRef.value.lockPlaceholder
+              : defaultInputPlaceholder;
+        }
+
+        function renderDecisionPanel() {
+          if (!decisionRef.value) {
+            decisionPanelEl.classList.add("hidden");
+            decisionPanelEl.innerHTML = "";
+            return;
+          }
+
+          decisionPanelEl.classList.remove("hidden");
+          decisionPanelEl.innerHTML = "";
+
+          const title = document.createElement("div");
+          title.className = "decision-title";
+          title.textContent = decisionRef.value.title;
+          decisionPanelEl.appendChild(title);
+
+          const actions = document.createElement("div");
+          actions.className = "decision-actions";
+
+          for (const option of decisionRef.value.options) {
+            const button = document.createElement("button");
+            button.type = "button";
+            button.className = "decision-btn";
+            button.textContent = option.label;
+            button.addEventListener("click", () => {
+              submitMessage(option.command, {
+                displayMessage: option.label,
+                forceWhenLocked: true
+              });
+            });
+            actions.appendChild(button);
+          }
+
+          decisionPanelEl.appendChild(actions);
+        }
+
+        function refreshDecisionFromState(state) {
+          decisionRef.value = getDecisionFromState(state);
+          composerStateRef.locked = Boolean(decisionRef.value);
+          syncComposerAvailability();
+          renderDecisionPanel();
+          renderStatus();
         }
 
         /* ── Messages ── */
@@ -530,13 +660,23 @@ export function renderChatPage(): string {
         }
 
         /* ── Submit ── */
-        async function submitMessage(message) {
+        async function submitMessage(message, options) {
+          const opts = options || {};
+          if (composerStateRef.locked && !opts.forceWhenLocked) {
+            return;
+          }
+
           const value = String(message || "").trim();
           if (!value) {
             return;
           }
 
-          appendMessage("user", value);
+          const displayMessage =
+            typeof opts.displayMessage === "string" && opts.displayMessage.trim().length > 0
+              ? opts.displayMessage.trim()
+              : value;
+
+          appendMessage("user", displayMessage);
           setBusy(true);
           const isRunConfirm = /^(confirm|yes|go ahead|proceed|looks good|lgtm|run it|do it|execute|approved|ok|okay|sure|start)\b/i.test(value);
           showThinking(isRunConfirm ? "planning" : "chatting");
@@ -559,6 +699,7 @@ export function renderChatPage(): string {
             }
 
             stateRef.value = payload.state;
+            refreshDecisionFromState(stateRef.value);
             appendMessage("assistant", payload.assistant_message, payload.pdf_download_url, payload.exec_brief_html);
           } catch (error) {
             const errorText = error instanceof Error ? error.message : "Unknown error";
@@ -566,11 +707,11 @@ export function renderChatPage(): string {
           } finally {
             hideThinking();
             setBusy(false);
-            inputEl.focus();
+            if (!composerStateRef.locked) {
+              inputEl.focus();
+            }
           }
         }
-
-        /* ── Runtime status ── */
         async function loadRuntimeStatus() {
           try {
             const response = await fetch("/api/chat/runtime", { method: "GET" });
@@ -620,9 +761,15 @@ export function renderChatPage(): string {
               },
               contract_id: null,
               last_run_id: null,
+              last_query_id: null,
               last_exec_brief: null,
-              conversation_history: []
+              conversation_history: [],
+              scope_pending: false,
+              pending_query_sql: null,
+              pending_query_limit: null,
+              planner_summary: null
             };
+            refreshDecisionFromState(stateRef.value);
 
             appendMessage(
               "assistant",
@@ -645,10 +792,13 @@ export function renderChatPage(): string {
           "assistant",
           "Hey! Tell me what report you'd like to build - **who's the audience** and **what metric matters most**? I'll handle the rest."
         );
+        refreshDecisionFromState(stateRef.value);
         renderStatus();
         loadRuntimeStatus();
         loadDbContextForChat();
-        inputEl.focus();
+        if (!composerStateRef.locked) {
+          inputEl.focus();
+        }
       })();
     </script>
   </body>

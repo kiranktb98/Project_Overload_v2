@@ -78,7 +78,10 @@ export function buildWebApp(options: WebAppDependencies = {}) {
         business_context: catalogCtx.business_context
       });
 
-      const aiMessage = conversationResponse.message;
+      const aiMessage = enforceExecutionTruth(
+        conversationResponse.message,
+        response.assistant_message
+      );
       let stateAfterLlm = response.state;
       if (conversationResponse.draft_updates) {
         stateAfterLlm = applyLlmDraftUpdates(response.state, conversationResponse.draft_updates);
@@ -244,6 +247,16 @@ export function buildWebApp(options: WebAppDependencies = {}) {
     });
   });
 
+  app.post("/api/db/catalogue", async (_request, reply) => {
+    return proxyToApi({
+      fetch_impl: options.fetch_impl,
+      api_base_url: apiBaseUrl,
+      method: "POST",
+      path: "/connections/catalogue",
+      reply
+    });
+  });
+
   app.post("/api/db/business-context", async (request, reply) => {
     return proxyToApi({
       fetch_impl: options.fetch_impl,
@@ -266,6 +279,51 @@ export function buildWebApp(options: WebAppDependencies = {}) {
   });
 
   return app;
+}
+
+function enforceExecutionTruth(modelMessage: string, actionContext: string): string {
+  const queryExecuted =
+    /\bQuery ID:\s*[a-z0-9_-]+\b/i.test(actionContext) ||
+    /\bQuery returned\s+\d+/i.test(actionContext);
+  const reportExecuted = /\bReport executed\b/i.test(actionContext);
+
+  if (!queryExecuted && looksLikeQueryExecutionClaim(modelMessage)) {
+    return [
+      "I haven't executed a SQL query yet.",
+      "If you want me to run one now, send `query: SELECT ...` (or paste a SELECT statement)."
+    ].join("\n");
+  }
+
+  if (!reportExecuted && looksLikeReportExecutionClaim(modelMessage)) {
+    return [
+      "I haven't executed a report run yet.",
+      "Say `run` and then `confirm` to execute the report."
+    ].join("\n");
+  }
+
+  return modelMessage;
+}
+
+function looksLikeQueryExecutionClaim(message: string): boolean {
+  const lower = message.toLowerCase();
+  if (/```sql/.test(lower) && /\b(i['’]?m|i am|let me|running|executing|querying|pulling)\b/.test(lower)) {
+    return true;
+  }
+
+  return (
+    /\b(i['’]?m|i am|we['’]?re|we are)\s+(running|executing|querying|pulling)\b/i.test(message) ||
+    /\b(i|we)\s+(ran|executed|queried|pulled)\b/i.test(message) ||
+    /\bquery\s+is\s+running\b/i.test(message) ||
+    /\b(as soon as|once)\s+[^.]{0,80}\b(query|results?)\b[^.]{0,80}\b(come back|completes?|finishes?|loads?)\b/i.test(message)
+  );
+}
+
+function looksLikeReportExecutionClaim(message: string): boolean {
+  return (
+    /\b(i['’]?m|i am|we['’]?re|we are)\s+(running|executing)\s+(the\s+)?report\b/i.test(message) ||
+    /\b(report|run)\s+is\s+running\b/i.test(message) ||
+    /\b(report)\s+(executed|completed)\b/i.test(message)
+  );
 }
 
 async function proxyToApi(input: {

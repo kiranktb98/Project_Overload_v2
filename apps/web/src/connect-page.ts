@@ -475,6 +475,7 @@ export function renderConnectionPage(): string {
           <button class="secondary" id="select-none">Select none</button>
           <button class="secondary" id="save-allowlist">Save allowlist</button>
           <button class="secondary" id="save-business-context">Save business context</button>
+          <button class="secondary" id="run-catalogue">Catalogue & index</button>
           <button class="danger" id="open-fix-script">Fix-it script</button>
         </div>
         <div class="table-list" id="table-list"></div>
@@ -538,6 +539,7 @@ export function renderConnectionPage(): string {
           selectOkBtn: document.getElementById("select-ok"),
           selectNoneBtn: document.getElementById("select-none"),
           saveAllowlistBtn: document.getElementById("save-allowlist"),
+          runCatalogueBtn: document.getElementById("run-catalogue"),
           metaBlock: document.getElementById("test-metadata"),
           metaUser: document.getElementById("meta-user"),
           metaDb: document.getElementById("meta-db"),
@@ -795,7 +797,21 @@ export function renderConnectionPage(): string {
           const source = typeof context.source === "string" ? context.source : "runtime";
           const db = context.database || context.name || "unknown";
           const tableCount = Array.isArray(context.allowed_relations) ? context.allowed_relations.length : 0;
-          elements.status.textContent = "Connected: " + db + " | source: " + source + " | allowlisted: " + tableCount;
+          const businessId =
+            context &&
+            context.catalog &&
+            typeof context.catalog.business_id === "string" &&
+            context.catalog.business_id.length > 0
+              ? context.catalog.business_id
+              : "";
+          elements.status.textContent =
+            "Connected: " +
+            db +
+            " | source: " +
+            source +
+            " | allowlisted: " +
+            tableCount +
+            (businessId ? " | business_id: " + businessId : "");
         }
 
         function renderTestNotes(result) {
@@ -1048,6 +1064,25 @@ export function renderConnectionPage(): string {
             const text = String(elements.businessContext.value || "").trim();
             await request("/api/db/business-context", "POST", { business_context: text });
             showOutput(text ? "Business context saved." : "Business context cleared.");
+          } catch (error) {
+            showOutput(error instanceof Error ? error.message : "Unknown error");
+          }
+        });
+
+        elements.runCatalogueBtn.addEventListener("click", async () => {
+          try {
+            const catalog = await request("/api/db/catalogue", "POST", {});
+            const tableCount = Array.isArray(catalog && catalog.tables) ? catalog.tables.length : 0;
+            const businessId =
+              catalog && typeof catalog.business_id === "string" ? catalog.business_id : "unknown";
+            showOutput({
+              message: "Catalogue agent completed.",
+              business_id: businessId,
+              indexed_tables: tableCount,
+              cataloged_at: catalog ? catalog.cataloged_at : null,
+              catalog
+            });
+            await loadContext();
           } catch (error) {
             showOutput(error instanceof Error ? error.message : "Unknown error");
           }
