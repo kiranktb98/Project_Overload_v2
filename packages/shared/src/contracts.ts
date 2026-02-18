@@ -13,8 +13,17 @@ export const ReportGuardrailsSchema = z.object({
 export const InsightModeSchema = z.enum(["business", "data"]).default("business");
 export type InsightMode = z.infer<typeof InsightModeSchema>;
 
+export const ContractLifecycleStatusSchema = z.enum(["draft", "approved", "locked"]);
+export type ContractLifecycleStatus = z.infer<typeof ContractLifecycleStatusSchema>;
+
+export const ReportContractDeliverySchema = z.object({
+  emails: z.array(z.string().email()).default([]),
+  slack_channel: z.string().min(1).optional()
+});
+
 export const ReportContractSchema = z.object({
   id: z.string().min(1),
+  tenant_id: z.string().min(1).optional(),
   name: z.string().min(1),
   audience: z.string().min(1),
   timezone: z.string().min(1),
@@ -23,20 +32,42 @@ export const ReportContractSchema = z.object({
   metric_ids: z.array(z.string().min(1)).default([]),
   dimension_ids: z.array(z.string().min(1)).default([]),
   insight_mode: InsightModeSchema,
+  delivery: ReportContractDeliverySchema.optional(),
+  lifecycle_status: ContractLifecycleStatusSchema.optional(),
+  contract_version: z.number().int().min(1).optional(),
+  approved_by: z.string().min(1).nullable().optional(),
+  approved_at: z.string().datetime().nullable().optional(),
+  locked_by: z.string().min(1).nullable().optional(),
+  locked_at: z.string().datetime().nullable().optional(),
   guardrails: ReportGuardrailsSchema
+});
+
+export const ReportRunDeliverySchema = z.object({
+  status: z.enum(["not_configured", "queued", "sent", "failed"]).default("not_configured"),
+  recipients: z.array(z.string().email()).default([]),
+  provider: z.string().min(1).default("none"),
+  sent_at: z.string().datetime().nullable().default(null),
+  error: z.string().min(1).nullable().default(null)
 });
 
 export const ReportRunSchema = z.object({
   id: z.string().min(1),
+  tenant_id: z.string().min(1).optional(),
   contract_id: z.string().min(1),
   status: z.enum(["pending", "running", "succeeded", "failed"]),
+  trigger: z.enum(["manual", "scheduled", "retry"]).default("manual"),
+  attempt: z.number().int().min(1).default(1),
+  retry_of_run_id: z.string().min(1).nullable().optional(),
   started_at: z.string().datetime(),
   finished_at: z.string().datetime().nullable(),
   query_plan: z.record(z.string(), z.unknown()),
   exec_brief: z.record(z.string(), z.unknown()),
-  report_html: z.string().optional()
+  report_html: z.string().optional(),
+  delivery: ReportRunDeliverySchema.optional()
 });
 
 export type ReportGuardrails = z.infer<typeof ReportGuardrailsSchema>;
 export type ReportContract = z.infer<typeof ReportContractSchema>;
 export type ReportRun = z.infer<typeof ReportRunSchema>;
+export type ReportContractDelivery = z.infer<typeof ReportContractDeliverySchema>;
+export type ReportRunDelivery = z.infer<typeof ReportRunDeliverySchema>;

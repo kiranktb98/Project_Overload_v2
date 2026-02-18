@@ -95,11 +95,98 @@ describe("worker runtime", () => {
 
     expect(runCalls).toEqual(["contract_1", "contract_2"]);
   });
+
+  it("retries failed jobs with backoff and eventually succeeds", async () => {
+    const attempts: number[] = [];
+
+    const runtime = new WorkerRuntime({
+      api_client: {
+        async listContracts() {
+          return [createContract("contract_retry", "*/1 * * * *")];
+        },
+        async runContract(_contractId: string, request) {
+          const attempt = request?.attempt ?? 1;
+          attempts.push(attempt);
+          if (attempt < 3) {
+            throw new Error("transient failure");
+          }
+          return { run_id: "run_retry_ok" };
+        }
+      },
+      scheduler: new DeterministicScheduler(),
+      queue: new InMemoryRunQueue(),
+      schedule_refresh_ms: 60 * 60 * 1000,
+      max_retry_attempts: 3,
+      retry_backoff_ms: 10
+    });
+
+    await runtime.tick(new Date("2026-01-01T00:00:00.000Z"));
+    await runtime.tick(new Date("2026-01-01T00:01:00.000Z"));
+    await runtime.tick(new Date("2026-01-01T00:01:00.005Z"));
+    await runtime.tick(new Date("2026-01-01T00:01:00.020Z"));
+    await runtime.tick(new Date("2026-01-01T00:01:00.045Z"));
+
+    expect(attempts).toEqual([1, 2, 3]);
+    expect(runtime.getDeadLetterJobs()).toHaveLength(0);
+  });
+
+  it("moves permanently failing jobs to dead-letter after max attempts", async () => {
+    const runtime = new WorkerRuntime({
+      api_client: {
+        async listContracts() {
+          return [createContract("contract_dead", "*/1 * * * *")];
+        },
+        async runContract() {
+          throw new Error("permanent failure");
+        }
+      },
+      scheduler: new DeterministicScheduler(),
+      queue: new InMemoryRunQueue(),
+      schedule_refresh_ms: 60 * 60 * 1000,
+      max_retry_attempts: 2,
+      retry_backoff_ms: 10
+    });
+
+    await runtime.tick(new Date("2026-01-01T00:00:00.000Z"));
+    await runtime.tick(new Date("2026-01-01T00:01:00.000Z"));
+    await runtime.tick(new Date("2026-01-01T00:01:00.015Z"));
+
+    expect(runtime.getDeadLetterJobs()).toHaveLength(1);
+    expect(runtime.getDeadLetterJobs()[0].contract_id).toBe("contract_dead");
+    expect(runtime.getDeadLetterJobs()[0].attempt).toBe(2);
+  });
+
+  it("does not schedule unlocked contracts", async () => {
+    const runCalls: string[] = [];
+
+    const runtime = new WorkerRuntime({
+      api_client: {
+        async listContracts() {
+          const contract = createContract("contract_unlocked", "*/1 * * * *");
+          contract.lifecycle_status = "approved";
+          return [contract];
+        },
+        async runContract(contractId: string) {
+          runCalls.push(contractId);
+          return { run_id: `run_${contractId}` };
+        }
+      },
+      scheduler: new DeterministicScheduler(),
+      queue: new InMemoryRunQueue(),
+      schedule_refresh_ms: 60 * 60 * 1000
+    });
+
+    await runtime.tick(new Date("2026-01-01T00:00:00.000Z"));
+    await runtime.tick(new Date("2026-01-01T00:01:00.000Z"));
+
+    expect(runCalls).toHaveLength(0);
+  });
 });
 
 function createContract(contractId: string, scheduleCron: string | null): ReportContract {
   return {
     id: contractId,
+    tenant_id: "default",
     name: `${contractId} report`,
     audience: "Executive",
     timezone: "UTC",
@@ -108,6 +195,13 @@ function createContract(contractId: string, scheduleCron: string | null): Report
     metric_ids: ["metric_revenue"],
     dimension_ids: ["region"],
     insight_mode: "business",
+    delivery: { emails: [] },
+    lifecycle_status: "locked",
+    contract_version: 1,
+    approved_by: "test",
+    approved_at: "2026-01-01T00:00:00.000Z",
+    locked_by: "test",
+    locked_at: "2026-01-01T00:00:00.000Z",
     guardrails: {
       evidence_row_cap: 200,
       max_batches: 5,

@@ -4,9 +4,16 @@ export type WorkerApiRunResult = {
   run_id: string;
 };
 
+export type WorkerRunRequest = {
+  trigger?: "manual" | "scheduled" | "retry";
+  attempt?: number;
+  retry_of_run_id?: string | null;
+};
+
 export interface WorkerApiClient {
   listContracts(): Promise<ReportContract[]>;
-  runContract(contractId: string): Promise<WorkerApiRunResult>;
+  runContract(contractId: string, request?: WorkerRunRequest): Promise<WorkerApiRunResult>;
+  logWorkerEvent?(eventType: string, payload: Record<string, unknown>): Promise<void>;
 }
 
 export type CreateWorkerApiClientOptions = {
@@ -42,13 +49,17 @@ export function createWorkerApiClient(options: CreateWorkerApiClientOptions): Wo
       const payload = await parseJsonPayload(response);
       return ReportContractSchema.array().parse(payload);
     },
-    async runContract(contractId: string): Promise<WorkerApiRunResult> {
+    async runContract(contractId: string, request?: WorkerRunRequest): Promise<WorkerApiRunResult> {
       const response = await fetcher(`${baseUrl}/report-contracts/${encodeURIComponent(contractId)}/run`, {
         method: "POST",
         headers: {
           "content-type": "application/json"
         },
-        body: "{}"
+        body: JSON.stringify({
+          trigger: request?.trigger ?? "scheduled",
+          attempt: request?.attempt ?? 1,
+          retry_of_run_id: request?.retry_of_run_id ?? null
+        })
       });
       const payload = await parseJsonPayload(response);
 
@@ -59,6 +70,18 @@ export function createWorkerApiClient(options: CreateWorkerApiClientOptions): Wo
       return {
         run_id: payload.run_id
       };
+    },
+    async logWorkerEvent(eventType: string, payload: Record<string, unknown>): Promise<void> {
+      await fetcher(`${baseUrl}/worker-events`, {
+        method: "POST",
+        headers: {
+          "content-type": "application/json"
+        },
+        body: JSON.stringify({
+          event_type: eventType,
+          payload
+        })
+      });
     }
   };
 }

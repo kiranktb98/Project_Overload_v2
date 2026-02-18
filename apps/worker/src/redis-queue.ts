@@ -97,7 +97,10 @@ function parseScheduledJob(payload: string): ScheduledJob {
 
   return {
     contract_id: parsed.contract_id,
-    scheduled_for: parsed.scheduled_for
+    scheduled_for: parsed.scheduled_for,
+    attempt: typeof parsed.attempt === "number" ? Math.max(1, Math.trunc(parsed.attempt)) : 1,
+    retry_of_run_id: typeof parsed.retry_of_run_id === "string" ? parsed.retry_of_run_id : null,
+    next_eligible_at: typeof parsed.next_eligible_at === "string" ? parsed.next_eligible_at : null
   };
 }
 

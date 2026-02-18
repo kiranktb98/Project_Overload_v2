@@ -543,6 +543,86 @@ export function renderChatPage(): string {
             return null;
           }
 
+          if (state.awaiting_pdf_confirmation === true) {
+            return {
+              kind: "pdf",
+              title: "Generate customer-facing PDF now?",
+              lockPlaceholder: "Select 'Generate report PDF' or 'Not yet' first.",
+              options: [
+                { label: "Generate report PDF", command: "__ui_generate_pdf_yes__" },
+                { label: "Not yet", command: "__ui_generate_pdf_no__" }
+              ]
+            };
+          }
+
+          if (state.awaiting_save_confirmation === true) {
+            return {
+              kind: "save",
+              title: "Save this run in report logs?",
+              lockPlaceholder: "Select 'Save report log' or 'Skip save' first.",
+              options: [
+                { label: "Save report log", command: "__ui_save_report_yes__" },
+                { label: "Skip save", command: "__ui_save_report_no__" }
+              ]
+            };
+          }
+
+          if (state.awaiting_schedule_confirmation === true) {
+            return {
+              kind: "schedule-confirm",
+              title: "Set up recurring schedule for this report?",
+              lockPlaceholder: "Select 'Schedule report' or 'Not now' first.",
+              options: [
+                { label: "Schedule report", command: "__ui_schedule_setup_yes__" },
+                { label: "Not now", command: "__ui_schedule_setup_no__" }
+              ]
+            };
+          }
+
+          if (state.awaiting_schedule_mode_selection === true) {
+            return {
+              kind: "schedule-mode",
+              title: "Choose scheduling cadence.",
+              lockPlaceholder: "Select 'Weekly', 'Monthly', or 'Quarterly' first.",
+              options: [
+                { label: "Weekly", command: "__ui_schedule_mode_weekly__" },
+                { label: "Monthly", command: "__ui_schedule_mode_monthly__" },
+                { label: "Quarterly", command: "__ui_schedule_mode_quarterly__" }
+              ]
+            };
+          }
+
+          if (state.schedule_mode_pending && state.schedule_day_kind === "weekday") {
+            return {
+              kind: "schedule-weekday",
+              title: "Pick weekday for weekly schedule (UTC).",
+              lockPlaceholder: "Select a weekday button first.",
+              options: [
+                { label: "Mon", command: "__ui_schedule_weekday_mon__" },
+                { label: "Tue", command: "__ui_schedule_weekday_tue__" },
+                { label: "Wed", command: "__ui_schedule_weekday_wed__" },
+                { label: "Thu", command: "__ui_schedule_weekday_thu__" },
+                { label: "Fri", command: "__ui_schedule_weekday_fri__" },
+                { label: "Sat", command: "__ui_schedule_weekday_sat__" },
+                { label: "Sun", command: "__ui_schedule_weekday_sun__" }
+              ]
+            };
+          }
+
+          if (state.schedule_mode_pending && state.schedule_day_kind === "monthday") {
+            return {
+              kind: "schedule-monthday",
+              title: "Pick day of month (1-28).",
+              lockPlaceholder: "Select day 1, 15, 28, or choose custom day first.",
+              options: [
+                { label: "Day 1", command: "__ui_schedule_day_1__" },
+                { label: "Day 15", command: "__ui_schedule_day_15__" },
+                { label: "Day 28", command: "__ui_schedule_day_28__" },
+                { label: "Custom day", command: "__ui_schedule_day_custom__" }
+              ]
+            };
+          }
+
           if (typeof state.pending_query_sql === "string" && state.pending_query_sql.trim().length > 0) {
             return {
               kind: "query",
@@ -551,6 +631,18 @@ export function renderChatPage(): string {
               options: [
                 { label: "Run query", command: "__ui_run_query__" },
                 { label: "Other instruction", command: "__ui_query_other_instruction__" }
+              ]
+            };
+          }
+
+          if (state.prep_pending === true) {
+            return {
+              kind: "prep",
+              title: "Scope is set. Run data preparation first.",
+              lockPlaceholder: "Select 'Run Data Preparation' or 'Continue scoping' first.",
+              options: [
+                { label: "Run Data Preparation", command: "__ui_run_data_preparation__" },
+                { label: "Continue scoping", command: "__ui_continue_scoping__" }
               ]
             };
           }
@@ -617,7 +709,13 @@ export function renderChatPage(): string {
 
         function refreshDecisionFromState(state) {
           decisionRef.value = getDecisionFromState(state);
-          composerStateRef.locked = Boolean(decisionRef.value);
+          const allowInputWhileDeciding =
+            Boolean(state && state.awaiting_custom_day_input === true);
+          composerStateRef.locked = Boolean(
+            decisionRef.value &&
+              decisionRef.value.kind !== "pdf" &&
+              !allowInputWhileDeciding
+          );
           syncComposerAvailability();
           renderDecisionPanel();
           renderStatus();
@@ -757,17 +855,31 @@ export function renderChatPage(): string {
                 metric_ids: ["metric_revenue"],
                 dimension_ids: ["region"],
                 allowed_relations: allowedRelations,
-                allowed_schemas: allowedSchemas
+                allowed_schemas: allowedSchemas,
+                insight_mode: "business"
               },
               contract_id: null,
               last_run_id: null,
               last_query_id: null,
               last_exec_brief: null,
               conversation_history: [],
+              prep_pending: false,
+              prep_complete: false,
               scope_pending: false,
               pending_query_sql: null,
               pending_query_limit: null,
-              planner_summary: null
+              planner_summary: null,
+              preparation_summary: null,
+              prepared_payloads: [],
+              awaiting_pdf_confirmation: false,
+              awaiting_save_confirmation: false,
+              awaiting_schedule_confirmation: false,
+              awaiting_schedule_mode_selection: false,
+              schedule_mode_pending: null,
+              schedule_day_kind: null,
+              awaiting_custom_day_input: false,
+              last_concise_summary: null,
+              last_token_usage: null
             };
             refreshDecisionFromState(stateRef.value);
 

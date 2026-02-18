@@ -51,10 +51,12 @@ describe("worker api client", () => {
   });
 
   it("triggers contract run through API", async () => {
+    let requestBody = "";
     const client = createWorkerApiClient({
       base_url: "http://api.local",
-      fetch_impl: async () =>
-        new Response(
+      fetch_impl: async (_input, init) => {
+        requestBody = typeof init?.body === "string" ? init.body : "";
+        return new Response(
           JSON.stringify({
             run_id: "run_123"
           }),
@@ -62,11 +64,19 @@ describe("worker api client", () => {
             status: 200,
             headers: { "content-type": "application/json" }
           }
-        )
+        );
+      }
     });
 
-    const run = await client.runContract("contract_1");
+    const run = await client.runContract("contract_1", {
+      trigger: "retry",
+      attempt: 2,
+      retry_of_run_id: "run_old"
+    });
     expect(run.run_id).toBe("run_123");
+    expect(requestBody).toContain('"trigger":"retry"');
+    expect(requestBody).toContain('"attempt":2');
+    expect(requestBody).toContain('"retry_of_run_id":"run_old"');
   });
 
   it("throws with API message when run fails", async () => {

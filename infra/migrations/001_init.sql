@@ -51,6 +51,28 @@ CREATE TABLE IF NOT EXISTS audit_logs (
   created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 
+CREATE TABLE IF NOT EXISTS report_contract_versions (
+  id BIGSERIAL PRIMARY KEY,
+  contract_id TEXT NOT NULL,
+  tenant_id TEXT NOT NULL DEFAULT 'default',
+  version INTEGER NOT NULL,
+  payload JSONB NOT NULL,
+  note TEXT NULL,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  UNIQUE (contract_id, tenant_id, version)
+);
+
+CREATE INDEX IF NOT EXISTS report_contract_versions_contract_tenant_idx
+  ON report_contract_versions(contract_id, tenant_id, version DESC);
+
+CREATE TABLE IF NOT EXISTS system_state (
+  state_key TEXT NOT NULL,
+  tenant_id TEXT NOT NULL DEFAULT 'default',
+  payload JSONB NOT NULL,
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  PRIMARY KEY (state_key, tenant_id)
+);
+
 -- Local analytics fixture dataset for deterministic report testing.
 CREATE SCHEMA IF NOT EXISTS analytics;
 
