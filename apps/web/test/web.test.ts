@@ -35,6 +35,7 @@ describe("web chat interface", () => {
 
     expect(connectPage.statusCode).toBe(200);
     expect(connectPage.body).toContain("1-Click Database Connection Wizard");
+    expect(connectPage.body).toContain("Catalogue & index");
 
     await app.close();
   }, 15000);
@@ -472,6 +473,126 @@ describe("web chat interface", () => {
     await app.close();
   });
 
+  it("supports continue-scoping choice without executing analysis", async () => {
+    let runCalls = 0;
+    const fetchImpl: typeof fetch = async (input, init) => {
+      const url = typeof input === "string" ? input : input instanceof URL ? input.toString() : input.url;
+      const method = init?.method?.toUpperCase() ?? "GET";
+
+      if (url.endsWith("/connections/catalog") && method === "GET") {
+        return new Response(JSON.stringify({ tables: [], business_context: "", cataloged_at: null }), {
+          status: 200,
+          headers: { "content-type": "application/json" }
+        });
+      }
+
+      if (url.endsWith("/connections/tables") && method === "GET") {
+        return new Response(JSON.stringify({
+          relations: [{
+            schema_name: "analytics",
+            relation_name: "sales",
+            qualified_name: "analytics.sales",
+            has_select_privilege: true,
+            rls_active_for_me: false,
+            policies_count_for_me: 0,
+            status: "OK",
+            status_label: "OK"
+          }]
+        }), {
+          status: 200,
+          headers: { "content-type": "application/json" }
+        });
+      }
+
+      if (url.endsWith("/connections/query") && method === "POST") {
+        return new Response(JSON.stringify({
+          rows: [{ row_count: 1500 }],
+          row_count: 1,
+          governed_sql: "SELECT COUNT(*) AS row_count FROM analytics.sales",
+          warnings: []
+        }), {
+          status: 200,
+          headers: { "content-type": "application/json" }
+        });
+      }
+
+      if (url.includes("/report-contracts/") && url.endsWith("/run") && method === "POST") {
+        runCalls += 1;
+        return new Response(JSON.stringify({
+          run_id: "run_scope_choice_test",
+          exec_brief: {
+            what_changed: ["n/a"],
+            why: ["n/a"],
+            so_what: ["n/a"],
+            what_to_do: ["n/a"],
+            confidence: { score: 0.5, rationale: "n/a" },
+            appendix_refs: [],
+            deltas_vs_last_run: [],
+            generated_at: "2026-01-01T00:00:00.000Z"
+          }
+        }), {
+          status: 200,
+          headers: { "content-type": "application/json" }
+        });
+      }
+
+      if (url.endsWith("/report-contracts") && method === "POST") {
+        const rawBody = typeof init?.body === "string" ? init.body : "{}";
+        const payload = JSON.parse(rawBody) as Record<string, unknown>;
+        return new Response(JSON.stringify({ ...payload, id: "contract_scope_choice_test" }), {
+          status: 201,
+          headers: { "content-type": "application/json" }
+        });
+      }
+
+      if (url.endsWith("/report-contracts") && method === "GET") {
+        return new Response("[]", {
+          status: 200,
+          headers: { "content-type": "application/json" }
+        });
+      }
+
+      return new Response(
+        JSON.stringify({ message: `Unhandled request: ${method} ${url}` }),
+        {
+          status: 404,
+          headers: { "content-type": "application/json" }
+        }
+      );
+    };
+
+    const app = buildWebApp({
+      api_base_url: "http://api.local",
+      fetch_impl: fetchImpl,
+      conversation_client: createPassthroughConversationClient()
+    });
+
+    const scopePrompt = await app.inject({
+      method: "POST",
+      url: "/api/chat",
+      payload: { message: "run" }
+    });
+
+    expect(scopePrompt.statusCode).toBe(200);
+    expect(scopePrompt.json().state.scope_pending).toBe(true);
+
+    const continueScoping = await app.inject({
+      method: "POST",
+      url: "/api/chat",
+      payload: {
+        message: "__ui_continue_scoping__",
+        state: scopePrompt.json().state
+      }
+    });
+
+    expect(continueScoping.statusCode).toBe(200);
+    expect(continueScoping.json().assistant_message).toContain("Continue scoping");
+    expect(continueScoping.json().state.scope_pending).toBe(false);
+    expect(runCalls).toBe(0);
+
+    await app.close();
+  });
+
   it("routes every chat turn through conversation client", async () => {
     const seen: string[] = [];
     const conversationClient: ConversationClient = {
@@ -586,6 +707,18 @@ describe("web chat interface", () => {
         );
       }
 
+      if (url.endsWith("/connections/catalogue") && method === "POST") {
+        return new Response(
+          JSON.stringify({
+            business_id: "biz_demo_001",
+            tables: [],
+            business_context: "",
+            cataloged_at: "2026-01-01T00:00:00.000Z"
+          }),
+          { status: 200, headers: { "content-type": "application/json" } }
+        );
+      }
+
       return new Response(
         JSON.stringify({
           message: `Unhandled request: ${method} ${url}`
@@ -637,10 +770,19 @@ describe("web chat interface", () => {
     expect(logs.statusCode).toBe(200);
     expect(Array.isArray(logs.json().logs)).toBe(true);
 
+    const catalogue = await app.inject({
+      method: "POST",
+      url: "/api/db/catalogue"
+    });
+
+    expect(catalogue.statusCode).toBe(200);
+    expect(catalogue.json().business_id).toBe("biz_demo_001");
+
     await app.close();
   });
 
   it("lets chat run safe query and sync connected tables", async () => {
+    let queryCalls = 0;
     const fetchImpl: typeof fetch = async (input, init) => {
       const url = typeof input === "string" ? input : input instanceof URL ? input.toString() : input.url;
       const method = init?.method?.toUpperCase() ?? "GET";
@@ -660,6 +802,7 @@ describe("web chat interface", () => {
       }
 
       if (url.endsWith("/connections/query") && method === "POST") {
+        queryCalls += 1;
         return new Response(
           JSON.stringify({
             rows: [{ id: 1, amount: 42 }],
@@ -721,8 +864,87 @@ describe("web chat interface", () => {
     });
 
     expect(query.statusCode).toBe(200);
-    expect(query.json().assistant_message).toContain("Query returned");
-    expect(query.json().assistant_message).toContain("1 row");
+    expect(query.json().assistant_message).toContain("waiting for your confirmation");
+    expect(query.json().state.pending_query_sql).toContain("SELECT id, amount FROM public.sales LIMIT 20");
+    expect(queryCalls).toBe(0);
+
+    const runQuery = await app.inject({
+      method: "POST",
+      url: "/api/chat",
+      payload: {
+        message: "__ui_run_query__",
+        state: query.json().state
+      }
+    });
+
+    expect(runQuery.statusCode).toBe(200);
+    expect(runQuery.json().assistant_message).toContain("Query completed. Query ID:");
+    expect(runQuery.json().assistant_message).toContain("Rows returned: 1");
+    expect(runQuery.json().state.pending_query_sql).toBeNull();
+    expect(runQuery.json().state.last_query_id).toMatch(/^qry_/);
+    expect(queryCalls).toBe(1);
+
+    const bareSql = await app.inject({
+      method: "POST",
+      url: "/api/chat",
+      payload: {
+        message: "SELECT id, amount FROM public.sales LIMIT 20",
+        state: runQuery.json().state
+      }
+    });
+
+    expect(bareSql.statusCode).toBe(200);
+    expect(bareSql.json().state.pending_query_sql).toContain("SELECT id, amount FROM public.sales LIMIT 20");
+    expect(queryCalls).toBe(1);
+
+    const otherInstruction = await app.inject({
+      method: "POST",
+      url: "/api/chat",
+      payload: {
+        message: "__ui_query_other_instruction__",
+        state: bareSql.json().state
+      }
+    });
+
+    expect(otherInstruction.statusCode).toBe(200);
+    expect(otherInstruction.json().assistant_message).toContain("continue with other instructions");
+    expect(otherInstruction.json().state.pending_query_sql).toBeNull();
+    expect(queryCalls).toBe(1);
+
+    await app.close();
+  });
+
+  it("prevents false query-running claims when no query was executed", async () => {
+    const conversationClient: ConversationClient = {
+      provider: "openai",
+      mode: "provider",
+      async respond() {
+        return {
+          message: [
+            "I'm running the query now.",
+            "```sql",
+            "SELECT * FROM public.demo_support_tickets LIMIT 5;",
+            "```",
+            "I'll share results once they come back."
+          ].join("\n")
+        };
+      }
+    };
+
+    const app = buildWebApp({
+      conversation_client: conversationClient
+    });
+
+    const response = await app.inject({
+      method: "POST",
+      url: "/api/chat",
+      payload: {
+        message: "can you confirm if the query is running?"
+      }
+    });
+
+    expect(response.statusCode).toBe(200);
+    expect(response.json().assistant_message).toContain("I haven't executed a SQL query yet.");
 
     await app.close();
   });

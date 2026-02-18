@@ -16,6 +16,7 @@ describe("report render", () => {
 
     expect(html).toContain("What changed");
     expect(html).toContain("Deltas vs last run");
+    expect(html).not.toContain("Confidence:");
   });
 
   it("creates real pdf payload from html", async () => {

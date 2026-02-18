@@ -30,9 +30,12 @@ export const ChatStateSchema = z.object({
   draft: ChatDraftSchema,
   contract_id: z.string().nullable(),
   last_run_id: z.string().nullable(),
+  last_query_id: z.string().nullable().default(null),
   last_exec_brief: ExecBriefSchema.nullable(),
   conversation_history: z.array(ChatHistoryTurnSchema).max(40).default([]),
   scope_pending: z.boolean().default(false),
+  pending_query_sql: z.string().nullable().default(null),
+  pending_query_limit: z.number().int().positive().nullable().default(null),
   planner_summary: z.string().nullable().default(null)
 });
 
@@ -112,14 +115,21 @@ const TableColumnInfoSchema = z.object({
 });
 
 const TableCatalogEntrySchema = z.object({
+  table_id: z.string().default(""),
   qualified_name: z.string(),
   relation_type: z.enum(["TABLE", "VIEW", "MATERIALIZED VIEW"]),
+  summary: z.string().default(""),
   columns: z.array(TableColumnInfoSchema),
+  low_cardinality_columns: z.array(z.object({
+    column_name: z.string(),
+    distinct_values: z.array(z.string()).default([])
+  })).default([]),
   sample_rows: z.array(z.record(z.string(), z.unknown())),
   row_count_estimate: z.number().int().min(0)
 });
 
 const DataCatalogSchema = z.object({
+  business_id: z.string().nullable().default(null),
   tables: z.array(TableCatalogEntrySchema).default([]),
   business_context: z.string().default(""),
   cataloged_at: z.string().nullable().default(null)
@@ -171,9 +181,12 @@ export function createInitialChatState(): ChatState {
     },
     contract_id: null,
     last_run_id: null,
+    last_query_id: null,
     last_exec_brief: null,
     conversation_history: [],
     scope_pending: false,
+    pending_query_sql: null,
+    pending_query_limit: null,
     planner_summary: null
   };
 }
@@ -195,9 +208,12 @@ export function parseChatState(value: unknown): ChatState {
     },
     contract_id: parsed.data.contract_id,
     last_run_id: parsed.data.last_run_id,
+    last_query_id: parsed.data.last_query_id ?? null,
     last_exec_brief: parsed.data.last_exec_brief,
     conversation_history: [...parsed.data.conversation_history],
     scope_pending: parsed.data.scope_pending ?? false,
+    pending_query_sql: parsed.data.pending_query_sql ?? null,
+    pending_query_limit: parsed.data.pending_query_limit ?? null,
     planner_summary: parsed.data.planner_summary ?? null
   };
 }
@@ -506,11 +522,48 @@ export async function handleChatTurn(input: {
   const command = rawMessage.toLowerCase();
   let nextState = parseChatState(input.state);
 
-  // --- Scope confirmation: if pending and user confirms, execute the run ---
+  // --- Query intent confirmation gate ---
 
-  if (nextState.scope_pending && isScopeConfirmation(command)) {
-    nextState.scope_pending = false;
-    return executeRun(nextState, input.api_client);
+  if (nextState.pending_query_sql) {
+    if (isQueryExecutionChoice(command)) {
+      return executePendingQuery(nextState, input.api_client);
+    }
+
+    if (isQueryOtherInstructionChoice(command)) {
+      nextState.pending_query_sql = null;
+      nextState.pending_query_limit = null;
+      return {
+        assistant_message: "Okay, let's continue with other instructions. Tell me what to adjust.",
+        state: nextState
+      };
+    }
+
+    return {
+      assistant_message: 'Please choose one option first: "Run query" or "Other instruction".',
+      state: nextState
+    };
+  }
+
+  // --- Analysis scope confirmation gate ---
+
+  if (nextState.scope_pending) {
+    if (isScopeRunChoice(command)) {
+      nextState.scope_pending = false;
+      return executeRun(nextState, input.api_client);
+    }
+
+    if (isScopeContinueChoice(command)) {
+      nextState.scope_pending = false;
+      return {
+        assistant_message: "Sounds good. Continue scoping and tell me what to refine before we run.",
+        state: nextState
+      };
+    }
+
+    return {
+      assistant_message: 'Please choose one option first: "Finish scoping and run analysis" or "Continue scoping".',
+      state: nextState
+    };
   }
 
   // --- Explicit actions ---
@@ -547,11 +600,15 @@ export async function handleChatTurn(input: {
 
   const queryCommand = parseQueryCommand(rawMessage);
   if (queryCommand) {
-    const result = await input.api_client.runSafeQuery(queryCommand.sql, queryCommand.limit);
-    const preview = result.rows.slice(0, 10);
-    const warnings = result.warnings.length > 0 ? `\nWarnings: ${result.warnings.join("; ")}` : "";
+    nextState.pending_query_sql = queryCommand.sql;
+    nextState.pending_query_limit = queryCommand.limit ?? null;
+    const sqlPreview = summarizeSql(queryCommand.sql);
     return {
-      assistant_message: `Query returned ${result.row_count} row${result.row_count === 1 ? "" : "s"}.${warnings}\nPreview:\n${JSON.stringify(preview, null, 2)}`,
+      assistant_message: [
+        "Query is ready, but waiting for your confirmation.",
+        `SQL preview: ${sqlPreview}`,
+        'Choose "Run query" to execute now, or "Other instruction" to keep refining.'
+      ].join("\n"),
       state: nextState
     };
   }
@@ -662,6 +719,51 @@ async function executeSave(state: ChatState, apiClient: WebApiClient): Promise<C
   };
 }
 
+async function executePendingQuery(state: ChatState, apiClient: WebApiClient): Promise<ChatTurnResponse> {
+  const nextState = parseChatState(state);
+  const sql = nextState.pending_query_sql;
+
+  if (!sql) {
+    return {
+      assistant_message: "No pending query was found. Tell me what SQL you want to run.",
+      state: nextState
+    };
+  }
+
+  const queryId = `qry_${randomUUID()}`;
+  const limit = nextState.pending_query_limit ?? undefined;
+  nextState.pending_query_sql = null;
+  nextState.pending_query_limit = null;
+  nextState.last_query_id = queryId;
+
+  try {
+    const startedAt = Date.now();
+    const result = await apiClient.runSafeQuery(sql, limit);
+    const elapsedMs = Date.now() - startedAt;
+    const preview = result.rows.slice(0, 10);
+    const warnings = result.warnings.length > 0 ? `\nWarnings: ${result.warnings.join("; ")}` : "";
+
+    return {
+      assistant_message: [
+        `Query completed. Query ID: ${queryId}.`,
+        `Rows returned: ${result.row_count}. Elapsed: ${elapsedMs}ms.`,
+        `Executed SQL: ${summarizeSql(result.governed_sql)}`,
+        `${warnings}`.trim(),
+        `Preview:\n${JSON.stringify(preview, null, 2)}`
+      ]
+        .filter((line) => line.length > 0)
+        .join("\n"),
+      state: nextState
+    };
+  } catch (error) {
+    const reason = error instanceof Error ? error.message : "unknown error";
+    return {
+      assistant_message: `Query failed. Query ID: ${queryId}. Error: ${reason}`,
+      state: nextState
+    };
+  }
+}
+
 async function maybeScopeConfirmOrRun(state: ChatState, apiClient: WebApiClient): Promise<ChatTurnResponse> {
   if (state.scope_pending) {
     // Already confirmed scope in a previous turn — run now
@@ -734,9 +836,7 @@ async function buildScopeConfirmation(state: ChatState, apiClient: WebApiClient)
     `- Timeline: ${timelineHint}`,
     ...verificationLines,
     "",
-    "Quality: Only analysis sections scoring 90%+ confidence will be included.",
-    "",
-    'Say "confirm" to run, or tell me what to adjust.'
+    'Choose "Finish scoping and run analysis" to execute now, or "Continue scoping" to keep refining.'
   ].join("\n");
 
   return {
@@ -745,8 +845,33 @@ async function buildScopeConfirmation(state: ChatState, apiClient: WebApiClient)
   };
 }
 
-function isScopeConfirmation(command: string): boolean {
-  return /\b(confirm|yes|go ahead|proceed|looks good|lgtm|run it|do it|execute|approved|ok|okay|sure|start)\b/.test(command);
+function isQueryExecutionChoice(command: string): boolean {
+  return (
+    /^__ui_run_query__$/.test(command) ||
+    /^(run query|execute query|yes run query|confirm query)\b/.test(command)
+  );
+}
+
+function isQueryOtherInstructionChoice(command: string): boolean {
+  return (
+    /^__ui_query_other_instruction__$/.test(command) ||
+    /^(other instruction|continue instruction|skip query|cancel query)\b/.test(command)
+  );
+}
+
+function isScopeRunChoice(command: string): boolean {
+  return (
+    /^__ui_finish_scoping_run_analysis__$/.test(command) ||
+    /\b(confirm|yes|go ahead|proceed|looks good|lgtm|run it|do it|execute|approved|ok|okay|sure|start)\b/.test(command) ||
+    /^(finish scoping and run analysis|run analysis|execute analysis)\b/.test(command)
+  );
+}
+
+function isScopeContinueChoice(command: string): boolean {
+  return (
+    /^__ui_continue_scoping__$/.test(command) ||
+    /^(continue scoping|keep scoping|adjust scope)\b/.test(command)
+  );
 }
 
 async function executeRun(state: ChatState, apiClient: WebApiClient): Promise<ChatTurnResponse> {
@@ -755,8 +880,10 @@ async function executeRun(state: ChatState, apiClient: WebApiClient): Promise<Ch
     return { assistant_message: `Cannot run yet: ${missing.join(", ")}.`, state };
   }
 
-  let nextState = parseChatState(state);
+  const nextState = parseChatState(state);
   nextState.scope_pending = false;
+  nextState.pending_query_sql = null;
+  nextState.pending_query_limit = null;
 
   if (!nextState.contract_id) {
     const contract = buildContractPayload(nextState);
@@ -815,12 +942,24 @@ function buildStateContext(state: ChatState): string {
     parts.push(`Last run: ${state.last_run_id}.`);
   }
 
+  if (state.last_query_id) {
+    parts.push(`Last query ID: ${state.last_query_id}.`);
+  }
+
   if (state.last_exec_brief) {
     const eb = state.last_exec_brief;
     parts.push(
       `Last analysis: ${eb.what_changed.join("; ")}. ` +
       `Confidence: ${(eb.confidence.score * 100).toFixed(0)}%.`
     );
+  }
+
+  if (state.pending_query_sql) {
+    parts.push("A query is pending confirmation.");
+  }
+
+  if (state.scope_pending) {
+    parts.push("Analysis execution is waiting for scope confirmation.");
   }
 
   parts.push("No specific action was executed for this message.");
@@ -830,6 +969,15 @@ function buildStateContext(state: ChatState): string {
 // ---------------------------------------------------------------------------
 // Parsing helpers
 // ---------------------------------------------------------------------------
+
+function summarizeSql(sql: string): string {
+  const compact = sql.replace(/\s+/g, " ").trim();
+  if (compact.length <= 180) {
+    return compact;
+  }
+
+  return `${compact.slice(0, 177)}...`;
+}
 
 function parseSetCommand(raw: string): { field: string; value: string } | null {
   const match = raw.match(/^(?:\/?set\s+)?([a-z_ ]+)\s*[:=]\s*(.+)$/i);
@@ -845,18 +993,46 @@ function parseSetCommand(raw: string): { field: string; value: string } | null {
 
 function parseQueryCommand(raw: string): { sql: string; limit?: number } | null {
   const match = raw.match(/^(?:\/?query|\/?sql|\/?run query)\s*[:=]\s*([\s\S]+)$/i);
+  if (match) {
+    const sql = match[1].trim();
+    if (sql.length === 0) {
+      return null;
+    }
+
+    return { sql };
+  }
+
+  const trimmed = raw.trim();
+  if (
+    (/^\s*select\b/i.test(trimmed) && /\bfrom\b/i.test(trimmed)) ||
+    (/^\s*with\b/i.test(trimmed) && /\bselect\b/i.test(trimmed))
+  ) {
+    return { sql: trimmed };
+  }
+
+  const fenced = extractSqlFence(raw);
+  if (fenced) {
+    return { sql: fenced };
+  }
+
+  return null;
+}
+
+function extractSqlFence(raw: string): string | null {
+  const match = raw.match(/```(?:sql)?\s*\n?([\s\S]*?)```/i);
   if (!match) {
     return null;
   }
 
-  const sql = match[1].trim();
-  if (sql.length === 0) {
-    return null;
+  const candidate = match[1].trim();
+  if (
+    (/^\s*select\b/i.test(candidate) && /\bfrom\b/i.test(candidate)) ||
+    (/^\s*with\b/i.test(candidate) && /\bselect\b/i.test(candidate))
+  ) {
+    return candidate;
   }
 
-  return {
-    sql
-  };
+  return null;
 }
 
 function applySetCommand(state: ChatState, field: string, value: string): { state: ChatState; updated: boolean } {
@@ -1314,11 +1490,27 @@ export async function fetchCatalogContext(apiClient: WebApiClient): Promise<{ ca
     }
 
     const lines: string[] = [];
+    if (catalog.business_id) {
+      lines.push(`BUSINESS_ID: ${catalog.business_id}`);
+      lines.push("");
+    }
+
     for (const table of catalog.tables.slice(0, 20)) {
       const cols = table.columns.slice(0, 12).map((c) => `${c.column_name}(${c.data_type})`).join(", ");
       const extra = table.columns.length > 12 ? ` +${table.columns.length - 12} more` : "";
       const rowInfo = table.row_count_estimate > 0 ? ` ~${formatNumber(table.row_count_estimate)} rows` : "";
-      lines.push(`${table.qualified_name} [${table.relation_type}]${rowInfo}: ${cols}${extra}`);
+      const tableId = table.table_id ? ` | ${table.table_id}` : "";
+      lines.push(`${table.qualified_name} [${table.relation_type}]${rowInfo}${tableId}: ${cols}${extra}`);
+      if (table.summary && table.summary.length > 0) {
+        lines.push(`  summary: ${table.summary}`);
+      }
+      if (table.low_cardinality_columns.length > 0) {
+        const lowCard = table.low_cardinality_columns
+          .slice(0, 4)
+          .map((entry) => `${entry.column_name}=[${entry.distinct_values.slice(0, 6).join(", ")}]`)
+          .join("; ");
+        lines.push(`  low_cardinality: ${lowCard}`);
+      }
       if (table.sample_rows.length > 0) {
         const sampleKeys = Object.keys(table.sample_rows[0]).slice(0, 6);
         const preview = sampleKeys.map((k) => `${k}=${String(table.sample_rows[0][k] ?? "null").slice(0, 25)}`).join(", ");

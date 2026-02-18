@@ -26,9 +26,12 @@ const TURN_INPUT: ConversationTurnInput = {
     },
     contract_id: null,
     last_run_id: null,
+    last_query_id: null,
     last_exec_brief: null,
     conversation_history: [],
     scope_pending: false,
+    pending_query_sql: null,
+    pending_query_limit: null,
     planner_summary: null
   }
 };

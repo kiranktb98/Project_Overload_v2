@@ -1,20 +1,18 @@
-import { describe, expect, it, vi } from "vitest";
+import { describe, expect, it } from "vitest";
 import { LocalStubDataPlane } from "@project-overload/dataplane";
 import type { DataPlane, DataPlaneQueryRequest, DataPlaneQueryResult } from "@project-overload/dataplane";
 import {
   createStubAnalystClient,
   createStubPlannerClient,
-  createStubQueryStrategistClient,
   createStubReportComposerClient
 } from "@project-overload/llm-client";
 import type {
   AnalystClient,
-  PlannerClient,
   QueryStrategistClient,
   ReportComposerClient,
   ReportComposerInput
 } from "@project-overload/llm-client";
-import type { ReportContract, BatchAnalysis, QueryStrategyOutput } from "@project-overload/shared";
+import type { ReportContract, QueryStrategyOutput } from "@project-overload/shared";
 import { InMemoryMetadataStore } from "../src/store/create-store";
 import { runReportContractPipeline } from "../src/services/run-contract";
 
@@ -83,24 +81,8 @@ function spyAnalyst(): { client: AnalystClient; calls: Array<{ question: string;
   };
 }
 
-/** A data plane that returns specific rows for each SQL query, matched by substring */
-function routingDataPlane(
-  routes: Array<{ match: string; rows: Record<string, unknown>[] }>
-): DataPlane {
-  return new LocalStubDataPlane({
-    row_provider: (sql: string) => {
-      for (const route of routes) {
-        if (sql.toLowerCase().includes(route.match.toLowerCase())) {
-          return route.rows;
-        }
-      }
-      return [];
-    }
-  });
-}
-
 // ---------------------------------------------------------------------------
-// Case 2: Standalone queries — each query gets its own analyst call
+// Case 2: Standalone queries - each query gets its own analyst call
 // ---------------------------------------------------------------------------
 
 describe("Case 2: standalone queries", () => {
@@ -122,7 +104,7 @@ describe("Case 2: standalone queries", () => {
       catalog_summary: "public.sales [TABLE]: id, amount, region"
     });
 
-    // Two standalone queries → two analyst calls
+    // Two standalone queries -> two analyst calls
     expect(analyst.calls).toHaveLength(2);
     expect(analyst.calls[0].question).toBe("What is the revenue trend?");
     expect(analyst.calls[1].question).toBe("Top customers?");
@@ -221,7 +203,7 @@ describe("Case 2: standalone queries", () => {
 });
 
 // ---------------------------------------------------------------------------
-// Case 1: Grouped queries — merged rows, single analyst call per group
+// Case 1: Grouped queries - merged rows, single analyst call per group
 // ---------------------------------------------------------------------------
 
 describe("Case 1: grouped queries", () => {
@@ -244,7 +226,7 @@ describe("Case 1: grouped queries", () => {
       catalog_summary: "public.sales [TABLE]: id, amount, region"
     });
 
-    // Two queries in same group → ONE analyst call
+    // Two queries in same group -> ONE analyst call
     expect(analyst.calls).toHaveLength(1);
     expect(analyst.calls[0].question).toBe("Revenue by region? + Revenue by product?");
     // 40 rows from each query = 80 merged rows
@@ -268,8 +250,8 @@ describe("Case 1: grouped queries", () => {
       { question: "Q2?", sql: "SELECT * FROM public.sales LIMIT 200", purpose: "P2", group_id: "big" }
     ]);
 
-    // Each query returns 150 rows → 300 merged, but cap is 200
-    const result = await runReportContractPipeline({
+    // Each query returns 150 rows -> 300 merged, but cap is 200
+    await runReportContractPipeline({
       contract: makeContract({ guardrails: { evidence_row_cap: 200, max_batches: 5, allowed_relations: ["public.sales"], allowed_schemas: ["public"], timeout_ms: 10000, deny_write: true } }),
       store: new InMemoryMetadataStore(),
       data_plane: new LocalStubDataPlane({ row_provider: () => makeRows(150) }),
@@ -285,7 +267,7 @@ describe("Case 1: grouped queries", () => {
     expect(analyst.calls[0].row_count).toBe(200);
   });
 
-  it("handles partial group failure — one query fails, other succeeds", async () => {
+  it("handles partial group failure - one query fails, other succeeds", async () => {
     const analyst = spyAnalyst();
     let mainCallCount = 0;
 
@@ -335,14 +317,14 @@ describe("Case 1: grouped queries", () => {
       catalog_summary: "public.sales"
     });
 
-    // One query failed but the other succeeded → analyst still called with partial data
+    // One query failed but the other succeeded -> analyst still called with partial data
     expect(analyst.calls).toHaveLength(1);
     expect(analyst.calls[0].row_count).toBe(30);
     expect(analyst.calls[0].question).toBe("Working query?");
     expect(result.run.status).toBe("succeeded");
   });
 
-  it("handles full group failure — all queries in group fail", async () => {
+  it("handles full group failure - all queries in group fail", async () => {
     const analyst = spyAnalyst();
 
     const failingDataPlane: DataPlane = {
@@ -370,7 +352,7 @@ describe("Case 1: grouped queries", () => {
       catalog_summary: "public.sales"
     });
 
-    // All queries failed → no analyst call, but report still generated
+    // All queries failed -> no analyst call, but report still generated
     expect(analyst.calls).toHaveLength(0);
     expect(result.run.status).toBe("succeeded");
     expect(result.exec_brief.so_what.some((s) => s.includes("Database down"))).toBe(true);
@@ -460,7 +442,7 @@ describe("mixed Case 1 + Case 2", () => {
       { question: "G2Q2?", sql: "SELECT * FROM public.sales LIMIT 200", purpose: "G2P2", group_id: "groupB" }
     ]);
 
-    const result = await runReportContractPipeline({
+    await runReportContractPipeline({
       contract: makeContract(),
       store: new InMemoryMetadataStore(),
       data_plane: new LocalStubDataPlane({ row_provider: () => makeRows(20) }),
@@ -471,7 +453,7 @@ describe("mixed Case 1 + Case 2", () => {
       catalog_summary: "public.sales"
     });
 
-    // 2 groups → 2 analyst calls (no standalone)
+    // 2 groups -> 2 analyst calls (no standalone)
     expect(analyst.calls).toHaveLength(2);
     expect(analyst.calls[0].question).toBe("G1Q1? + G1Q2?");
     expect(analyst.calls[0].row_count).toBe(40); // 20 + 20

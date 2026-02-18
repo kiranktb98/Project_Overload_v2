@@ -7,6 +7,11 @@ import {
   assertSelectOnly,
   ensureLimit
 } from "@project-overload/sql-guard";
+import {
+  catalogAgentIndexTable,
+  generateBusinessId,
+  type LowCardinalityColumn
+} from "../agents";
 
 const EXCLUDED_SCHEMAS = [
   "pg_catalog",
@@ -126,14 +131,18 @@ export type TableColumnInfo = {
 };
 
 export type TableCatalogEntry = {
+  table_id: string;
   qualified_name: string;
   relation_type: "TABLE" | "VIEW" | "MATERIALIZED VIEW";
+  summary: string;
   columns: TableColumnInfo[];
+  low_cardinality_columns: LowCardinalityColumn[];
   sample_rows: Record<string, unknown>[];
   row_count_estimate: number;
 };
 
 export type DataCatalog = {
+  business_id: string;
   tables: TableCatalogEntry[];
   business_context: string;
   cataloged_at: string;
@@ -161,6 +170,7 @@ export type AllowlistValidationResult = {
 
 type ActiveConnection = {
   id: string;
+  business_id: string;
   name: string;
   database: string;
   server_version: string;
@@ -321,10 +331,12 @@ export class RuntimeConnectionManager {
       const allowed = normalizeAllowlist(requestedAllowlist, availableRelations);
       const connectionName = input.name?.trim().length ? input.name.trim() : metadata.current_database;
       const encrypted = encryptConnectionString(normalized.normalized_connection_string, this.encryptionKey);
+      const businessId = generateBusinessId();
 
       const previous = this.active;
       this.active = {
         id: randomUUID(),
+        business_id: businessId,
         name: connectionName,
         database: metadata.current_database,
         server_version: metadata.version,
@@ -342,7 +354,13 @@ export class RuntimeConnectionManager {
 
       // Auto-catalog: sample rows and column info for allowed tables
       try {
-        const catalog = await buildDataCatalog(pool, allowed, relations, input.business_context ?? "");
+        const catalog = await buildDataCatalog(
+          pool,
+          businessId,
+          allowed,
+          relations,
+          input.business_context ?? ""
+        );
         this.active.catalog = catalog;
       } catch {
         // Catalog failure should not block connection
@@ -436,6 +454,7 @@ export class RuntimeConnectionManager {
     }
     const catalog = await buildDataCatalog(
       this.active.pool,
+      this.active.business_id,
       this.active.allowed_relations,
       this.active.relations_health,
       this.active.catalog?.business_context ?? ""
@@ -1267,6 +1286,7 @@ function sanitizeTlsCaPem(value?: string): string | undefined {
 
 async function buildDataCatalog(
   pool: Pool,
+  businessId: string,
   allowedRelations: string[],
   relationsHealth: RelationHealth[],
   businessContext: string
@@ -1323,10 +1343,31 @@ async function buildDataCatalog(
         // Estimate unavailable
       }
 
+      const lowCardinalityColumns = await readLowCardinalityColumns(
+        pool,
+        schema,
+        table,
+        columns
+      );
+
+      const tableIndex = catalogAgentIndexTable({
+        business_id: businessId,
+        qualified_name: qualifiedName,
+        columns: columns.map((column) => ({
+          column_name: column.column_name,
+          data_type: column.data_type
+        })),
+        sample_rows: sampleRows,
+        low_cardinality_columns: lowCardinalityColumns
+      });
+
       tables.push({
+        table_id: tableIndex.table_id,
         qualified_name: qualifiedName,
         relation_type: health.relation_type,
+        summary: tableIndex.summary,
         columns,
+        low_cardinality_columns: lowCardinalityColumns,
         sample_rows: sampleRows,
         row_count_estimate: rowCountEstimate
       });
@@ -1336,10 +1377,89 @@ async function buildDataCatalog(
   }
 
   return {
+    business_id: businessId,
     tables,
     business_context: businessContext,
     cataloged_at: new Date().toISOString()
   };
+}
+
+const LOW_CARDINALITY_LIMIT = 20;
+const MAX_PROFILED_COLUMNS_PER_TABLE = 40;
+
+async function readLowCardinalityColumns(
+  pool: Pool,
+  schema: string,
+  table: string,
+  columns: TableColumnInfo[]
+): Promise<LowCardinalityColumn[]> {
+  const profiles: LowCardinalityColumn[] = [];
+
+  for (const column of columns.slice(0, MAX_PROFILED_COLUMNS_PER_TABLE)) {
+    if (!isLowCardinalityCandidateType(column.data_type)) {
+      continue;
+    }
+
+    try {
+      const result = await pool.query<{ value: string }>(
+        [
+          `SELECT DISTINCT ${quoteIdent(column.column_name)}::text AS value`,
+          `FROM ${quoteIdent(schema)}.${quoteIdent(table)}`,
+          `WHERE ${quoteIdent(column.column_name)} IS NOT NULL`,
+          `LIMIT ${LOW_CARDINALITY_LIMIT + 1}`
+        ].join("\n")
+      );
+
+      if (result.rows.length === 0 || result.rows.length > LOW_CARDINALITY_LIMIT) {
+        continue;
+      }
+
+      const distinctValues = result.rows
+        .map((row) => sanitizeDistinctValue(row.value))
+        .filter((value): value is string => value.length > 0);
+
+      if (distinctValues.length === 0) {
+        continue;
+      }
+
+      profiles.push({
+        column_name: column.column_name,
+        distinct_values: distinctValues
+      });
+    } catch {
+      // Skip columns where distinct profiling fails (unsupported cast/type or permissions).
+    }
+  }
+
+  return profiles;
+}
+
+function isLowCardinalityCandidateType(dataType: string): boolean {
+  const normalized = dataType.toLowerCase();
+  if (
+    normalized.includes("json") ||
+    normalized.includes("bytea") ||
+    normalized.includes("array") ||
+    normalized.includes("tsvector") ||
+    normalized.includes("tsquery")
+  ) {
+    return false;
+  }
+
+  return true;
+}
+
+function sanitizeDistinctValue(value: string | null | undefined): string {
+  if (value === null || value === undefined) {
+    return "";
+  }
+
+  const trimmed = String(value).trim();
+  if (trimmed.length === 0) {
+    return "";
+  }
+
+  return trimmed.length <= 64 ? trimmed : `${trimmed.slice(0, 61)}...`;
 }
 
 function quoteIdent(identifier: string): string {

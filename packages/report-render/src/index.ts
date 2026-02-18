@@ -27,7 +27,6 @@ export function renderExecBriefHtml(execBriefInput: ExecBrief): string {
       h1 { margin-bottom: 8px; }
       h2 { margin-top: 20px; }
       ul { padding-left: 20px; }
-      .confidence { margin-top: 20px; padding: 12px; border: 1px solid #d1d5db; }
     </style>
   </head>
   <body>
@@ -39,10 +38,6 @@ export function renderExecBriefHtml(execBriefInput: ExecBrief): string {
     ${section("What to do", execBrief.what_to_do)}
     ${section("Appendix refs", execBrief.appendix_refs.length > 0 ? execBrief.appendix_refs : ["None"])}
     ${section("Deltas vs last run", execBrief.deltas_vs_last_run.length > 0 ? execBrief.deltas_vs_last_run : ["No delta captured"])}
-    <div class="confidence">
-      <strong>Confidence:</strong> ${execBrief.confidence.score}
-      <p>${escapeHtml(execBrief.confidence.rationale)}</p>
-    </div>
   </body>
 </html>`;
 }

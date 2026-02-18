@@ -81,7 +81,7 @@ export function registerConnectionRoutes(app: FastifyInstance, manager: RuntimeC
   app.get("/connections/catalog", async (_request, reply) => {
     const catalog = manager.getCatalog();
     if (!catalog) {
-      return reply.code(200).send({ tables: [], business_context: "", cataloged_at: null });
+      return reply.code(200).send({ business_id: null, tables: [], business_context: "", cataloged_at: null });
     }
     return reply.code(200).send(catalog);
   });
@@ -94,6 +94,18 @@ export function registerConnectionRoutes(app: FastifyInstance, manager: RuntimeC
       return reply.code(400).send({
         ok: false,
         message: error instanceof Error ? error.message : "Unable to refresh catalog"
+      });
+    }
+  });
+
+  app.post("/connections/catalogue", async (_request, reply) => {
+    try {
+      const catalog = await manager.refreshCatalog();
+      return reply.code(200).send(catalog ?? { business_id: null, tables: [], business_context: "", cataloged_at: null });
+    } catch (error) {
+      return reply.code(400).send({
+        ok: false,
+        message: error instanceof Error ? error.message : "Unable to run catalogue agent"
       });
     }
   });
