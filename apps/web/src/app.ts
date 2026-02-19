@@ -13,6 +13,10 @@ import {
   createConversationClientFromEnv,
   type ConversationClient
 } from "./conversation";
+import {
+  createQueryRouterClientFromEnv,
+  type QueryRouterClient
+} from "./query-router";
 import { renderChatPage } from "./page";
 import { renderConnectionPage } from "./connect-page";
 
@@ -20,6 +24,7 @@ export type WebAppDependencies = {
   api_base_url?: string;
   fetch_impl?: typeof fetch;
   conversation_client?: ConversationClient;
+  query_router?: QueryRouterClient;
 };
 
 export function buildWebApp(options: WebAppDependencies = {}) {
@@ -36,11 +41,15 @@ export function buildWebApp(options: WebAppDependencies = {}) {
   });
   const conversationClient =
     options.conversation_client ?? createConversationClientFromEnv({ fetch_impl: options.fetch_impl });
+  const queryRouter =
+    options.query_router ?? createQueryRouterClientFromEnv({ fetch_impl: options.fetch_impl });
 
   app.get("/health", async () => ({ status: "ok", service: "web" }));
   app.get("/api/chat/runtime", async () => ({
     provider: conversationClient.provider,
-    mode: conversationClient.mode
+    mode: conversationClient.mode,
+    query_router_provider: queryRouter.provider,
+    query_router_mode: queryRouter.mode
   }));
 
   app.get("/", async (_request, reply) => {
@@ -66,17 +75,45 @@ export function buildWebApp(options: WebAppDependencies = {}) {
       const response = await handleChatTurn({
         message: parsed.data.message,
         state,
-        api_client: apiClient
+        api_client: apiClient,
+        query_router: queryRouter
       });
+
+      if (shouldBypassConversationForAction(response.assistant_message, response.state)) {
+        const nextState = appendConversationTurn(response.state, parsed.data.message, response.assistant_message);
+        return reply.code(200).send({
+          ...response,
+          state: nextState,
+          assistant_message: response.assistant_message
+        });
+      }
+
       const catalogCtx = await fetchCatalogContext(apiClient);
-      const conversationResponse = await conversationClient.respond({
-        user_message: parsed.data.message,
-        action_context: response.assistant_message,
-        state: response.state,
-        history: state.conversation_history,
-        catalog_summary: catalogCtx.catalog_summary,
-        business_context: catalogCtx.business_context
-      });
+      let conversationResponse: Awaited<ReturnType<ConversationClient["respond"]>>;
+      try {
+        conversationResponse = await conversationClient.respond({
+          user_message: parsed.data.message,
+          action_context: response.assistant_message,
+          state: response.state,
+          history: state.conversation_history,
+          catalog_summary: catalogCtx.catalog_summary,
+          business_context: catalogCtx.business_context
+        });
+      } catch (conversationError) {
+        app.log.warn(
+          {
+            err: conversationError,
+            path: "/api/chat"
+          },
+          "Conversation provider failed; returning deterministic action context."
+        );
+        const nextState = appendConversationTurn(response.state, parsed.data.message, response.assistant_message);
+        return reply.code(200).send({
+          ...response,
+          state: nextState,
+          assistant_message: response.assistant_message
+        });
+      }
 
       const aiMessage = enforceExecutionTruth(
         conversationResponse.message,
@@ -289,20 +326,64 @@ function enforceExecutionTruth(modelMessage: string, actionContext: string): str
   const reportExecuted = /\bReport executed\b/i.test(actionContext);
 
   if (!queryExecuted && looksLikeQueryExecutionClaim(modelMessage)) {
+    if (
+      /\bquery is ready, but waiting for your confirmation\b/i.test(actionContext) ||
+      /\bchoose "run query"\b/i.test(actionContext)
+    ) {
+      return actionContext;
+    }
+
     return [
       "I haven't executed a SQL query yet.",
-      "If you want me to run one now, send `query: SELECT ...` (or paste a SELECT statement)."
+      "Ask in plain language (for example: total sales in the last month, or sales in Bengaluru) and I'll run a safe query directly."
     ].join("\n");
   }
 
   if (!reportExecuted && looksLikeReportExecutionClaim(modelMessage)) {
     return [
       "I haven't executed a report run yet.",
-      "Use the decision buttons in chat: `Run Data Preparation`, then `Finish scoping and run analysis`."
+      "The workflow is paused at a pending execution decision."
     ].join("\n");
   }
 
   return modelMessage;
+}
+
+function shouldBypassConversationForAction(actionContext: string, state: unknown): boolean {
+  const parsedState = parseChatState(state);
+  if (parsedState.pending_query_sql) {
+    return true;
+  }
+  if (parsedState.pending_single_query_request) {
+    return true;
+  }
+
+  if (
+    parsedState.prep_pending ||
+    parsedState.scope_pending ||
+    parsedState.awaiting_pdf_confirmation ||
+    parsedState.awaiting_save_confirmation ||
+    parsedState.awaiting_schedule_confirmation ||
+    parsedState.awaiting_schedule_mode_selection ||
+    parsedState.awaiting_custom_day_input
+  ) {
+    return true;
+  }
+
+  if (
+    /^Query completed\. Query ID:/i.test(actionContext) ||
+    /^Query failed\. Query ID:/i.test(actionContext) ||
+    /^Report executed\. Run ID:/i.test(actionContext) ||
+    /^Data preparation completed/i.test(actionContext) ||
+    /^Ready to prepare data for:/i.test(actionContext) ||
+    /^Prepared payloads:/i.test(actionContext) ||
+    /^Before I run that query, I need one clarification:/i.test(actionContext) ||
+    /^Contract saved\. ID:/i.test(actionContext)
+  ) {
+    return true;
+  }
+
+  return false;
 }
 
 function syncDecisionStateFromAssistantMessage(state: unknown, assistantMessage: string) {
@@ -310,6 +391,7 @@ function syncDecisionStateFromAssistantMessage(state: unknown, assistantMessage:
 
   if (
     nextState.pending_query_sql ||
+    nextState.pending_single_query_request ||
     nextState.prep_pending ||
     nextState.scope_pending ||
     nextState.awaiting_pdf_confirmation ||
@@ -318,6 +400,13 @@ function syncDecisionStateFromAssistantMessage(state: unknown, assistantMessage:
     nextState.awaiting_schedule_mode_selection ||
     nextState.awaiting_custom_day_input
   ) {
+    return nextState;
+  }
+
+  const queryCandidate = extractPendingSqlFromAssistantMessage(assistantMessage);
+  if (queryCandidate) {
+    nextState.pending_query_sql = queryCandidate;
+    nextState.pending_query_limit = null;
     return nextState;
   }
 
@@ -337,6 +426,72 @@ function syncDecisionStateFromAssistantMessage(state: unknown, assistantMessage:
   }
 
   return nextState;
+}
+
+function extractPendingSqlFromAssistantMessage(message: string): string | null {
+  const candidates = [
+    extractFencedSql(message),
+    extractQueryPrefixedSql(message),
+    extractLeadingSqlBlock(message)
+  ];
+
+  for (const candidate of candidates) {
+    if (!candidate) {
+      continue;
+    }
+
+    const normalized = normalizeSqlCandidate(candidate);
+    if (isLikelySelectSql(normalized)) {
+      return normalized;
+    }
+  }
+
+  return null;
+}
+
+function isLikelySelectSql(sql: string): boolean {
+  return (
+    (/^\s*select\b/i.test(sql) && /\bfrom\b/i.test(sql)) ||
+    (/^\s*with\b/i.test(sql) && /\bselect\b/i.test(sql))
+  );
+}
+
+function extractFencedSql(message: string): string | null {
+  const fencedMatch = message.match(/```(?:sql)?\s*\n?([\s\S]*?)```/i);
+  if (!fencedMatch) {
+    return null;
+  }
+  return fencedMatch[1].trim();
+}
+
+function extractQueryPrefixedSql(message: string): string | null {
+  const prefixedMatch = message.match(
+    /(?:^|\n)\s*`?query\s*:\s*((?:select|with)[\s\S]*?)(?=\n\s*\n|$)/i
+  );
+  if (!prefixedMatch) {
+    return null;
+  }
+  return prefixedMatch[1].trim();
+}
+
+function extractLeadingSqlBlock(message: string): string | null {
+  const sqlMatch = message.match(
+    /(?:^|\n)\s*((?:select|with)[\s\S]*?)(?=\n\s*\n|$)/i
+  );
+  if (!sqlMatch) {
+    return null;
+  }
+
+  return sqlMatch[1].trim();
+}
+
+function normalizeSqlCandidate(value: string): string {
+  const cleaned = value
+    .replace(/^\s*`+/, "")
+    .replace(/`+\s*$/, "")
+    .trim();
+  const withoutEllipsis = cleaned.replace(/\n\s*(?:\.{3}|…)\s*$/u, "").trim();
+  return withoutEllipsis.replace(/;+\s*$/g, "").replace(/\s+$/g, "");
 }
 
 function looksLikeQueryExecutionClaim(message: string): boolean {

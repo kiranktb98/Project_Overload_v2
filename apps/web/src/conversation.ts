@@ -321,7 +321,7 @@ function conversationalSystemPrompt(input: ConversationTurnInput): string {
     "When ACTION CONTEXT includes data-preparation warnings/notes, explicitly explain each issue, what auto-correction ran, and the exact validation evidence (expected vs observed months, missing months, monthly totals preview).",
     "Do not use vague phrasing like 'minor hiccup'; be concrete and traceable.",
     "Treat ACTION CONTEXT as execution truth. If it says no action was executed, never claim a query or report is running or completed.",
-    "Execution is button-driven: first 'Run Data Preparation', then 'Finish scoping and run analysis'. Never ask the user to type 'run'.",
+    "Execution is decision-driven. When ACTION CONTEXT shows a pending decision, acknowledge the wait state and do not tell the user to click buttons or type command words.",
     "Data preparation and analysis run question-by-question behind the scenes. Reflect that clearly in your responses when relevant.",
     "If no action was taken, you're just having a conversation. Answer naturally using the catalog and business context below.",
     "",

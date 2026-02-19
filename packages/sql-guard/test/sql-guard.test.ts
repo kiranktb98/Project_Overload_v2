@@ -3,6 +3,7 @@ import {
   assertAllowlistedRelations,
   assertAllowlistedSchemas,
   assertSelectOnly,
+  extractReferencedRelations,
   ensureLimit,
   SqlGuardError
 } from "../src";
@@ -64,5 +65,39 @@ describe("allowlist checks", () => {
     expect(() =>
       assertAllowlistedSchemas("SELECT * FROM private.sales", ["analytics"])
     ).toThrow(SqlGuardError);
+  });
+
+  it("ignores CTE aliases and validates only base relations", () => {
+    const sql = [
+      "WITH expected AS (",
+      "  SELECT generate_series(date_trunc('month', CURRENT_DATE) - interval '3 months', date_trunc('month', CURRENT_DATE), interval '1 month')::date AS month_start",
+      "),",
+      "observed AS (",
+      "  SELECT date_trunc('month', order_date::timestamp)::date AS month_start",
+      "  FROM public.demo_orders",
+      "  WHERE order_date IS NOT NULL",
+      ")",
+      "SELECT COUNT(*)",
+      "FROM expected",
+      "LEFT JOIN observed USING (month_start)"
+    ].join("\n");
+
+    expect(() =>
+      assertAllowlistedRelations(sql, ["public.demo_orders"])
+    ).not.toThrow();
+    expect(extractReferencedRelations(sql)).toEqual(["public.demo_orders"]);
+  });
+
+  it("extracts quoted schema.table identifiers", () => {
+    const sql = 'SELECT SUM("total_amount") FROM "public"."demo_orders"';
+    expect(extractReferencedRelations(sql)).toEqual(["public.demo_orders"]);
+    expect(() =>
+      assertAllowlistedRelations(sql, ["public.demo_orders"])
+    ).not.toThrow();
+  });
+
+  it("ignores set-returning functions in FROM", () => {
+    const sql = "SELECT day::date FROM generate_series(CURRENT_DATE - interval '6 days', CURRENT_DATE, interval '1 day') AS day";
+    expect(extractReferencedRelations(sql)).toEqual([]);
   });
 });
