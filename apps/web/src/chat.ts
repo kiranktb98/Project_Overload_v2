@@ -4,6 +4,10 @@ import {
   ReportContractSchema
 } from "@project-overload/shared";
 import { z } from "zod";
+import type {
+  QueryRouterClient,
+  QueryRoutingDecision
+} from "./query-router";
 
 const DEFAULT_TIMEOUT_MS = 15000;
 
@@ -38,6 +42,7 @@ export const ChatStateSchema = z.object({
   scope_pending: z.boolean().default(false),
   pending_query_sql: z.string().nullable().default(null),
   pending_query_limit: z.number().int().positive().nullable().default(null),
+  pending_single_query_request: z.string().nullable().default(null),
   planner_summary: z.string().nullable().default(null),
   preparation_summary: z.string().nullable().default(null),
   prepared_payloads: z.array(
@@ -370,6 +375,7 @@ export function createInitialChatState(): ChatState {
     scope_pending: false,
     pending_query_sql: null,
     pending_query_limit: null,
+    pending_single_query_request: null,
     planner_summary: null,
     preparation_summary: null,
     prepared_payloads: [],
@@ -410,6 +416,7 @@ export function parseChatState(value: unknown): ChatState {
     scope_pending: parsed.data.scope_pending ?? false,
     pending_query_sql: parsed.data.pending_query_sql ?? null,
     pending_query_limit: parsed.data.pending_query_limit ?? null,
+    pending_single_query_request: parsed.data.pending_single_query_request ?? null,
     planner_summary: parsed.data.planner_summary ?? null,
     preparation_summary: parsed.data.preparation_summary ?? null,
     prepared_payloads: [...parsed.data.prepared_payloads],
@@ -782,6 +789,7 @@ export async function handleChatTurn(input: {
   message: string;
   state: ChatState;
   api_client: WebApiClient;
+  query_router?: QueryRouterClient;
 }): Promise<ChatTurnResponse> {
   const rawMessage = input.message.trim();
   const command = rawMessage.toLowerCase();
@@ -804,7 +812,44 @@ export async function handleChatTurn(input: {
     }
 
     return {
-      assistant_message: 'Please choose one option first: "Run query" or "Other instruction".',
+      assistant_message: 'SQL decision pending (Run query / Other instruction).',
+      state: nextState
+    };
+  }
+
+  // --- Single-query clarification gate ---
+
+  if (nextState.pending_single_query_request) {
+    if (
+      isQueryOtherInstructionChoice(command) ||
+      /^(cancel|stop|nevermind|never mind|skip)\b/.test(command)
+    ) {
+      nextState.pending_single_query_request = null;
+      return {
+        assistant_message: "Okay, skipping that query. Tell me the next instruction.",
+        state: nextState
+      };
+    }
+
+    const mergedMessage = [
+      nextState.pending_single_query_request,
+      `Clarification: ${rawMessage}`
+    ].join("\n");
+    nextState.pending_single_query_request = null;
+
+    const routedFromClarification = await attemptSingleQueryOrAnalysisRouting(
+      mergedMessage,
+      nextState,
+      input.api_client,
+      input.query_router
+    );
+    if (routedFromClarification) {
+      return routedFromClarification;
+    }
+
+    return {
+      assistant_message:
+        "I still need a bit more detail before running that query. Please specify time window and any status filters.",
       state: nextState
     };
   }
@@ -841,7 +886,7 @@ export async function handleChatTurn(input: {
     }
 
     return {
-      assistant_message: 'Please choose one option first: "Generate report PDF" or "Not yet".',
+      assistant_message: "PDF decision pending (Generate report PDF / Not yet).",
       state: nextState
     };
   }
@@ -881,7 +926,7 @@ export async function handleChatTurn(input: {
     }
 
     return {
-      assistant_message: 'Please choose one option first: "Save report log" or "Skip save".',
+      assistant_message: "Save decision pending (Save report log / Skip save).",
       state: nextState
     };
   }
@@ -893,7 +938,7 @@ export async function handleChatTurn(input: {
       nextState.awaiting_schedule_confirmation = false;
       nextState.awaiting_schedule_mode_selection = true;
       return {
-        assistant_message: "Great. Choose a schedule cadence: weekly, monthly, or quarterly.",
+      assistant_message: "Schedule cadence decision pending (Weekly / Monthly / Quarterly).",
         state: nextState
       };
     }
@@ -907,7 +952,7 @@ export async function handleChatTurn(input: {
     }
 
     return {
-      assistant_message: 'Please choose one option first: "Schedule report" or "Not now".',
+      assistant_message: "Schedule setup decision pending (Schedule report / Not now).",
       state: nextState
     };
   }
@@ -920,7 +965,7 @@ export async function handleChatTurn(input: {
       nextState.schedule_mode_pending = "weekly";
       nextState.schedule_day_kind = "weekday";
       return {
-        assistant_message: "Choose the weekday to run this weekly schedule (UTC).",
+        assistant_message: "Weekly schedule selected. Weekday decision pending (UTC).",
         state: nextState
       };
     }
@@ -930,7 +975,7 @@ export async function handleChatTurn(input: {
       nextState.schedule_mode_pending = "monthly";
       nextState.schedule_day_kind = "monthday";
       return {
-        assistant_message: "Choose day 1, 15, 28, or type a custom day number (1-28).",
+        assistant_message: "Monthly schedule selected. Day-of-month decision pending.",
         state: nextState
       };
     }
@@ -940,13 +985,13 @@ export async function handleChatTurn(input: {
       nextState.schedule_mode_pending = "quarterly";
       nextState.schedule_day_kind = "monthday";
       return {
-        assistant_message: "Choose day 1, 15, 28, or type a custom day number (1-28) for quarterly runs.",
+        assistant_message: "Quarterly schedule selected. Day-of-month decision pending.",
         state: nextState
       };
     }
 
     return {
-      assistant_message: 'Please choose one option first: "Weekly", "Monthly", or "Quarterly".',
+      assistant_message: "Schedule cadence decision pending (Weekly / Monthly / Quarterly).",
       state: nextState
     };
   }
@@ -957,7 +1002,7 @@ export async function handleChatTurn(input: {
     const weekday = parseWeekdayChoice(command);
     if (weekday === null) {
       return {
-        assistant_message: "Choose a weekday button first (Mon-Sun).",
+        assistant_message: "Weekday decision pending (Mon-Sun).",
         state: nextState
       };
     }
@@ -987,7 +1032,7 @@ export async function handleChatTurn(input: {
     }
 
     return {
-      assistant_message: "Choose day 1, 15, 28, or type a custom day number (1-28).",
+      assistant_message: "Day-of-month decision pending (1, 15, 28, or custom day).",
       state: nextState
     };
   }
@@ -1022,8 +1067,16 @@ export async function handleChatTurn(input: {
       };
     }
 
+    const prepSimpleQueryAction = await inferNaturalQueryAction(rawMessage, nextState, input.api_client);
+    if (prepSimpleQueryAction) {
+      return executeNaturalSimpleQuery(nextState, input.api_client, prepSimpleQueryAction, {
+        user_message: rawMessage,
+        query_router: input.query_router
+      });
+    }
+
     return {
-      assistant_message: 'Please choose one option first: "Run Data Preparation" or "Continue scoping".',
+      assistant_message: "Data preparation decision pending (Run Data Preparation / Continue scoping).",
       state: nextState
     };
   }
@@ -1044,8 +1097,17 @@ export async function handleChatTurn(input: {
       };
     }
 
+    const scopedSimpleQueryAction = await inferNaturalQueryAction(rawMessage, nextState, input.api_client);
+    if (scopedSimpleQueryAction) {
+      return executeNaturalSimpleQuery(nextState, input.api_client, scopedSimpleQueryAction, {
+        user_message: rawMessage,
+        query_router: input.query_router
+      });
+    }
+
     return {
-      assistant_message: 'Please choose one option first: "Finish scoping and run analysis" or "Continue scoping".',
+      assistant_message:
+        "Analysis decision pending (Finish scoping and run analysis / Continue scoping).",
       state: nextState
     };
   }
@@ -1070,7 +1132,8 @@ export async function handleChatTurn(input: {
     }
 
     return {
-      assistant_message: 'Run Data Preparation first so analysis uses validated payloads.',
+      assistant_message:
+        "Data preparation is still pending; analysis can start after preparation completes.",
       state: nextState
     };
   }
@@ -1096,7 +1159,7 @@ export async function handleChatTurn(input: {
     }
     nextState.awaiting_pdf_confirmation = true;
     return {
-      assistant_message: 'Ready to generate the customer-facing PDF. Choose "Generate report PDF" or "Not yet".',
+      assistant_message: "PDF generation decision is pending.",
       state: nextState
     };
   }
@@ -1112,12 +1175,22 @@ export async function handleChatTurn(input: {
     const sqlPreview = summarizeSql(queryCommand.sql);
     return {
       assistant_message: [
-        "Query is ready, but waiting for your confirmation.",
+        "SQL is drafted and waiting on the current workflow decision.",
         `SQL preview: ${sqlPreview}`,
-        'Choose "Run query" to execute now, or "Other instruction" to keep refining.'
+        "Decision options are visible in the interface."
       ].join("\n"),
       state: nextState
     };
+  }
+
+  const routedSingleOrAnalysis = await attemptSingleQueryOrAnalysisRouting(
+    rawMessage,
+    nextState,
+    input.api_client,
+    input.query_router
+  );
+  if (routedSingleOrAnalysis) {
+    return routedSingleOrAnalysis;
   }
 
   if (command === "list contracts" || command === "list") {
@@ -1232,7 +1305,7 @@ async function executeSave(state: ChatState, apiClient: WebApiClient): Promise<C
 
 async function executePendingQuery(state: ChatState, apiClient: WebApiClient): Promise<ChatTurnResponse> {
   const nextState = parseChatState(state);
-  const sql = nextState.pending_query_sql;
+  const sql = nextState.pending_query_sql ? normalizeExecutableSql(nextState.pending_query_sql) : null;
 
   if (!sql) {
     return {
@@ -1273,6 +1346,742 @@ async function executePendingQuery(state: ChatState, apiClient: WebApiClient): P
       state: nextState
     };
   }
+}
+
+async function executeNaturalSimpleQuery(
+  state: ChatState,
+  apiClient: WebApiClient,
+  action: NaturalQueryAction,
+  options: {
+    user_message?: string;
+    query_router?: QueryRouterClient;
+  } = {}
+): Promise<ChatTurnResponse> {
+  const nextState = parseChatState(state);
+  const queryId = `qry_${randomUUID()}`;
+  nextState.last_query_id = queryId;
+  nextState.pending_single_query_request = null;
+
+  try {
+    const startedAt = Date.now();
+    const result = await apiClient.runSafeQuery(action.sql, action.limit);
+    const elapsedMs = Date.now() - startedAt;
+    const summary = summarizeNaturalQueryResult(action, result.rows[0]);
+    const method = summarizeSingleQueryMethod(action.explanation, result.governed_sql);
+    const warnings = result.warnings.length > 0 ? `\nWarnings: ${result.warnings.join("; ")}` : "";
+    const naturalNarration = await maybeNarrateSingleQueryResponse({
+      query_router: options.query_router,
+      query_id: queryId,
+      user_message: options.user_message ?? "",
+      result_summary: summary,
+      method_summary: method,
+      governed_sql: result.governed_sql,
+      rows: result.rows,
+      row_count: result.row_count,
+      elapsed_ms: elapsedMs,
+      warnings: result.warnings
+    });
+
+    if (naturalNarration) {
+      return {
+        assistant_message: naturalNarration,
+        state: nextState
+      };
+    }
+
+    return {
+      assistant_message: [
+        `Query completed. Query ID: ${queryId}.`,
+        summary,
+        method,
+        `Elapsed: ${elapsedMs}ms.`,
+        `${warnings}`.trim()
+      ]
+        .filter((line) => line.length > 0)
+        .join("\n"),
+      state: nextState
+    };
+  } catch (error) {
+    const reason = error instanceof Error ? error.message : "unknown error";
+    return {
+      assistant_message: `Query failed. Query ID: ${queryId}. Error: ${reason}`,
+      state: nextState
+    };
+  }
+}
+
+async function inferLlmQueryRoutingDecision(
+  rawMessage: string,
+  state: ChatState,
+  apiClient: WebApiClient,
+  queryRouter: QueryRouterClient | undefined
+): Promise<QueryRoutingDecision | null> {
+  if (!queryRouter) {
+    return null;
+  }
+
+  const lower = rawMessage.toLowerCase();
+  if (parseSetCommand(rawMessage) || parseQueryCommand(rawMessage)) {
+    return null;
+  }
+  if (detectConversationalAction(lower)) {
+    return null;
+  }
+  if (asksForPdf(lower) || asksToUseConnectedTables(lower)) {
+    return null;
+  }
+  if (isUiControlCommand(lower)) {
+    return null;
+  }
+  if (rawMessage.trim().length < 4) {
+    return null;
+  }
+
+  const catalog = await fetchCatalogContext(apiClient);
+  if (!catalog.catalog_summary || catalog.catalog_summary.trim().length === 0) {
+    return null;
+  }
+
+  try {
+    return await queryRouter.decide({
+      message: rawMessage,
+      now_iso: new Date().toISOString(),
+      business_context: catalog.business_context,
+      catalog_summary: catalog.catalog_summary,
+      allowed_relations: [...state.draft.allowed_relations],
+      allowed_schemas: [...state.draft.allowed_schemas],
+      report_draft: {
+        name: state.draft.name,
+        audience: state.draft.audience,
+        timezone: state.draft.timezone,
+        insight_mode: state.draft.insight_mode,
+        metric_ids: [...state.draft.metric_ids],
+        dimension_ids: [...state.draft.dimension_ids]
+      },
+      conversation_history: state.conversation_history
+        .slice(-8)
+        .map((turn) => ({ role: turn.role, content: turn.content }))
+    });
+  } catch {
+    return null;
+  }
+}
+
+async function attemptSingleQueryOrAnalysisRouting(
+  rawMessage: string,
+  state: ChatState,
+  apiClient: WebApiClient,
+  queryRouter: QueryRouterClient | undefined
+): Promise<ChatTurnResponse | null> {
+  const llmQueryRouting = await inferLlmQueryRoutingDecision(
+    rawMessage,
+    state,
+    apiClient,
+    queryRouter
+  );
+
+  if (llmQueryRouting?.route === "single_query" && llmQueryRouting.sql) {
+    const clarificationPrompt = buildSingleQueryClarificationPrompt(rawMessage, state);
+    if (clarificationPrompt) {
+      const nextState = parseChatState(state);
+      nextState.pending_single_query_request = rawMessage;
+      return {
+        assistant_message: clarificationPrompt,
+        state: nextState
+      };
+    }
+    return executeLlmRoutedSingleQuery(state, apiClient, rawMessage, llmQueryRouting, queryRouter);
+  }
+
+  if (llmQueryRouting?.route === "deep_analysis") {
+    const preparation = await buildPreparationConfirmation(state, apiClient);
+    const routerLine = llmQueryRouting.reason
+      ? `Routing decision: ${llmQueryRouting.reason}`
+      : "";
+
+    return {
+      assistant_message: [routerLine, preparation.assistant_message]
+        .filter((line) => line.trim().length > 0)
+        .join("\n\n"),
+      state: preparation.state
+    };
+  }
+
+  const naturalQueryAction = await inferNaturalQueryAction(rawMessage, state, apiClient);
+  if (!naturalQueryAction) {
+    return null;
+  }
+
+  const clarificationPrompt = buildSingleQueryClarificationPrompt(rawMessage, state);
+  if (clarificationPrompt) {
+    const nextState = parseChatState(state);
+    nextState.pending_single_query_request = rawMessage;
+    return {
+      assistant_message: clarificationPrompt,
+      state: nextState
+    };
+  }
+
+  return executeNaturalSimpleQuery(state, apiClient, naturalQueryAction, {
+    user_message: rawMessage,
+    query_router: queryRouter
+  });
+}
+
+async function executeLlmRoutedSingleQuery(
+  state: ChatState,
+  apiClient: WebApiClient,
+  userMessage: string,
+  decision: QueryRoutingDecision,
+  queryRouter?: QueryRouterClient
+): Promise<ChatTurnResponse> {
+  const nextState = parseChatState(state);
+  const queryId = `qry_${randomUUID()}`;
+  nextState.last_query_id = queryId;
+  nextState.pending_single_query_request = null;
+
+  const sql = decision.sql ? normalizeExecutableSql(decision.sql) : "";
+  if (!isLikelySingleSelectSql(sql)) {
+    return {
+      assistant_message: `Could not execute routed query. Query ID: ${queryId}. Reason: generated SQL was not a single SELECT statement.`,
+      state: nextState
+    };
+  }
+
+  try {
+    const startedAt = Date.now();
+    const result = await apiClient.runSafeQuery(sql);
+    const elapsedMs = Date.now() - startedAt;
+    const summary = summarizeLlmRoutedQueryResult(userMessage, result.rows, result.row_count);
+    const method = summarizeSingleQueryMethod(decision.reason, result.governed_sql || sql);
+    const warnings = result.warnings.length > 0 ? `\nWarnings: ${result.warnings.join("; ")}` : "";
+    const naturalNarration = await maybeNarrateSingleQueryResponse({
+      query_router: queryRouter,
+      query_id: queryId,
+      user_message: userMessage,
+      result_summary: summary,
+      method_summary: method,
+      governed_sql: result.governed_sql || sql,
+      rows: result.rows,
+      row_count: result.row_count,
+      elapsed_ms: elapsedMs,
+      warnings: result.warnings
+    });
+
+    if (naturalNarration) {
+      return {
+        assistant_message: naturalNarration,
+        state: nextState
+      };
+    }
+    return {
+      assistant_message: [
+        `Query completed. Query ID: ${queryId}.`,
+        summary,
+        method,
+        `Elapsed: ${elapsedMs}ms.`,
+        `${warnings}`.trim()
+      ]
+        .filter((line) => line.length > 0)
+        .join("\n"),
+      state: nextState
+    };
+  } catch (error) {
+    const reason = error instanceof Error ? error.message : "unknown error";
+    return {
+      assistant_message: `Query failed. Query ID: ${queryId}. Error: ${reason}`,
+      state: nextState
+    };
+  }
+}
+
+function summarizeLlmRoutedQueryResult(
+  userMessage: string,
+  rows: Array<Record<string, unknown>>,
+  rowCount: number
+): string {
+  if (rowCount === 0 || rows.length === 0) {
+    return "No rows matched your request.";
+  }
+
+  const first = rows[0] ?? {};
+  const entries = Object.entries(first);
+  const numericEntries = entries
+    .map(([key, value]) => ({
+      key,
+      value: parseNumberValue(value)
+    }))
+    .filter((entry): entry is { key: string; value: number } => entry.value !== null);
+
+  const preferredMetric = pickPrimaryMetricEntry(userMessage, numericEntries);
+  if (preferredMetric) {
+    const label = prettifyColumnLabel(preferredMetric.key);
+    const lines: string[] = [
+      `${label}: ${formatNumericValue(preferredMetric.value)}.`
+    ];
+
+    const window = formatWindowFromRow(first);
+    if (window) {
+      lines.push(`Window checked: ${window}.`);
+    }
+
+    if (rowCount > 1) {
+      lines.push(`Rows returned: ${rowCount}.`);
+    }
+
+    return lines.join("\n");
+  }
+
+  if (rowCount === 1) {
+    const compact = entries
+      .slice(0, 6)
+      .map(([key, value]) => `${prettifyColumnLabel(key)}: ${formatUnknownValue(value)}`)
+      .join("; ");
+    return compact.length > 0 ? compact : "One row returned.";
+  }
+
+  const preview = rows
+    .slice(0, 3)
+    .map((row, index) => `${index + 1}. ${Object.entries(row)
+      .slice(0, 4)
+      .map(([key, value]) => `${key}=${formatUnknownValue(value)}`)
+      .join(", ")}`)
+    .join("\n");
+  return `Rows returned: ${rowCount}.\nPreview:\n${preview}`;
+}
+
+function summarizeSingleQueryMethod(primaryExplanation: string, governedSql: string): string {
+  const lines: string[] = [];
+  const normalizedPrimary = primaryExplanation.trim();
+  if (normalizedPrimary.length > 0) {
+    lines.push(`Method: ${normalizedPrimary.replace(/\.$/, "")}.`);
+  } else {
+    lines.push("Method: single safe SELECT query.");
+  }
+
+  const sqlDetails = summarizeSqlExecutionDetails(governedSql);
+  lines.push(`Tables used: ${sqlDetails.tables.length > 0 ? sqlDetails.tables.join(", ") : "not detected"}.`);
+  lines.push(`Joins used: ${sqlDetails.joins.length > 0 ? sqlDetails.joins.join(" | ") : "none"}.`);
+  lines.push(
+    `Filters used: ${sqlDetails.filters.length > 0 ? sqlDetails.filters.join(" | ") : "none beyond safety guardrails"}.`
+  );
+  if (sqlDetails.limit !== null) {
+    lines.push(`Limit applied: ${sqlDetails.limit}.`);
+  }
+
+  return lines.join("\n");
+}
+
+async function maybeNarrateSingleQueryResponse(input: {
+  query_router?: QueryRouterClient;
+  query_id: string;
+  user_message: string;
+  result_summary: string;
+  method_summary: string;
+  governed_sql: string;
+  rows: Array<Record<string, unknown>>;
+  row_count: number;
+  elapsed_ms: number;
+  warnings: string[];
+}): Promise<string | null> {
+  if (!input.query_router?.narrate_single_query) {
+    return null;
+  }
+
+  const sqlDetails = summarizeSqlExecutionDetails(input.governed_sql);
+  try {
+    const narration = await input.query_router.narrate_single_query({
+      user_message: input.user_message,
+      query_id: input.query_id,
+      result_summary: input.result_summary,
+      method_summary: input.method_summary,
+      row_count: input.row_count,
+      elapsed_ms: input.elapsed_ms,
+      warnings: [...input.warnings],
+      tables: [...sqlDetails.tables],
+      joins: [...sqlDetails.joins],
+      filters: [...sqlDetails.filters],
+      rows_preview: input.rows.slice(0, 3)
+    });
+
+    const warningLine =
+      input.warnings.length > 0 ? `Warnings: ${input.warnings.join("; ")}` : null;
+    return [
+      `Query completed. Query ID: ${input.query_id}.`,
+      narration.trim(),
+      warningLine,
+      `Elapsed: ${input.elapsed_ms}ms.`
+    ]
+      .filter((line): line is string => Boolean(line && line.trim().length > 0))
+      .join("\n");
+  } catch {
+    return null;
+  }
+}
+
+function summarizeSqlExecutionDetails(sql: string): {
+  tables: string[];
+  joins: string[];
+  filters: string[];
+  limit: number | null;
+} {
+  const compact = sql.replace(/\s+/g, " ").trim();
+  if (compact.length === 0) {
+    return {
+      tables: [],
+      joins: [],
+      filters: [],
+      limit: null
+    };
+  }
+
+  const tables: string[] = [];
+  const tableRegex = /\b(?:from|join)\s+((?:"[^"]+"|\w+)(?:\.(?:"[^"]+"|\w+))?)/gi;
+  let tableMatch: RegExpExecArray | null;
+  while ((tableMatch = tableRegex.exec(compact)) !== null) {
+    const relation = normalizeSqlRelationName(tableMatch[1]);
+    if (relation && !tables.includes(relation)) {
+      tables.push(relation);
+    }
+  }
+
+  const joins: string[] = [];
+  const joinRegex = /\bjoin\s+.+?\bon\s+(.+?)(?=\bjoin\b|\bwhere\b|\bgroup\b|\border\b|\blimit\b|$)/gi;
+  let joinMatch: RegExpExecArray | null;
+  while ((joinMatch = joinRegex.exec(compact)) !== null) {
+    const joinClause = compactSqlSnippet(joinMatch[1], 120);
+    if (joinClause.length > 0) {
+      joins.push(joinClause);
+    }
+  }
+
+  const whereMatch = compact.match(/\bwhere\b\s+(.+?)(?=\bgroup\b|\border\b|\blimit\b|$)/i);
+  const filters: string[] = [];
+  if (whereMatch?.[1]) {
+    const clauses = whereMatch[1]
+      .split(/\s+and\s+/i)
+      .map((clause) => clause.trim())
+      .filter((clause) => clause.length > 0)
+      .filter((clause) => !/^(1\s*=\s*1|true)$/i.test(clause));
+
+    for (const clause of clauses.slice(0, 4)) {
+      filters.push(compactSqlSnippet(clause, 110));
+    }
+    if (clauses.length > 4) {
+      filters.push(`(+${clauses.length - 4} more)`);
+    }
+  }
+
+  const limitMatch = compact.match(/\blimit\s+(\d+)\b/i);
+  const limit = limitMatch ? Number.parseInt(limitMatch[1], 10) : null;
+
+  return { tables, joins, filters, limit: Number.isNaN(limit ?? Number.NaN) ? null : limit };
+}
+
+function normalizeSqlRelationName(value: string | undefined): string | null {
+  if (!value) {
+    return null;
+  }
+  const cleaned = value.replace(/"/g, "").trim();
+  return cleaned.length > 0 ? cleaned : null;
+}
+
+function compactSqlSnippet(value: string, maxLength: number): string {
+  const compact = value.replace(/\s+/g, " ").trim();
+  if (compact.length <= maxLength) {
+    return compact;
+  }
+  return `${compact.slice(0, Math.max(0, maxLength - 3))}...`;
+}
+
+function pickPrimaryMetricEntry(
+  userMessage: string,
+  entries: Array<{ key: string; value: number }>
+): { key: string; value: number } | null {
+  if (entries.length === 0) {
+    return null;
+  }
+
+  const lower = userMessage.toLowerCase();
+  const prioritized = entries
+    .map((entry) => {
+      const key = entry.key.toLowerCase();
+      let score = 0;
+      if (/(total|sum|sales|revenue|gmv|amount|value|metric|count)/.test(key)) score += 8;
+      if (/(count|rows|row_count)/.test(key) && !/\bhow many\b/.test(lower)) score -= 3;
+      if (/\bhow many\b/.test(lower) && /(count|rows|row_count)/.test(key)) score += 10;
+      if (/\bsales|revenue|gmv|amount\b/.test(lower) && /(sales|revenue|gmv|amount|value|total)/.test(key)) score += 6;
+      return { ...entry, score };
+    })
+    .sort((a, b) => b.score - a.score);
+
+  return prioritized[0] ?? null;
+}
+
+function formatWindowFromRow(row: Record<string, unknown>): string | null {
+  const monthWindow = formatMonthWindow(row.from_month, row.to_month);
+  if (monthWindow) {
+    return monthWindow;
+  }
+
+  const dayWindow = formatDayWindow(row.from_date, row.to_date);
+  if (dayWindow) {
+    return dayWindow;
+  }
+
+  return null;
+}
+
+function prettifyColumnLabel(columnName: string): string {
+  return columnName
+    .replace(/[_\s]+/g, " ")
+    .trim()
+    .replace(/\b\w/g, (char) => char.toUpperCase());
+}
+
+function formatUnknownValue(value: unknown): string {
+  if (value === null || value === undefined) {
+    return "null";
+  }
+  if (typeof value === "number") {
+    return Number.isFinite(value) ? formatNumericValue(value) : "null";
+  }
+  if (typeof value === "string") {
+    return value;
+  }
+  if (typeof value === "boolean") {
+    return value ? "true" : "false";
+  }
+  return JSON.stringify(value);
+}
+
+function isLikelySingleSelectSql(sql: string): boolean {
+  if (!sql || sql.trim().length === 0) {
+    return false;
+  }
+  if (sql.includes(";")) {
+    return false;
+  }
+  return /^\s*(select|with)\b/i.test(sql);
+}
+
+function isUiControlCommand(command: string): boolean {
+  return /^__ui_[a-z0-9_]+__$/.test(command);
+}
+
+function summarizeNaturalQueryResult(
+  action: NaturalQueryAction,
+  firstRow: Record<string, unknown> | undefined
+): string {
+  const row = firstRow ?? {};
+  const observedMonths = parseIntegerValue(row.observed_months);
+  const expectedMonths = parseIntegerValue(row.expected_months) ?? action.requested_months;
+  const missingMonths = parseStringArrayValue(row.missing_months);
+  const locationSuffix = action.city_filter ? ` in ${action.city_filter}` : "";
+  const productSuffix = action.product_filter ? ` for product ${action.product_filter}` : "";
+
+  if (action.kind === "sum_days") {
+    const totalValue = parseNumberValue(row.total_value) ?? 0;
+    const dayWindow = action.requested_days ?? parseIntegerValue(row.requested_days) ?? 1;
+    const lines: string[] = [
+      `Total sales${locationSuffix}${productSuffix} for the last ${dayWindow} day(s): ${formatNumericValue(totalValue)}.`
+    ];
+    const rowCount = parseIntegerValue(row.row_count);
+    if (rowCount !== null) {
+      lines.push(`Rows scanned in window: ${rowCount}.`);
+    }
+    const dayWindowLabel = formatDayWindow(row.from_date, row.to_date);
+    if (dayWindowLabel) {
+      lines.push(`Window checked: ${dayWindowLabel}.`);
+    }
+    return lines.join("\n");
+  }
+
+  if (action.kind === "sum_months") {
+    const totalValue = parseNumberValue(row.total_value) ?? 0;
+    const monthWindow = expectedMonths ?? action.requested_months ?? observedMonths;
+    const windowLabel = action.window_label
+      ? `for ${action.window_label}`
+      : `for the last ${monthWindow ?? "requested"} month(s)`;
+    const lines: string[] = [
+      `Total sales${locationSuffix}${productSuffix} ${windowLabel}: ${formatNumericValue(totalValue)}.`
+    ];
+    lines.push(formatCoverageLine(observedMonths, expectedMonths, missingMonths));
+    const window = formatMonthWindow(row.from_month, row.to_month);
+    if (window) {
+      lines.push(`Window checked: ${window}.`);
+    }
+    return lines.join("\n");
+  }
+
+  if (action.kind === "sum_total") {
+    const totalValue = parseNumberValue(row.total_value) ?? 0;
+    const lines: string[] = [
+      `Total sales${locationSuffix}${productSuffix} across all available data: ${formatNumericValue(totalValue)}.`
+    ];
+    const rowCount = parseIntegerValue(row.row_count);
+    if (rowCount !== null) {
+      lines.push(`Rows scanned: ${rowCount}.`);
+    }
+    const dayWindowLabel = formatDayWindow(row.from_date, row.to_date);
+    if (dayWindowLabel) {
+      lines.push(`Data range: ${dayWindowLabel}.`);
+    }
+    return lines.join("\n");
+  }
+
+  if (expectedMonths !== null || action.requested_months !== null) {
+    const lines: string[] = [
+      formatCoverageLine(observedMonths, expectedMonths, missingMonths)
+    ];
+    const window = formatMonthWindow(row.from_month, row.to_month);
+    if (window) {
+      lines.push(`Window checked: ${window}.`);
+    }
+    return lines.join("\n");
+  }
+
+  const availableMonths = parseIntegerValue(row.months_available);
+  const firstMonth = parseDateValue(row.first_month);
+  const lastMonth = parseDateValue(row.last_month);
+  const rangeText = firstMonth && lastMonth ? ` (${firstMonth} to ${lastMonth})` : "";
+  return `Months available: ${availableMonths ?? 0}${rangeText}.`;
+}
+
+function formatCoverageLine(
+  observedMonths: number | null,
+  expectedMonths: number | null,
+  missingMonths: string[]
+): string {
+  if (observedMonths === null && expectedMonths === null) {
+    return "Coverage could not be determined from the query output.";
+  }
+
+  if (expectedMonths !== null && observedMonths !== null) {
+    if (observedMonths < expectedMonths || missingMonths.length > 0) {
+      if (missingMonths.length > 0) {
+        return `Coverage: ${observedMonths} out of ${expectedMonths} month(s) have data. Missing months: ${missingMonths.join(", ")}.`;
+      }
+
+      const inferredMissing = Math.max(expectedMonths - observedMonths, 0);
+      return `Coverage: ${observedMonths} out of ${expectedMonths} month(s) have data. Missing months detected: ${inferredMissing}.`;
+    }
+    return `Coverage: all ${expectedMonths} month(s) have data.`;
+  }
+
+  if (observedMonths !== null) {
+    return `Coverage: ${observedMonths} month(s) have data.`;
+  }
+
+  return `Coverage target: ${expectedMonths} month(s).`;
+}
+
+function parseIntegerValue(value: unknown): number | null {
+  if (typeof value === "number" && Number.isFinite(value)) {
+    return Math.trunc(value);
+  }
+  if (typeof value === "string" && value.trim().length > 0) {
+    const parsed = Number.parseInt(value, 10);
+    if (Number.isFinite(parsed)) {
+      return parsed;
+    }
+  }
+  return null;
+}
+
+function parseNumberValue(value: unknown): number | null {
+  if (typeof value === "number" && Number.isFinite(value)) {
+    return value;
+  }
+  if (typeof value === "string" && value.trim().length > 0) {
+    const parsed = Number.parseFloat(value);
+    if (Number.isFinite(parsed)) {
+      return parsed;
+    }
+  }
+  return null;
+}
+
+function parseStringArrayValue(value: unknown): string[] {
+  if (Array.isArray(value)) {
+    return value
+      .map((entry) => (typeof entry === "string" ? entry.trim() : String(entry ?? "").trim()))
+      .filter((entry) => entry.length > 0);
+  }
+
+  if (typeof value !== "string") {
+    return [];
+  }
+
+  const trimmed = value.trim();
+  if (trimmed.length === 0) {
+    return [];
+  }
+
+  if (trimmed.startsWith("{") && trimmed.endsWith("}")) {
+    const inner = trimmed.slice(1, -1).trim();
+    if (inner.length === 0) {
+      return [];
+    }
+    return inner
+      .split(",")
+      .map((entry) => entry.replace(/^"(.*)"$/, "$1").trim())
+      .filter((entry) => entry.length > 0);
+  }
+
+  if (trimmed.includes(",")) {
+    return trimmed
+      .split(",")
+      .map((entry) => entry.trim())
+      .filter((entry) => entry.length > 0);
+  }
+
+  return [trimmed];
+}
+
+function parseDateValue(value: unknown): string | null {
+  if (value instanceof Date && !Number.isNaN(value.valueOf())) {
+    return value.toISOString().slice(0, 10);
+  }
+  if (typeof value === "string" && value.trim().length > 0) {
+    return value.trim().slice(0, 10);
+  }
+  return null;
+}
+
+function formatMonthWindow(fromValue: unknown, toValue: unknown): string | null {
+  const from = parseDateValue(fromValue);
+  const to = parseDateValue(toValue);
+  if (!from || !to) {
+    return null;
+  }
+  return `${from} to ${to}`;
+}
+
+function formatDayWindow(fromValue: unknown, toValue: unknown): string | null {
+  const from = parseDateValue(fromValue);
+  const to = parseDateValue(toValue);
+  if (!from || !to) {
+    return null;
+  }
+  return `${from} to ${to}`;
+}
+
+function formatNumericValue(value: number): string {
+  if (!Number.isFinite(value)) {
+    return "0";
+  }
+  if (Number.isInteger(value)) {
+    return value.toLocaleString("en-US");
+  }
+  return value.toLocaleString("en-US", {
+    minimumFractionDigits: 0,
+    maximumFractionDigits: 2
+  });
+}
+
+function escapeRegExp(value: string): string {
+  return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 }
 
 async function maybePrepareOrRun(state: ChatState, apiClient: WebApiClient): Promise<ChatTurnResponse> {
@@ -1346,7 +2155,7 @@ async function buildPreparationConfirmation(state: ChatState, apiClient: WebApiC
     `- Timeline: ${timelineHint}`,
     ...verificationLines,
     "",
-    'Choose "Run Data Preparation" to build payloads, or "Continue scoping" to keep refining.'
+    "Scope is locked and waiting on the current workflow decision."
   ].join("\n");
 
   return {
@@ -1368,7 +2177,7 @@ function buildAnalysisConfirmation(state: ChatState): ChatTurnResponse {
   return {
     assistant_message: [
       payloadLine,
-      'Choose "Finish scoping and run analysis" to execute now, or "Continue scoping" to keep refining.'
+      "Analysis is staged and waiting on the current workflow decision."
     ].join("\n"),
     state: nextState
   };
@@ -1377,7 +2186,9 @@ function buildAnalysisConfirmation(state: ChatState): ChatTurnResponse {
 function isQueryExecutionChoice(command: string): boolean {
   return (
     /^__ui_run_query__$/.test(command) ||
-    /^(run query|execute query|yes run query|confirm query)\b/.test(command)
+    /^(run query|execute query|yes run query|confirm query)\b/.test(command) ||
+    /^(yes|y|go ahead|proceed|ok|okay|sure|confirm|do it|run it|run this query)\b/.test(command) ||
+    /^can you run (?:this )?query\b/.test(command)
   );
 }
 
@@ -1532,7 +2343,7 @@ async function executePreparation(state: ChatState, apiClient: WebApiClient): Pr
       "Data preparation completed with validation checks and correction trace.",
       payloadLines.length > 0 ? payloadLines.join("\n\n") : "- No prepared payloads.",
       "",
-      'Choose "Finish scoping and run analysis" to execute now, or "Continue scoping" to keep refining.'
+      "Analysis is staged and waiting on the current workflow decision."
     ].join("\n"),
     state: nextState
   };
@@ -1570,7 +2381,8 @@ async function executeRun(state: ChatState, apiClient: WebApiClient): Promise<Ch
 
   if (!state.prep_complete) {
     return {
-      assistant_message: 'Run Data Preparation first so analysis uses validated payloads.',
+      assistant_message:
+        "Data preparation is still pending; analysis can start after preparation completes.",
       state
     };
   }
@@ -1613,6 +2425,13 @@ async function executeRun(state: ChatState, apiClient: WebApiClient): Promise<Ch
     `Recommended: ${brief.what_to_do.join("; ") || "no action needed"}`
   );
 
+  const payloadDiagnostics = (run.prepared_payloads ?? [])
+    .slice(0, 6)
+    .map((payload) => formatPreparedPayloadSummary(payload));
+  const diagnosticsBlock = payloadDiagnostics.length > 0
+    ? ["Data prep validation:", payloadDiagnostics.join("\n\n")].join("\n")
+    : "";
+
   const tokenUsageLine = run.token_usage
     ? `Tokens used - input: ${run.token_usage.input_tokens}, output: ${run.token_usage.output_tokens}, total: ${run.token_usage.total_tokens}.`
     : "";
@@ -1622,8 +2441,9 @@ async function executeRun(state: ChatState, apiClient: WebApiClient): Promise<Ch
       `Report executed. Run ID: ${run.run_id}.`,
       run.concise_summary ?? "",
       briefLines.join("\n"),
+      diagnosticsBlock,
       tokenUsageLine,
-      'Choose "Generate report PDF" or "Not yet".'
+      "PDF generation decision is pending."
     ].filter((line) => line.length > 0).join("\n\n"),
     state: nextState,
     exec_brief_html: run.exec_brief_html
@@ -1836,6 +2656,10 @@ function buildStateContext(state: ChatState): string {
     parts.push("A query is pending confirmation.");
   }
 
+  if (state.pending_single_query_request) {
+    parts.push("A single-query clarification is pending.");
+  }
+
   if (state.prep_pending) {
     parts.push("Data preparation is waiting for confirmation.");
   }
@@ -1880,7 +2704,7 @@ function parseSetCommand(raw: string): { field: string; value: string } | null {
 function parseQueryCommand(raw: string): { sql: string; limit?: number } | null {
   const match = raw.match(/^(?:\/?query|\/?sql|\/?run query)\s*[:=]\s*([\s\S]+)$/i);
   if (match) {
-    const sql = match[1].trim();
+    const sql = normalizeExecutableSql(match[1]);
     if (sql.length === 0) {
       return null;
     }
@@ -1888,7 +2712,7 @@ function parseQueryCommand(raw: string): { sql: string; limit?: number } | null 
     return { sql };
   }
 
-  const trimmed = raw.trim();
+  const trimmed = normalizeExecutableSql(raw);
   if (
     (/^\s*select\b/i.test(trimmed) && /\bfrom\b/i.test(trimmed)) ||
     (/^\s*with\b/i.test(trimmed) && /\bselect\b/i.test(trimmed))
@@ -1898,10 +2722,1642 @@ function parseQueryCommand(raw: string): { sql: string; limit?: number } | null 
 
   const fenced = extractSqlFence(raw);
   if (fenced) {
-    return { sql: fenced };
+    return { sql: normalizeExecutableSql(fenced) };
   }
 
   return null;
+}
+
+function normalizeExecutableSql(value: string): string {
+  const withoutFence = value
+    .replace(/^\s*```(?:sql)?/i, "")
+    .replace(/```\s*$/i, "")
+    .trim();
+  const withoutEllipsis = withoutFence.replace(/\n\s*(?:\.{3}|…)\s*$/u, "").trim();
+  return withoutEllipsis.replace(/;+\s*$/g, "").trim();
+}
+
+type NaturalQueryAction = {
+  kind: "month_coverage" | "sum_months" | "sum_days" | "sum_total";
+  sql: string;
+  explanation: string;
+  relation: string;
+  date_column: string | null;
+  requested_months: number | null;
+  requested_days?: number | null;
+  metric_column?: string;
+  city_filter?: string | null;
+  product_filter?: string | null;
+  joined_relations?: string[];
+  window_label?: string | null;
+  limit?: number;
+};
+
+async function inferNaturalQueryAction(
+  rawMessage: string,
+  state: ChatState,
+  apiClient: WebApiClient
+): Promise<NaturalQueryAction | null> {
+  const lower = rawMessage.toLowerCase();
+  if (!looksLikeSingleQueryCandidate(lower, state)) {
+    return null;
+  }
+
+  let catalog: DataCatalogRecord;
+  try {
+    catalog = await apiClient.getCatalog();
+  } catch {
+    return null;
+  }
+
+  if (catalog.tables.length === 0) {
+    return null;
+  }
+
+  const requestedMonths = extractRequestedMonths(lower);
+  const requestedDays = extractRequestedDays(lower);
+  const canCarryWindowFromHistory =
+    looksLikeSalesNumericFollowUp(lower, state) && requestedMonths === null && requestedDays === null;
+  const historicalWindow = canCarryWindowFromHistory ? extractRequestedWindowFromHistory(state) : null;
+  const contextualMonths =
+    requestedMonths ?? (historicalWindow?.unit === "months" ? historicalWindow.value : null);
+  const contextualDays =
+    requestedDays ?? (historicalWindow?.unit === "days" ? historicalWindow.value : null);
+  const hasExplicitTimeWindow =
+    contextualDays !== null ||
+    contextualMonths !== null ||
+    /\b(this|current|past|last|previous)\s+(day|days|week|weeks|month|months|quarter|quarters|year|years)\b/.test(lower) ||
+    /\btoday\b/.test(lower);
+  const salesSumIntent = asksForSalesSum(lower) || looksLikeSalesNumericFollowUp(lower, state);
+
+  if (salesSumIntent) {
+    const target = pickBestAggregateTargetForQuestion(lower, catalog.tables);
+    if (!target) {
+      return null;
+    }
+
+    const baseAlias = "base";
+    const relation = quoteQualifiedRelation(target.table.qualified_name);
+    const dateExpression = target.date_column
+      ? `${baseAlias}.${quoteSqlIdentifier(target.date_column.column_name)}`
+      : null;
+    let fromClause = `FROM ${relation} AS ${baseAlias}`;
+    const whereClauses: string[] = [];
+    const joinedRelations: string[] = [];
+
+    const cityFilter = pickCityFilter(lower, target.table, state);
+    if (cityFilter !== null) {
+      whereClauses.push(
+        `  AND lower(${baseAlias}.${quoteSqlIdentifier(cityFilter.column_name)}::text) = lower(${quoteSqlLiteral(cityFilter.value)})`
+      );
+    }
+    const statusFilters = collectRequestedStatuses(lower, state);
+    const statusColumn =
+      statusFilters.length > 0
+        ? pickBestStatusColumnForFilter(target.table)
+        : null;
+    if (statusColumn && statusFilters.length > 0) {
+      whereClauses.push(
+        `  AND lower(${baseAlias}.${quoteSqlIdentifier(statusColumn.column_name)}::text) = ANY (ARRAY[${statusFilters
+          .map((value) => quoteSqlLiteral(value))
+          .join(", ")}])`
+      );
+    }
+
+    let productFilterValue: string | null = null;
+    const productFilterInBase = pickProductFilter(lower, target.table, state);
+    if (productFilterInBase) {
+      whereClauses.push(
+        `  AND lower(${baseAlias}.${quoteSqlIdentifier(productFilterInBase.column_name)}::text) = lower(${quoteSqlLiteral(productFilterInBase.value)})`
+      );
+      productFilterValue = productFilterInBase.value;
+    } else if (asksForProductFilter(lower)) {
+      const joinPlan = pickJoinPlanForProductFilter(lower, target.table, catalog.tables, state);
+      if (!joinPlan) {
+        return null;
+      }
+
+      const joinAlias = "dim";
+      fromClause = [
+        `FROM ${relation} AS ${baseAlias}`,
+        `JOIN ${quoteQualifiedRelation(joinPlan.table.qualified_name)} AS ${joinAlias}`,
+        `  ON ${baseAlias}.${quoteSqlIdentifier(joinPlan.base_key)} = ${joinAlias}.${quoteSqlIdentifier(joinPlan.join_key)}`
+      ].join("\n");
+      whereClauses.push(
+        `  AND lower(${joinAlias}.${quoteSqlIdentifier(joinPlan.filter_column)}::text) = lower(${quoteSqlLiteral(joinPlan.filter_value)})`
+      );
+      productFilterValue = joinPlan.filter_value;
+      joinedRelations.push(joinPlan.table.qualified_name);
+    }
+
+    const metricColumn = pickBestMetricColumnForSum(lower, target.table);
+    if (!metricColumn) {
+      return null;
+    }
+
+    const metricExpression = `${baseAlias}.${quoteSqlIdentifier(metricColumn.column_name)}`;
+    const calendarMonthRange = extractCalendarMonthRange(rawMessage);
+
+    if (calendarMonthRange && dateExpression && target.date_column) {
+      const sql = [
+        "SELECT",
+        `  COALESCE(SUM(COALESCE(${metricExpression}::numeric, 0)), 0)::numeric AS total_value,`,
+        `  COUNT(DISTINCT date_trunc('month', ${dateExpression}::timestamp))::int AS observed_months,`,
+        "  1::int AS expected_months,",
+        "  ARRAY[]::text[] AS missing_months,",
+        `  DATE ${quoteSqlLiteral(calendarMonthRange.from_date)} AS from_month,`,
+        `  (DATE ${quoteSqlLiteral(calendarMonthRange.to_exclusive_date)} - INTERVAL '1 day')::date AS to_month`,
+        fromClause,
+        `WHERE ${dateExpression} IS NOT NULL`,
+        `  AND ${dateExpression} >= DATE ${quoteSqlLiteral(calendarMonthRange.from_date)}`,
+        `  AND ${dateExpression} < DATE ${quoteSqlLiteral(calendarMonthRange.to_exclusive_date)}`,
+        ...whereClauses
+      ].join("\n");
+
+      return {
+        kind: "sum_months",
+        sql,
+        explanation:
+          `Using ${target.table.qualified_name}.${target.date_column.column_name} with ` +
+          `${target.table.qualified_name}.${metricColumn.column_name} for calendar month ${calendarMonthRange.label}` +
+          (productFilterValue ? `, filtered to product ${productFilterValue}` : "") +
+          (statusFilters.length > 0 ? `, filtered by ${statusFilters.join(", ")} status` : "") +
+          (cityFilter ? `, filtered to ${cityFilter.value}` : "") +
+          ".",
+        relation: target.table.qualified_name,
+        date_column: target.date_column.column_name,
+        requested_months: 1,
+        metric_column: metricColumn.column_name,
+        city_filter: cityFilter?.value ?? null,
+        product_filter: productFilterValue,
+        joined_relations: joinedRelations.length > 0 ? joinedRelations : undefined,
+        window_label: calendarMonthRange.label
+      };
+    }
+
+    const monthWindowHint = /\b(month|months|quarter|quarters|year|years)\b/.test(lower);
+    if (hasExplicitTimeWindow && (contextualMonths !== null || monthWindowHint)) {
+      if (!dateExpression || !target.date_column) {
+        return null;
+      }
+
+      const months = normalizeMonthWindow(contextualMonths ?? 4);
+      const lookback = months - 1;
+      const sql = [
+        "SELECT",
+        `  COALESCE(SUM(COALESCE(${metricExpression}::numeric, 0)), 0)::numeric AS total_value,`,
+        `  COUNT(DISTINCT date_trunc('month', ${dateExpression}::timestamp))::int AS observed_months,`,
+        `  ${months}::int AS expected_months,`,
+        "  ARRAY[]::text[] AS missing_months,",
+        `  (date_trunc('month', CURRENT_DATE) - interval '${lookback} months')::date AS from_month,`,
+        "  (date_trunc('month', CURRENT_DATE) + interval '1 month' - interval '1 day')::date AS to_month",
+        fromClause,
+        `WHERE ${dateExpression} IS NOT NULL`,
+        `  AND ${dateExpression} >= date_trunc('month', CURRENT_DATE) - interval '${lookback} months'`,
+        `  AND ${dateExpression} < date_trunc('month', CURRENT_DATE) + interval '1 month'`,
+        ...whereClauses
+      ].join("\n");
+
+      return {
+        kind: "sum_months",
+        sql,
+        explanation:
+          `Using ${target.table.qualified_name}.${target.date_column.column_name} with ` +
+          `${target.table.qualified_name}.${metricColumn.column_name} for rolling monthly total` +
+          (productFilterValue ? `, filtered to product ${productFilterValue}` : "") +
+          (statusFilters.length > 0 ? `, filtered by ${statusFilters.join(", ")} status` : "") +
+          (cityFilter ? `, filtered to ${cityFilter.value}` : "") +
+          ".",
+        relation: target.table.qualified_name,
+        date_column: target.date_column.column_name,
+        requested_months: months,
+        metric_column: metricColumn.column_name,
+        city_filter: cityFilter?.value ?? null,
+        product_filter: productFilterValue,
+        joined_relations: joinedRelations.length > 0 ? joinedRelations : undefined
+      };
+    }
+
+    if (contextualDays !== null && dateExpression && target.date_column) {
+      const safeDays = normalizeDayWindow(contextualDays);
+      const lookbackDays = safeDays - 1;
+      const sql = [
+        "SELECT",
+        `  COALESCE(SUM(COALESCE(${metricExpression}::numeric, 0)), 0)::numeric AS total_value,`,
+        "  COUNT(*)::int AS row_count,",
+        `  (CURRENT_DATE - interval '${lookbackDays} days')::date AS from_date,`,
+        "  CURRENT_DATE::date AS to_date",
+        fromClause,
+        `WHERE ${dateExpression} IS NOT NULL`,
+        `  AND ${dateExpression} >= CURRENT_DATE - interval '${lookbackDays} days'`,
+        "  AND " + `${dateExpression} < CURRENT_DATE + interval '1 day'`,
+        ...whereClauses
+      ].join("\n");
+
+      return {
+        kind: "sum_days",
+        sql,
+        explanation:
+          `Using ${target.table.qualified_name}.${target.date_column.column_name} with ` +
+          `${target.table.qualified_name}.${metricColumn.column_name} for a ${safeDays}-day total` +
+          (productFilterValue ? `, filtered to product ${productFilterValue}` : "") +
+          (statusFilters.length > 0 ? `, filtered by ${statusFilters.join(", ")} status` : "") +
+          (cityFilter ? `, filtered to ${cityFilter.value}` : "") +
+          ".",
+        relation: target.table.qualified_name,
+        date_column: target.date_column.column_name,
+        requested_months: null,
+        requested_days: safeDays,
+        metric_column: metricColumn.column_name,
+        city_filter: cityFilter?.value ?? null,
+        product_filter: productFilterValue,
+        joined_relations: joinedRelations.length > 0 ? joinedRelations : undefined
+      };
+    }
+
+    const sql = [
+      "SELECT",
+      `  COALESCE(SUM(COALESCE(${metricExpression}::numeric, 0)), 0)::numeric AS total_value,`,
+      "  COUNT(*)::int AS row_count,",
+      ...(dateExpression
+        ? [
+            `  MIN(${dateExpression})::date AS from_date,`,
+            `  MAX(${dateExpression})::date AS to_date`
+          ]
+        : [
+            "  NULL::date AS from_date,",
+            "  NULL::date AS to_date"
+          ]),
+      fromClause,
+      "WHERE 1 = 1",
+      ...whereClauses
+    ].join("\n");
+
+    return {
+      kind: "sum_total",
+      sql,
+      explanation:
+        `Using ${target.table.qualified_name}` +
+        (target.date_column ? `.${target.date_column.column_name}` : "") +
+        ` with ${target.table.qualified_name}.${metricColumn.column_name} for all-time total` +
+        (productFilterValue ? `, filtered to product ${productFilterValue}` : "") +
+        (statusFilters.length > 0 ? `, filtered by ${statusFilters.join(", ")} status` : "") +
+        (cityFilter ? `, filtered to ${cityFilter.value}` : "") +
+        ".",
+      relation: target.table.qualified_name,
+      date_column: target.date_column?.column_name ?? null,
+      requested_months: null,
+      metric_column: metricColumn.column_name,
+      city_filter: cityFilter?.value ?? null,
+      product_filter: productFilterValue,
+      joined_relations: joinedRelations.length > 0 ? joinedRelations : undefined
+    };
+  }
+
+  if (asksForMonthCoverage(lower)) {
+    const target = pickBestTemporalTableForQuestion(lower, catalog.tables);
+    if (!target) {
+      return null;
+    }
+
+    const relation = quoteQualifiedRelation(target.table.qualified_name);
+    const column = quoteSqlIdentifier(target.date_column.column_name);
+
+    if (requestedMonths) {
+      const months = normalizeMonthWindow(requestedMonths);
+      const lookback = months - 1;
+      const sql = [
+        "SELECT",
+        `  COUNT(DISTINCT date_trunc('month', ${column}::timestamp))::int AS observed_months,`,
+        `  ${months}::int AS expected_months,`,
+        "  ARRAY[]::text[] AS missing_months,",
+        `  (date_trunc('month', CURRENT_DATE) - interval '${lookback} months')::date AS from_month,`,
+        "  date_trunc('month', CURRENT_DATE)::date AS to_month",
+        `FROM ${relation}`,
+        `WHERE ${column} IS NOT NULL`,
+        `  AND ${column} >= date_trunc('month', CURRENT_DATE) - interval '${lookback} months'`,
+        `  AND ${column} < date_trunc('month', CURRENT_DATE) + interval '1 month'`
+      ].join("\n");
+
+      return {
+        kind: "month_coverage",
+        sql,
+        explanation:
+          `Using ${target.table.qualified_name}.${target.date_column.column_name} to validate ${months}-month coverage.`,
+        relation: target.table.qualified_name,
+        date_column: target.date_column.column_name,
+        requested_months: months
+      };
+    }
+
+    const sql = [
+      "SELECT",
+      `  COUNT(DISTINCT date_trunc('month', ${column}::timestamp))::int AS months_available,`,
+      `  MIN(date_trunc('month', ${column}::timestamp))::date AS first_month,`,
+      `  MAX(date_trunc('month', ${column}::timestamp))::date AS last_month`,
+      `FROM ${relation}`,
+      `WHERE ${column} IS NOT NULL`
+    ].join("\n");
+
+    return {
+      kind: "month_coverage",
+      sql,
+      explanation: `Using ${target.table.qualified_name}.${target.date_column.column_name} to count distinct populated months and show first/last month.`,
+      relation: target.table.qualified_name,
+      date_column: target.date_column.column_name,
+      requested_months: null
+    };
+  }
+
+  return null;
+}
+
+function looksLikeSingleQueryCandidate(lower: string, state: ChatState): boolean {
+  if (looksLikeAnalysisIntent(lower) || looksLikeComplexMultiQuestionPrompt(lower)) {
+    return false;
+  }
+
+  if ((lower.match(/\?/g) ?? []).length > 1) {
+    return false;
+  }
+
+  if (/\b(also|along with|as well|plus)\b/.test(lower)) {
+    return false;
+  }
+
+  if (lower.length > 220 && (lower.includes(",") || /\band\b/.test(lower))) {
+    return false;
+  }
+
+  return looksLikeSimpleQueryIntent(lower, state);
+}
+
+function buildSingleQueryClarificationPrompt(rawMessage: string, state: ChatState): string | null {
+  const lower = rawMessage.toLowerCase();
+  if (!(asksForSalesSum(lower) || looksLikeSalesNumericFollowUp(lower, state))) {
+    return null;
+  }
+
+  const inheritedWindow = looksLikeSalesNumericFollowUp(lower, state)
+    ? extractRequestedWindowFromHistory(state)
+    : null;
+  const missingTimeScope = !hasExplicitTimeScope(rawMessage, lower) && inheritedWindow === null;
+  if (!missingTimeScope) {
+    return null;
+  }
+
+  return [
+    "Before I run that query, I need one clarification so the number is exact:",
+    "- What time window should I use? (examples: `last 30 days`, `last full month`, `January 2026`, `all-time`)",
+    "Reply with the time window and I’ll run the query immediately."
+  ].join("\n");
+}
+
+function hasExplicitTimeScope(rawMessage: string, lower: string): boolean {
+  if (extractRequestedDays(lower) !== null || extractRequestedMonths(lower) !== null) {
+    return true;
+  }
+
+  if (extractCalendarMonthRange(rawMessage)) {
+    return true;
+  }
+
+  if (
+    /\b(all[- ]?time|overall|to date|year to date|ytd|month to date|mtd|quarter to date|qtd)\b/.test(lower) ||
+    /\bthis\s+(week|month|quarter|year)\b/.test(lower) ||
+    /\blast\s+(week|month|quarter|year)\b/.test(lower) ||
+    /\btoday\b|\byesterday\b/.test(lower)
+  ) {
+    return true;
+  }
+
+  if (/\b20\d{2}-\d{2}-\d{2}\b/.test(lower) || /\b20\d{2}\/\d{2}\/\d{2}\b/.test(lower)) {
+    return true;
+  }
+
+  return false;
+}
+
+function asksForMonthCoverage(lower: string): boolean {
+  if (!/\bmonth(s)?\b/.test(lower)) {
+    return false;
+  }
+  return (
+    /\bhow many\b/.test(lower) ||
+    /\bmonths of\b/.test(lower) ||
+    /\bcoverage\b/.test(lower) ||
+    /\brange\b/.test(lower) ||
+    /\bdata do we have\b/.test(lower)
+  );
+}
+
+function asksForSalesSum(lower: string): boolean {
+  const hasSalesTerm = /\b(sales|revenue|gmv|amount|income|turnover|booking|value)\b/.test(lower);
+  if (!hasSalesTerm) {
+    return false;
+  }
+
+  return (
+    /\b(sum|total)\b/.test(lower) ||
+    /\b(give|show|tell)\s+me\b.*\b(sales|revenue|gmv|income|turnover)\b/.test(lower) ||
+    /\bhow much\b/.test(lower) ||
+    /\bwhat(?:'s| is| are)(?:\s+my)?\s+(?:total\s+)?(?:sales|revenue|gmv|income|turnover)\b/.test(lower) ||
+    /\b(?:sales|revenue|gmv|income|turnover)\b.*\b(?:past|last|previous)\b.*\bmonth/.test(lower) ||
+    /\b(?:sales|revenue|gmv|income|turnover)\b.*\b(?:past|last|previous)\b.*\bdays?\b/.test(lower)
+  );
+}
+
+function asksForProductFilter(lower: string): boolean {
+  return /\b(product|sku|item|category|brand|model)\b/.test(lower);
+}
+
+function pickProductFilter(
+  lower: string,
+  table: DataCatalogRecord["tables"][number],
+  state: ChatState
+): { column_name: string; value: string } | null {
+  const direct = pickProductFilterFromLowCardinality(lower, table);
+  if (direct) {
+    return direct;
+  }
+
+  const phrase = extractProductPhrase(lower) ?? extractProductPhraseFromHistory(state);
+  if (!phrase) {
+    return null;
+  }
+
+  const productColumn = pickBestProductFilterColumnName(table);
+  if (!productColumn) {
+    return null;
+  }
+
+  return {
+    column_name: productColumn,
+    value: phrase
+  };
+}
+
+function pickJoinPlanForProductFilter(
+  lower: string,
+  baseTable: DataCatalogRecord["tables"][number],
+  tables: DataCatalogRecord["tables"],
+  state: ChatState
+): {
+  table: DataCatalogRecord["tables"][number];
+  base_key: string;
+  join_key: string;
+  filter_column: string;
+  filter_value: string;
+} | null {
+  const explicitPhrase = extractProductPhrase(lower) ?? extractProductPhraseFromHistory(state);
+  let best:
+    | {
+        table: DataCatalogRecord["tables"][number];
+        base_key: string;
+        join_key: string;
+        filter_column: string;
+        filter_value: string;
+        score: number;
+      }
+    | null = null;
+
+  for (const table of tables) {
+    if (table.qualified_name === baseTable.qualified_name) {
+      continue;
+    }
+
+    const joinKeys = pickJoinKeysForTables(baseTable, table);
+    if (!joinKeys) {
+      continue;
+    }
+
+    const lowCardFilter = pickProductFilterFromLowCardinality(lower, table);
+    const fallbackColumn = pickBestProductFilterColumnName(table);
+    const filterColumn = lowCardFilter?.column_name ?? fallbackColumn;
+    const filterValue = lowCardFilter?.value ?? explicitPhrase;
+    if (!filterColumn || !filterValue) {
+      continue;
+    }
+
+    const score =
+      (lowCardFilter ? 12 : 0) +
+      (joinKeys.exact_match ? 8 : 4) +
+      (table.relation_type === "VIEW" ? 1 : 0);
+    if (!best || score > best.score) {
+      best = {
+        table,
+        base_key: joinKeys.base_key,
+        join_key: joinKeys.join_key,
+        filter_column: filterColumn,
+        filter_value: filterValue,
+        score
+      };
+    }
+  }
+
+  return best
+    ? {
+        table: best.table,
+        base_key: best.base_key,
+        join_key: best.join_key,
+        filter_column: best.filter_column,
+        filter_value: best.filter_value
+      }
+    : null;
+}
+
+function pickProductFilterFromLowCardinality(
+  lower: string,
+  table: DataCatalogRecord["tables"][number]
+): { column_name: string; value: string } | null {
+  let best: { column_name: string; value: string; score: number } | null = null;
+
+  for (const column of table.low_cardinality_columns) {
+    if (!isProductLikeColumnName(column.column_name)) {
+      continue;
+    }
+
+    const matchedValue = pickMentionedDistinctValue(lower, column.distinct_values);
+    if (!matchedValue) {
+      continue;
+    }
+
+    const score = matchedValue.length + scoreProductColumnName(column.column_name);
+    if (!best || score > best.score) {
+      best = {
+        column_name: column.column_name,
+        value: matchedValue,
+        score
+      };
+    }
+  }
+
+  return best
+    ? {
+        column_name: best.column_name,
+        value: best.value
+      }
+    : null;
+}
+
+function pickBestProductFilterColumnName(
+  table: DataCatalogRecord["tables"][number]
+): string | null {
+  const fromLowCard = table.low_cardinality_columns
+    .filter((column) => isProductLikeColumnName(column.column_name))
+    .sort((a, b) => scoreProductColumnName(b.column_name) - scoreProductColumnName(a.column_name));
+  if (fromLowCard.length > 0) {
+    return fromLowCard[0]!.column_name;
+  }
+
+  const fromColumns = table.columns
+    .filter((column) => isProductLikeColumnName(column.column_name) && isTextualColumnType(column.data_type))
+    .sort((a, b) => scoreProductColumnName(b.column_name) - scoreProductColumnName(a.column_name));
+  if (fromColumns.length === 0) {
+    return null;
+  }
+
+  return fromColumns[0]!.column_name;
+}
+
+function isProductLikeColumnName(columnName: string): boolean {
+  return /(product|sku|item|category|brand|model|variant|style|collection|family|catalog)/i.test(columnName);
+}
+
+function scoreProductColumnName(columnName: string): number {
+  const lower = columnName.toLowerCase();
+  let score = 0;
+  if (lower === "product_name") score += 8;
+  if (lower === "product_id") score += 7;
+  if (lower.includes("product")) score += 6;
+  if (lower.includes("sku")) score += 5;
+  if (lower.includes("item")) score += 4;
+  if (lower.includes("category")) score += 3;
+  if (lower.includes("brand")) score += 3;
+  if (lower.includes("model")) score += 2;
+  return score;
+}
+
+function pickMentionedDistinctValue(lower: string, values: string[]): string | null {
+  let best: { value: string; score: number } | null = null;
+  for (const raw of values) {
+    const value = raw.trim();
+    if (value.length < 2) {
+      continue;
+    }
+
+    const normalized = value.toLowerCase();
+    const exactWord = new RegExp(`\\b${escapeRegExp(normalized)}\\b`, "i").test(lower);
+    const phraseMatch = !exactWord && normalized.includes(" ") && lower.includes(normalized);
+    if (!exactWord && !phraseMatch) {
+      continue;
+    }
+
+    const score = normalized.length + (exactWord ? 2 : 0);
+    if (!best || score > best.score) {
+      best = { value, score };
+    }
+  }
+
+  return best?.value ?? null;
+}
+
+function extractProductPhrase(lower: string): string | null {
+  const patterns = [
+    /\b(?:for|of|about)\s+(?:product|sku|item|category|brand|model)\s+([a-z0-9][a-z0-9\s._'/-]{1,60})\b/i,
+    /\b(?:for|of|about)\s+([a-z0-9][a-z0-9\s._'/-]{1,60})\s+(?:product|sku|item|category|brand|model)\b/i,
+    /\b(?:product|sku|item|category|brand|model)\s*[:=]\s*([a-z0-9][a-z0-9\s._'/-]{1,60})\b/i
+  ];
+
+  for (const pattern of patterns) {
+    const match = lower.match(pattern);
+    if (!match) {
+      continue;
+    }
+
+    const cleaned = normalizeFilterPhrase(match[1] ?? "");
+    if (cleaned) {
+      return cleaned;
+    }
+  }
+
+  return null;
+}
+
+function extractProductPhraseFromHistory(state: ChatState): string | null {
+  const recentUserMessages = state.conversation_history
+    .slice(-8)
+    .filter((turn) => turn.role === "user")
+    .map((turn) => turn.content.toLowerCase());
+
+  for (let index = recentUserMessages.length - 1; index >= 0; index -= 1) {
+    const phrase = extractProductPhrase(recentUserMessages[index]!);
+    if (phrase) {
+      return phrase;
+    }
+  }
+
+  return null;
+}
+
+function normalizeFilterPhrase(value: string): string | null {
+  const cleaned = value
+    .replace(/[!?.,;:]+$/g, "")
+    .replace(/\b(the|a|an|my|our)\b/gi, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+
+  if (cleaned.length < 2 || cleaned.length > 48) {
+    return null;
+  }
+
+  if (
+    /\b(past|last|previous|this|current|month|months|day|days|week|weeks|year|years|total|sales|revenue|gmv)\b/i.test(
+      cleaned
+    )
+  ) {
+    return null;
+  }
+
+  return cleaned;
+}
+
+function pickJoinKeysForTables(
+  baseTable: DataCatalogRecord["tables"][number],
+  joinTable: DataCatalogRecord["tables"][number]
+): { base_key: string; join_key: string; exact_match: boolean } | null {
+  const baseColumns = baseTable.columns.map((column) => column.column_name);
+  const joinColumns = joinTable.columns.map((column) => column.column_name);
+  const joinColumnSet = new Set(joinColumns.map((column) => column.toLowerCase()));
+  const baseColumnSet = new Set(baseColumns.map((column) => column.toLowerCase()));
+
+  let best:
+    | {
+        base_key: string;
+        join_key: string;
+        exact_match: boolean;
+        score: number;
+      }
+    | null = null;
+
+  for (const baseColumn of baseColumns) {
+    const baseLower = baseColumn.toLowerCase();
+    if (!looksLikeIdentifierColumnName(baseLower)) {
+      continue;
+    }
+    if (baseLower === "id") {
+      continue;
+    }
+
+    if (joinColumnSet.has(baseLower)) {
+      const score = 12 + (baseLower.endsWith("_id") ? 2 : 0);
+      if (!best || score > best.score) {
+        best = {
+          base_key: baseColumn,
+          join_key: joinColumns.find((column) => column.toLowerCase() === baseLower) ?? baseLower,
+          exact_match: true,
+          score
+        };
+      }
+    }
+  }
+
+  const baseTableName = baseTable.qualified_name.split(".").pop()?.toLowerCase() ?? "";
+  const joinTableName = joinTable.qualified_name.split(".").pop()?.toLowerCase() ?? "";
+  const joinHasId = joinColumnSet.has("id");
+  const baseHasId = baseColumnSet.has("id");
+
+  for (const baseColumn of baseColumns) {
+    const match = baseColumn.toLowerCase().match(/^([a-z0-9_]+)_id$/);
+    if (!match || !joinHasId) {
+      continue;
+    }
+
+    const stem = match[1];
+    if (tableNameContainsStem(joinTableName, stem)) {
+      const score = 9;
+      if (!best || score > best.score) {
+        best = {
+          base_key: baseColumn,
+          join_key: "id",
+          exact_match: false,
+          score
+        };
+      }
+    }
+  }
+
+  for (const joinColumn of joinColumns) {
+    const match = joinColumn.toLowerCase().match(/^([a-z0-9_]+)_id$/);
+    if (!match || !baseHasId) {
+      continue;
+    }
+
+    const stem = match[1];
+    if (tableNameContainsStem(baseTableName, stem)) {
+      const score = 8;
+      if (!best || score > best.score) {
+        best = {
+          base_key: "id",
+          join_key: joinColumn,
+          exact_match: false,
+          score
+        };
+      }
+    }
+  }
+
+  return best
+    ? {
+        base_key: best.base_key,
+        join_key: best.join_key,
+        exact_match: best.exact_match
+      }
+    : null;
+}
+
+function tableNameContainsStem(tableName: string, stem: string): boolean {
+  if (!tableName || !stem) {
+    return false;
+  }
+
+  return (
+    tableName.includes(stem) ||
+    tableName.includes(`${stem}s`) ||
+    (stem.endsWith("s") ? tableName.includes(stem.slice(0, -1)) : false)
+  );
+}
+
+function looksLikeSimpleQueryIntent(lower: string, state: ChatState): boolean {
+  return (
+    asksForMonthCoverage(lower) ||
+    asksForSalesSum(lower) ||
+    looksLikeSimpleSalesWindowQuestion(lower) ||
+    /\b(count|how many|average|avg|min|max)\b/.test(lower) ||
+    looksLikeSalesNumericFollowUp(lower, state)
+  );
+}
+
+function looksLikeAnalysisIntent(lower: string): boolean {
+  if (looksLikeConciseNumericFollowUpMessage(lower)) {
+    return false;
+  }
+
+  if (looksLikeComplexMultiQuestionPrompt(lower)) {
+    return true;
+  }
+
+  return (
+    /\b(report|analysis|analyze|insight|deep dive|root cause|driver|anomaly|recommend|strategy|executive brief|pdf|trend|compare|comparison|versus|vs|breakdown|top|support ticket|tickets|issue|issues|reason|reasons)\b/.test(lower) ||
+    /\b(run data preparation|finish scoping and run analysis|prepare data|batch)\b/.test(lower)
+  );
+}
+
+function looksLikeConciseNumericFollowUpMessage(lower: string): boolean {
+  return (
+    /\bjust the number\b/.test(lower) ||
+    /\bjust number\b/.test(lower) ||
+    /\bno breakdown\b/.test(lower) ||
+    /\boverall total\b/.test(lower) ||
+    /\bjust the total\b/.test(lower) ||
+    /\bonly total\b/.test(lower)
+  );
+}
+
+function looksLikeComplexMultiQuestionPrompt(lower: string): boolean {
+  const signalCount = [
+    /\balso\b/.test(lower),
+    /\balong with\b/.test(lower),
+    /\bcompare|comparison|vs|versus\b/.test(lower),
+    /\btop\b/.test(lower),
+    /\bsupport ticket|tickets|issue|issues|reason|reasons\b/.test(lower),
+    /[?.].*\b(also|and)\b/.test(lower)
+  ].filter(Boolean).length;
+
+  if (signalCount >= 2) {
+    return true;
+  }
+
+  // Long requests with multiple clauses should be treated as scoped analysis, not a simple number query.
+  return lower.length > 160 && /,|\band\b/.test(lower);
+}
+
+function extractRequestedMonths(lower: string): number | null {
+  if (/\b(?:past|last|previous)\s+month\b/.test(lower) || /\bthis\s+month\b/.test(lower)) {
+    return 1;
+  }
+
+  const match = lower.match(/\b(?:past|last|previous)\s+(\d{1,2})\s+months?\b/);
+  if (!match) {
+    return null;
+  }
+  const months = Number.parseInt(match[1], 10);
+  if (Number.isNaN(months) || months <= 0) {
+    return null;
+  }
+  return months;
+}
+
+function extractRequestedDays(lower: string): number | null {
+  if (/\b(?:past|last|previous)\s+day\b/.test(lower) || /\btoday\b/.test(lower)) {
+    return 1;
+  }
+
+  const match = lower.match(/\b(?:past|last|previous)\s+(\d{1,3})\s+days?\b/);
+  if (!match) {
+    return null;
+  }
+
+  const days = Number.parseInt(match[1], 10);
+  if (Number.isNaN(days) || days <= 0) {
+    return null;
+  }
+  return days;
+}
+
+function extractCalendarMonthRange(
+  rawMessage: string
+): { from_date: string; to_exclusive_date: string; label: string } | null {
+  const lower = rawMessage.toLowerCase();
+  const now = new Date();
+  const nowYear = now.getUTCFullYear();
+  const nowMonth = now.getUTCMonth();
+
+  const numericMatch = lower.match(/\b(20\d{2})[-/](0?[1-9]|1[0-2])\b/);
+  if (numericMatch) {
+    const year = Number.parseInt(numericMatch[1], 10);
+    const month = Number.parseInt(numericMatch[2], 10);
+    if (!Number.isNaN(year) && !Number.isNaN(month)) {
+      return buildCalendarMonthRange(year, month - 1);
+    }
+  }
+
+  const monthNames = [
+    "january",
+    "february",
+    "march",
+    "april",
+    "may",
+    "june",
+    "july",
+    "august",
+    "september",
+    "october",
+    "november",
+    "december"
+  ] as const;
+  const monthAliases: Record<string, number> = {
+    jan: 0,
+    january: 0,
+    feb: 1,
+    february: 1,
+    mar: 2,
+    march: 2,
+    apr: 3,
+    april: 3,
+    may: 4,
+    jun: 5,
+    june: 5,
+    jul: 6,
+    july: 6,
+    aug: 7,
+    august: 7,
+    sep: 8,
+    sept: 8,
+    september: 8,
+    oct: 9,
+    october: 9,
+    nov: 10,
+    november: 10,
+    dec: 11,
+    december: 11
+  };
+
+  const monthRegex =
+    /\b(jan(?:uary)?|feb(?:ruary)?|mar(?:ch)?|apr(?:il)?|may|jun(?:e)?|jul(?:y)?|aug(?:ust)?|sep(?:t(?:ember)?)?|oct(?:ober)?|nov(?:ember)?|dec(?:ember)?)\b(?:\s+(20\d{2}))?/i;
+  const monthMatch = lower.match(monthRegex);
+  if (!monthMatch) {
+    return null;
+  }
+
+  const monthToken = monthMatch[1]?.toLowerCase() ?? "";
+  const monthIndex = monthAliases[monthToken];
+  if (monthIndex === undefined) {
+    return null;
+  }
+
+  const explicitYear = monthMatch[2] ? Number.parseInt(monthMatch[2], 10) : null;
+  const inferredYear =
+    explicitYear ??
+    (monthIndex > nowMonth
+      ? nowYear - 1
+      : nowYear);
+  if (!Number.isFinite(inferredYear)) {
+    return null;
+  }
+
+  const range = buildCalendarMonthRange(inferredYear, monthIndex);
+  if (!range) {
+    return null;
+  }
+
+  const canonicalMonthLabel = `${monthNames[monthIndex][0]!.toUpperCase()}${monthNames[monthIndex].slice(1)} ${inferredYear}`;
+  return {
+    ...range,
+    label: canonicalMonthLabel
+  };
+}
+
+function buildCalendarMonthRange(
+  year: number,
+  monthIndex: number
+): { from_date: string; to_exclusive_date: string; label: string } | null {
+  if (!Number.isInteger(year) || !Number.isInteger(monthIndex) || monthIndex < 0 || monthIndex > 11) {
+    return null;
+  }
+
+  const from = new Date(Date.UTC(year, monthIndex, 1));
+  const toExclusive = new Date(Date.UTC(year, monthIndex + 1, 1));
+  const label = from.toLocaleString("en-US", {
+    month: "long",
+    year: "numeric",
+    timeZone: "UTC"
+  });
+
+  return {
+    from_date: from.toISOString().slice(0, 10),
+    to_exclusive_date: toExclusive.toISOString().slice(0, 10),
+    label
+  };
+}
+
+function extractRequestedWindowFromHistory(
+  state: ChatState
+): { unit: "months" | "days"; value: number } | null {
+  const recentUserMessages = state.conversation_history
+    .slice(-8)
+    .filter((turn) => turn.role === "user")
+    .map((turn) => turn.content.toLowerCase());
+
+  for (let index = recentUserMessages.length - 1; index >= 0; index -= 1) {
+    const message = recentUserMessages[index]!;
+    const months = extractRequestedMonths(message);
+    if (months !== null) {
+      return { unit: "months", value: months };
+    }
+
+    const days = extractRequestedDays(message);
+    if (days !== null) {
+      return { unit: "days", value: days };
+    }
+  }
+
+  return null;
+}
+
+function looksLikeSimpleSalesWindowQuestion(lower: string): boolean {
+  const hasSalesTerm = /\b(sales|revenue|gmv|income|turnover)\b/.test(lower);
+  if (!hasSalesTerm) {
+    return false;
+  }
+
+  return (
+    /\bin\s+the\s+past\s+\d+\s+days?\b/.test(lower) ||
+    /\bpast\s+\d+\s+days?\b/.test(lower) ||
+    /\bfor\s+the\s+last\s+\d+\s+days?\b/.test(lower) ||
+    /\bpast\s+\d+\s+months?\b/.test(lower) ||
+    /\bpast\s+month\b/.test(lower) ||
+    /\blast\s+month\b/.test(lower) ||
+    /\bsales\b.*\b(in|for|at)\b\s+[a-z][a-z\s.'-]{1,40}\b/.test(lower) ||
+    /\bin\s+[a-z][a-z\s.'-]{1,40}\b/.test(lower)
+  );
+}
+
+function looksLikeSalesNumericFollowUp(lower: string, state: ChatState): boolean {
+  if (looksLikeAnalysisIntent(lower) || looksLikeComplexMultiQuestionPrompt(lower)) {
+    return false;
+  }
+
+  if (lower.length > 140) {
+    return false;
+  }
+
+  const hasFollowUpSignal =
+    /\bjust the number\b/.test(lower) ||
+    /\bjust number\b/.test(lower) ||
+    /\bno breakdown\b/.test(lower) ||
+    /\boverall total\b/.test(lower) ||
+    /\bjust the total\b/.test(lower) ||
+    /\bonly total\b/.test(lower) ||
+    /\b(entire|full|whole|calendar)\s+month\b/.test(lower) ||
+    /\bnot\s+just\s+\d+\s+days?\b/.test(lower) ||
+    /\b(delivered|paid|refunded|cancelled|canceled|completed|pending|failed)\b/.test(lower);
+
+  if (!hasFollowUpSignal) {
+    return false;
+  }
+
+  const recent = state.conversation_history
+    .slice(-8)
+    .map((turn) => turn.content.toLowerCase())
+    .join(" ");
+
+  return /\b(sales|revenue|gmv|amount|income|turnover|value)\b/.test(recent);
+}
+
+function collectRequestedStatuses(lower: string, state: ChatState): string[] {
+  const normalizedCurrent = normalizeStatusTokensFromText(lower);
+  if (normalizedCurrent.length > 0) {
+    return normalizedCurrent;
+  }
+
+  if (!looksLikeSalesNumericFollowUp(lower, state)) {
+    return [];
+  }
+
+  const recentUserText = state.conversation_history
+    .slice(-8)
+    .filter((turn) => turn.role === "user")
+    .map((turn) => turn.content.toLowerCase())
+    .join(" ");
+
+  return normalizeStatusTokensFromText(recentUserText);
+}
+
+function pickCityFilter(
+  lower: string,
+  table: DataCatalogRecord["tables"][number],
+  state: ChatState
+): { column_name: string; value: string } | null {
+  const directMatch = pickBestLowCardinalityMentionFilter(lower, table);
+  if (directMatch) {
+    return directMatch;
+  }
+
+  const cityLike = table.low_cardinality_columns.filter((entry) =>
+    /\b(city|town|location|region|market)\b/i.test(entry.column_name)
+  );
+
+  let bestMatch: { column_name: string; value: string; score: number } | null = null;
+  for (const column of cityLike) {
+    for (const rawValue of column.distinct_values) {
+      const value = rawValue.trim();
+      if (value.length < 2) {
+        continue;
+      }
+      const escaped = escapeRegExp(value.toLowerCase());
+      const pattern = new RegExp(`\\b${escaped}\\b`, "i");
+      if (!pattern.test(lower)) {
+        continue;
+      }
+      const score = value.length;
+      if (!bestMatch || score > bestMatch.score) {
+        bestMatch = { column_name: column.column_name, value, score };
+      }
+    }
+  }
+
+  if (bestMatch) {
+    return { column_name: bestMatch.column_name, value: bestMatch.value };
+  }
+
+  const cityColumn = pickBestCityColumn(table) ?? pickBestTextualDimensionColumn(table);
+  if (!cityColumn) {
+    return null;
+  }
+
+  const phrase = extractCityPhrase(lower) ?? extractCityPhraseFromHistory(state);
+  if (!phrase) {
+    return null;
+  }
+
+  return {
+    column_name: cityColumn.column_name,
+    value: phrase
+  };
+}
+
+function pickBestLowCardinalityMentionFilter(
+  lower: string,
+  table: DataCatalogRecord["tables"][number]
+): { column_name: string; value: string } | null {
+  let best: { column_name: string; value: string; score: number } | null = null;
+
+  for (const column of table.low_cardinality_columns) {
+    const columnName = column.column_name.toLowerCase();
+    const columnBonus = /(city|town|location|region|market|country|state)/.test(columnName) ? 4 : 0;
+    for (const rawValue of column.distinct_values) {
+      const value = rawValue.trim();
+      if (value.length < 2) {
+        continue;
+      }
+
+      const normalizedValue = value.toLowerCase();
+      const exactWordMatch = new RegExp(`\\b${escapeRegExp(normalizedValue)}\\b`, "i").test(lower);
+      const phraseMatch = !exactWordMatch && normalizedValue.includes(" ") && lower.includes(normalizedValue);
+      if (!exactWordMatch && !phraseMatch) {
+        continue;
+      }
+
+      const score = value.length + columnBonus + (exactWordMatch ? 2 : 0);
+      if (!best || score > best.score) {
+        best = { column_name: column.column_name, value, score };
+      }
+    }
+  }
+
+  if (!best) {
+    return null;
+  }
+
+  return { column_name: best.column_name, value: best.value };
+}
+
+function pickBestCityColumn(
+  table: DataCatalogRecord["tables"][number]
+): DataCatalogRecord["tables"][number]["columns"][number] | null {
+  const candidates = table.columns.filter((column) => {
+    const lower = column.column_name.toLowerCase();
+    return /(city|town|location|region|market)/.test(lower) && isTextualColumnType(column.data_type);
+  });
+
+  if (candidates.length === 0) {
+    return null;
+  }
+
+  let best = candidates[0]!;
+  let bestScore = Number.NEGATIVE_INFINITY;
+  for (const candidate of candidates) {
+    const lower = candidate.column_name.toLowerCase();
+    let score = 0;
+    if (lower === "city") score += 6;
+    if (lower.includes("city_name")) score += 5;
+    if (lower.includes("location")) score += 4;
+    if (lower.includes("region")) score += 3;
+    if (score > bestScore) {
+      best = candidate;
+      bestScore = score;
+    }
+  }
+
+  return best;
+}
+
+function pickBestTextualDimensionColumn(
+  table: DataCatalogRecord["tables"][number]
+): DataCatalogRecord["tables"][number]["columns"][number] | null {
+  const candidates = table.columns.filter((column) => isTextualColumnType(column.data_type));
+  if (candidates.length === 0) {
+    return null;
+  }
+
+  let best = candidates[0]!;
+  let bestScore = Number.NEGATIVE_INFINITY;
+  for (const candidate of candidates) {
+    const lower = candidate.column_name.toLowerCase();
+    let score = 0;
+    if (/(city|town|location|region|market|country|state)/.test(lower)) score += 4;
+    if (/(name|label|type|category|segment)/.test(lower)) score += 2;
+    if (/(description|notes|comment)/.test(lower)) score -= 2;
+    if (score > bestScore) {
+      best = candidate;
+      bestScore = score;
+    }
+  }
+
+  return best;
+}
+
+function extractCityPhrase(lower: string): string | null {
+  const match =
+    lower.match(/\b(?:in|for|at)\s+([a-z][a-z\s.'-]{1,40})$/i) ??
+    lower.match(/\b(?:in|for|at)\s+([a-z][a-z\s.'-]{1,40})\b/i);
+  if (!match) {
+    return null;
+  }
+
+  const candidate = match[1]
+    .replace(/\b(past|last|previous|month|months|day|days|week|weeks|year|years|quarter|quarters|this|current|the|a|an|my|all|total)\b/gi, " ")
+    .trim()
+    .replace(/\s+/g, " ");
+
+  if (candidate.length < 2) {
+    return null;
+  }
+
+  if (
+    /\b(jan|january|feb|february|mar|march|apr|april|may|jun|june|jul|july|aug|august|sep|sept|september|oct|october|nov|november|dec|december)\b/i.test(
+      candidate
+    ) ||
+    /\b\d{4}\b/.test(candidate)
+  ) {
+    return null;
+  }
+
+  return candidate;
+}
+
+function extractCityPhraseFromHistory(state: ChatState): string | null {
+  const recentUserMessages = state.conversation_history
+    .slice(-8)
+    .filter((turn) => turn.role === "user")
+    .map((turn) => turn.content.toLowerCase());
+
+  for (let index = recentUserMessages.length - 1; index >= 0; index -= 1) {
+    const city = extractCityPhrase(recentUserMessages[index]!);
+    if (city) {
+      return city;
+    }
+  }
+
+  return null;
+}
+
+function normalizeStatusTokensFromText(text: string): string[] {
+  const candidates = [
+    "delivered",
+    "paid",
+    "refunded",
+    "cancelled",
+    "canceled",
+    "completed",
+    "pending",
+    "failed",
+    "shipped",
+    "processing"
+  ];
+
+  const selected = candidates.filter((candidate) =>
+    new RegExp(`\\b${candidate}\\b`, "i").test(text)
+  );
+
+  return Array.from(
+    new Set(
+      selected.map((value) => (value === "canceled" ? "cancelled" : value))
+    )
+  );
+}
+
+function pickBestStatusColumnForFilter(
+  table: DataCatalogRecord["tables"][number]
+): DataCatalogRecord["tables"][number]["columns"][number] | null {
+  const candidates = table.columns.filter((column) => {
+    const lower = column.column_name.toLowerCase();
+    if (!/(status|state)/.test(lower)) {
+      return false;
+    }
+    return isTextualColumnType(column.data_type);
+  });
+
+  if (candidates.length === 0) {
+    return null;
+  }
+
+  let best = candidates[0]!;
+  let bestScore = Number.NEGATIVE_INFINITY;
+  for (const candidate of candidates) {
+    const lower = candidate.column_name.toLowerCase();
+    let score = 0;
+    if (lower === "status") score += 5;
+    if (lower.includes("order_status")) score += 4;
+    if (lower.includes("payment_status")) score += 4;
+    if (lower.includes("delivery_status")) score += 3;
+    if (lower.includes("state")) score += 1;
+    if (score > bestScore) {
+      best = candidate;
+      bestScore = score;
+    }
+  }
+
+  return best;
+}
+
+function isTextualColumnType(dataType: string): boolean {
+  return /\b(char|text|varchar|citext|enum|name)\b/i.test(dataType);
+}
+
+function normalizeMonthWindow(months: number): number {
+  return Math.max(1, Math.min(months, 24));
+}
+
+function normalizeDayWindow(days: number): number {
+  return Math.max(1, Math.min(days, 365));
+}
+
+function tokenizeForScoring(text: string): string[] {
+  return text
+    .toLowerCase()
+    .replace(/[^a-z0-9_]+/g, " ")
+    .split(/\s+/)
+    .map((token) => token.trim())
+    .filter((token) => token.length >= 2 && !/^\d+$/.test(token));
+}
+
+function buildQuestionTokens(lowerQuestion: string): Set<string> {
+  const tokens = new Set(tokenizeForScoring(lowerQuestion));
+
+  const hasRevenueIntent = ["sales", "revenue", "gmv", "income", "turnover"].some((token) =>
+    tokens.has(token)
+  );
+  if (hasRevenueIntent) {
+    [
+      "sales",
+      "revenue",
+      "gmv",
+      "amount",
+      "value",
+      "price",
+      "net",
+      "gross",
+      "income",
+      "turnover",
+      "total"
+    ].forEach((token) => tokens.add(token));
+  }
+
+  if (tokens.has("refund") || tokens.has("refunded")) {
+    ["refund", "returned", "return", "chargeback"].forEach((token) => tokens.add(token));
+  }
+
+  return tokens;
+}
+
+function overlapTokenScore(tokens: Iterable<string>, queryTokens: Set<string>): number {
+  let score = 0;
+  for (const token of tokens) {
+    if (queryTokens.has(token)) {
+      score += 1;
+    }
+  }
+  return score;
+}
+
+function looksLikeIdentifierColumnName(columnName: string): boolean {
+  const lower = columnName.toLowerCase();
+  return (
+    /(^|_)(id|uuid|guid)(_|$)/.test(lower) ||
+    /(identifier|primary_key|foreign_key)$/.test(lower)
+  );
+}
+
+function pickBestMetricColumnForSum(
+  lowerQuestion: string,
+  table: DataCatalogRecord["tables"][number]
+): DataCatalogRecord["tables"][number]["columns"][number] | null {
+  const numericColumns = table.columns.filter((column) => isNumericColumnType(column.data_type));
+  if (numericColumns.length === 0) {
+    return null;
+  }
+
+  let best = numericColumns[0]!;
+  let bestScore = Number.NEGATIVE_INFINITY;
+  const queryTokens = buildQuestionTokens(lowerQuestion);
+
+  for (const column of numericColumns) {
+    const name = column.column_name.toLowerCase();
+    const nameTokens = tokenizeForScoring(name);
+    let score = 0;
+
+    score += overlapTokenScore(nameTokens, queryTokens) * 3;
+
+    if (/(amount|revenue|sales|gmv|total|value|price|net)/.test(name)) {
+      score += 6;
+    }
+    if (/(count|qty|quantity|units)/.test(name)) {
+      score += 2;
+    }
+    if (/\brefund\b/.test(lowerQuestion) && /\brefund\b/.test(name)) {
+      score += 2;
+    }
+    if (/\b(sales|revenue|gmv)\b/.test(lowerQuestion) && /\b(sales|revenue|gmv)\b/.test(name)) {
+      score += 3;
+    }
+    if (looksLikeIdentifierColumnName(name)) {
+      score -= 8;
+    }
+    if (/(tax|discount|fee|shipping)/.test(name) && /\b(net|gross|sales|revenue|gmv|amount|total)\b/.test(lowerQuestion)) {
+      score -= 2;
+    }
+    if (score > bestScore) {
+      best = column;
+      bestScore = score;
+    }
+  }
+
+  return best;
+}
+
+function isNumericColumnType(dataType: string): boolean {
+  return /\b(int|integer|bigint|smallint|numeric|decimal|real|double|float|money)\b/i.test(dataType);
+}
+
+function pickBestTemporalTableForQuestion(
+  lowerQuestion: string,
+  tables: DataCatalogRecord["tables"]
+): { table: DataCatalogRecord["tables"][number]; date_column: DataCatalogRecord["tables"][number]["columns"][number] } | null {
+  const queryTokens = buildQuestionTokens(lowerQuestion);
+
+  let best:
+    | {
+        table: DataCatalogRecord["tables"][number];
+        date_column: DataCatalogRecord["tables"][number]["columns"][number];
+        score: number;
+      }
+    | null = null;
+
+  for (const table of tables) {
+    const selectedColumn = pickBestDateColumnForQuestion(lowerQuestion, table, queryTokens);
+    if (!selectedColumn) {
+      continue;
+    }
+
+    const tableTokens = tokenizeForScoring(
+      `${table.qualified_name} ${table.summary} ${table.columns.map((column) => column.column_name).join(" ")}`
+    );
+    let tableScore = 0;
+    tableScore += overlapTokenScore(tableTokens, queryTokens) * 2;
+
+    if (table.relation_type === "VIEW") {
+      tableScore += 1;
+    }
+    if (table.row_count_estimate > 0) {
+      tableScore += 1;
+    }
+
+    const columnScore = scoreDateColumn(selectedColumn, queryTokens);
+
+    const totalScore = tableScore + columnScore;
+    if (!best || totalScore > best.score) {
+      best = {
+        table,
+        date_column: selectedColumn,
+        score: totalScore
+      };
+    }
+  }
+
+  return best
+    ? { table: best.table, date_column: best.date_column }
+    : null;
+}
+
+function pickBestAggregateTargetForQuestion(
+  lowerQuestion: string,
+  tables: DataCatalogRecord["tables"]
+): { table: DataCatalogRecord["tables"][number]; date_column: DataCatalogRecord["tables"][number]["columns"][number] | null } | null {
+  const queryTokens = buildQuestionTokens(lowerQuestion);
+
+  let best:
+    | {
+        table: DataCatalogRecord["tables"][number];
+        date_column: DataCatalogRecord["tables"][number]["columns"][number] | null;
+        score: number;
+      }
+    | null = null;
+
+  for (const table of tables) {
+    const numericColumns = table.columns.filter((column) => isNumericColumnType(column.data_type));
+    if (numericColumns.length === 0) {
+      continue;
+    }
+
+    const tableTokens = tokenizeForScoring(
+      `${table.qualified_name} ${table.summary} ${table.columns.map((column) => column.column_name).join(" ")}`
+    );
+    const dateColumn = pickBestDateColumnForQuestion(lowerQuestion, table, queryTokens);
+    const metricColumn = pickBestMetricColumnForSum(lowerQuestion, table);
+    const metricScore = metricColumn
+      ? overlapTokenScore(tokenizeForScoring(metricColumn.column_name), queryTokens) * 3 +
+        (/(amount|revenue|sales|gmv|total|value|price|net)/.test(metricColumn.column_name.toLowerCase()) ? 3 : 0)
+      : 0;
+
+    let score = 0;
+    score += overlapTokenScore(tableTokens, queryTokens) * 2;
+    score += metricScore;
+    if (dateColumn) score += 3;
+    if (table.row_count_estimate > 0) score += 1;
+    if (table.relation_type === "VIEW") score += 1;
+
+    if (!best || score > best.score) {
+      best = {
+        table,
+        date_column: dateColumn,
+        score
+      };
+    }
+  }
+
+  return best
+    ? { table: best.table, date_column: best.date_column }
+    : null;
+}
+
+function pickBestDateColumnForQuestion(
+  lowerQuestion: string,
+  table: DataCatalogRecord["tables"][number],
+  queryTokens: Set<string>
+): DataCatalogRecord["tables"][number]["columns"][number] | null {
+  const dateColumns = table.columns.filter((column) =>
+    isTemporalColumnType(column.data_type) || isDateLikeColumnName(column.column_name)
+  );
+  if (dateColumns.length === 0) {
+    return null;
+  }
+
+  let best = dateColumns[0]!;
+  let bestScore = Number.NEGATIVE_INFINITY;
+  for (const column of dateColumns) {
+    let score = scoreDateColumn(column, queryTokens);
+    const name = column.column_name.toLowerCase();
+    if (/\b(refund|return)\b/.test(lowerQuestion) && /\b(refund|return)\b/.test(name)) score += 2;
+    if (/\b(order|sale|transaction)\b/.test(lowerQuestion) && /\b(order|sale|transaction)\b/.test(name)) score += 2;
+    if (score > bestScore) {
+      best = column;
+      bestScore = score;
+    }
+  }
+
+  return best;
+}
+
+function scoreDateColumn(
+  column: DataCatalogRecord["tables"][number]["columns"][number],
+  queryTokens: Set<string>
+): number {
+  const name = column.column_name.toLowerCase();
+  const nameTokens = tokenizeForScoring(name);
+  let score = 0;
+  score += overlapTokenScore(nameTokens, queryTokens);
+  if (/order_date|event_time|created_at|transaction_date|date|time|timestamp/.test(name)) {
+    score += 3;
+  }
+  if (isTemporalColumnType(column.data_type)) {
+    score += 2;
+  }
+  return score;
+}
+
+function isTemporalColumnType(dataType: string): boolean {
+  return /\b(date|time|timestamp)\b/i.test(dataType);
+}
+
+function isDateLikeColumnName(columnName: string): boolean {
+  return /(date|time|timestamp|created|updated|event|period)/i.test(columnName);
+}
+
+function quoteSqlIdentifier(identifier: string): string {
+  return `"${identifier.replace(/"/g, "\"\"")}"`;
+}
+
+function quoteSqlLiteral(value: string): string {
+  return `'${value.replace(/'/g, "''")}'`;
+}
+
+function quoteQualifiedRelation(qualifiedName: string): string {
+  return qualifiedName
+    .split(".")
+    .map((part) => quoteSqlIdentifier(part))
+    .join(".");
 }
 
 function extractSqlFence(raw: string): string | null {

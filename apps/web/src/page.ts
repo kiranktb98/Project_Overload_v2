@@ -547,7 +547,7 @@ export function renderChatPage(): string {
             return {
               kind: "pdf",
               title: "Generate customer-facing PDF now?",
-              lockPlaceholder: "Select 'Generate report PDF' or 'Not yet' first.",
+              lockPlaceholder: "Workflow locked while this decision is pending.",
               options: [
                 { label: "Generate report PDF", command: "__ui_generate_pdf_yes__" },
                 { label: "Not yet", command: "__ui_generate_pdf_no__" }
@@ -559,7 +559,7 @@ export function renderChatPage(): string {
             return {
               kind: "save",
               title: "Save this run in report logs?",
-              lockPlaceholder: "Select 'Save report log' or 'Skip save' first.",
+              lockPlaceholder: "Workflow locked while this decision is pending.",
               options: [
                 { label: "Save report log", command: "__ui_save_report_yes__" },
                 { label: "Skip save", command: "__ui_save_report_no__" }
@@ -571,7 +571,7 @@ export function renderChatPage(): string {
             return {
               kind: "schedule-confirm",
               title: "Set up recurring schedule for this report?",
-              lockPlaceholder: "Select 'Schedule report' or 'Not now' first.",
+              lockPlaceholder: "Workflow locked while this decision is pending.",
               options: [
                 { label: "Schedule report", command: "__ui_schedule_setup_yes__" },
                 { label: "Not now", command: "__ui_schedule_setup_no__" }
@@ -582,8 +582,8 @@ export function renderChatPage(): string {
           if (state.awaiting_schedule_mode_selection === true) {
             return {
               kind: "schedule-mode",
-              title: "Choose scheduling cadence.",
-              lockPlaceholder: "Select 'Weekly', 'Monthly', or 'Quarterly' first.",
+              title: "Scheduling cadence pending.",
+              lockPlaceholder: "Workflow locked while this decision is pending.",
               options: [
                 { label: "Weekly", command: "__ui_schedule_mode_weekly__" },
                 { label: "Monthly", command: "__ui_schedule_mode_monthly__" },
@@ -596,7 +596,7 @@ export function renderChatPage(): string {
             return {
               kind: "schedule-weekday",
               title: "Pick weekday for weekly schedule (UTC).",
-              lockPlaceholder: "Select a weekday button first.",
+              lockPlaceholder: "Workflow locked while this decision is pending.",
               options: [
                 { label: "Mon", command: "__ui_schedule_weekday_mon__" },
                 { label: "Tue", command: "__ui_schedule_weekday_tue__" },
@@ -613,7 +613,7 @@ export function renderChatPage(): string {
             return {
               kind: "schedule-monthday",
               title: "Pick day of month (1-28).",
-              lockPlaceholder: "Select day 1, 15, 28, or choose custom day first.",
+              lockPlaceholder: "Workflow locked while this decision is pending.",
               options: [
                 { label: "Day 1", command: "__ui_schedule_day_1__" },
                 { label: "Day 15", command: "__ui_schedule_day_15__" },
@@ -626,8 +626,8 @@ export function renderChatPage(): string {
           if (typeof state.pending_query_sql === "string" && state.pending_query_sql.trim().length > 0) {
             return {
               kind: "query",
-              title: "Choose how to proceed with this SQL request.",
-              lockPlaceholder: "Select 'Run query' or 'Other instruction' first.",
+              title: "SQL decision pending.",
+              lockPlaceholder: "Workflow locked while this decision is pending.",
               options: [
                 { label: "Run query", command: "__ui_run_query__" },
                 { label: "Other instruction", command: "__ui_query_other_instruction__" }
@@ -638,8 +638,8 @@ export function renderChatPage(): string {
           if (state.prep_pending === true) {
             return {
               kind: "prep",
-              title: "Scope is set. Run data preparation first.",
-              lockPlaceholder: "Select 'Run Data Preparation' or 'Continue scoping' first.",
+              title: "Data preparation decision pending.",
+              lockPlaceholder: "Workflow locked while this decision is pending.",
               options: [
                 { label: "Run Data Preparation", command: "__ui_run_data_preparation__" },
                 { label: "Continue scoping", command: "__ui_continue_scoping__" }
@@ -650,8 +650,8 @@ export function renderChatPage(): string {
           if (state.scope_pending === true) {
             return {
               kind: "analysis",
-              title: "Analysis scope is ready. Choose next step.",
-              lockPlaceholder: "Select 'Finish scoping and run analysis' or 'Continue scoping' first.",
+              title: "Analysis decision pending.",
+              lockPlaceholder: "Workflow locked while this decision is pending.",
               options: [
                 { label: "Finish scoping and run analysis", command: "__ui_finish_scoping_run_analysis__" },
                 { label: "Continue scoping", command: "__ui_continue_scoping__" }

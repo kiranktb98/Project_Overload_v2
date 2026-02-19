@@ -50,17 +50,44 @@ export function ensureLimit(sql: string, limit: number): string {
 
 export function extractReferencedRelations(sql: string): string[] {
   assertSelectOnly(sql);
+  const normalizedSql = sql;
+  const cteNames = extractCteNames(normalizedSql);
+  const relationNames = new Set<string>();
 
-  const relationRegex = /\b(?:from|join)\s+([a-zA-Z_][a-zA-Z0-9_.]*)/gi;
-  const relations = new Set<string>();
-  let match: RegExpExecArray | null = relationRegex.exec(sql);
+  const keywordRegex = /\b(from|join)\b/gi;
+  let match: RegExpExecArray | null = keywordRegex.exec(normalizedSql);
 
   while (match) {
-    relations.add(match[1].toLowerCase());
-    match = relationRegex.exec(sql);
+    let cursor = skipWhitespace(normalizedSql, keywordRegex.lastIndex);
+
+    if (normalizedSql.slice(cursor, cursor + 4).toLowerCase() === "only") {
+      cursor = skipWhitespace(normalizedSql, cursor + 4);
+    }
+
+    if (normalizedSql[cursor] === "(") {
+      match = keywordRegex.exec(normalizedSql);
+      continue;
+    }
+
+    const parsed = parseQualifiedIdentifier(normalizedSql, cursor);
+    if (!parsed) {
+      match = keywordRegex.exec(normalizedSql);
+      continue;
+    }
+
+    const normalizedRelation = parsed.parts.join(".").toLowerCase();
+    const nextNonSpace = skipWhitespace(normalizedSql, parsed.nextIndex);
+    const looksLikeFunctionCall = normalizedSql[nextNonSpace] === "(";
+    const isCteAlias = parsed.parts.length === 1 && cteNames.has(normalizedRelation);
+
+    if (!looksLikeFunctionCall && !isCteAlias) {
+      relationNames.add(normalizedRelation);
+    }
+
+    match = keywordRegex.exec(normalizedSql);
   }
 
-  return Array.from(relations);
+  return Array.from(relationNames);
 }
 
 export function assertAllowlistedRelations(sql: string, allowlist: string[]): void {
@@ -82,4 +109,223 @@ export function assertAllowlistedSchemas(sql: string, allowlistedSchemas: string
   if (blockedSchemas.length > 0) {
     throw new SqlGuardError(`Schemas are not allowlisted: ${Array.from(new Set(blockedSchemas)).join(", ")}`);
   }
+}
+
+type ParsedIdentifier = {
+  value: string;
+  nextIndex: number;
+};
+
+type ParsedQualifiedIdentifier = {
+  parts: string[];
+  nextIndex: number;
+};
+
+function extractCteNames(sql: string): Set<string> {
+  const cteNames = new Set<string>();
+  let cursor = skipWhitespace(sql, 0);
+
+  if (sql.slice(cursor, cursor + 4).toLowerCase() !== "with") {
+    return cteNames;
+  }
+  cursor = skipWhitespace(sql, cursor + 4);
+
+  if (sql.slice(cursor, cursor + 9).toLowerCase() === "recursive") {
+    cursor = skipWhitespace(sql, cursor + 9);
+  }
+
+  while (cursor < sql.length) {
+    const cteIdentifier = parseIdentifier(sql, cursor);
+    if (!cteIdentifier) {
+      break;
+    }
+
+    cteNames.add(cteIdentifier.value.toLowerCase());
+    cursor = skipWhitespace(sql, cteIdentifier.nextIndex);
+
+    if (sql[cursor] === "(") {
+      const colListEnd = skipBalancedParentheses(sql, cursor);
+      if (colListEnd === -1) {
+        break;
+      }
+      cursor = skipWhitespace(sql, colListEnd + 1);
+    }
+
+    if (sql.slice(cursor, cursor + 2).toLowerCase() === "as") {
+      cursor = skipWhitespace(sql, cursor + 2);
+    }
+
+    if (sql[cursor] !== "(") {
+      break;
+    }
+
+    const bodyEnd = skipBalancedParentheses(sql, cursor);
+    if (bodyEnd === -1) {
+      break;
+    }
+    cursor = skipWhitespace(sql, bodyEnd + 1);
+
+    if (sql[cursor] !== ",") {
+      break;
+    }
+
+    cursor = skipWhitespace(sql, cursor + 1);
+  }
+
+  return cteNames;
+}
+
+function parseQualifiedIdentifier(sql: string, startIndex: number): ParsedQualifiedIdentifier | null {
+  const first = parseIdentifier(sql, startIndex);
+  if (!first) {
+    return null;
+  }
+
+  const parts = [first.value];
+  let cursor = first.nextIndex;
+
+  while (cursor < sql.length) {
+    cursor = skipWhitespace(sql, cursor);
+    if (sql[cursor] !== ".") {
+      break;
+    }
+
+    cursor = skipWhitespace(sql, cursor + 1);
+    const nextPart = parseIdentifier(sql, cursor);
+    if (!nextPart) {
+      break;
+    }
+
+    parts.push(nextPart.value);
+    cursor = nextPart.nextIndex;
+  }
+
+  return { parts, nextIndex: cursor };
+}
+
+function parseIdentifier(sql: string, startIndex: number): ParsedIdentifier | null {
+  const cursor = skipWhitespace(sql, startIndex);
+  const first = sql[cursor];
+
+  if (!first) {
+    return null;
+  }
+
+  if (first === "\"") {
+    let index = cursor + 1;
+    let value = "";
+
+    while (index < sql.length) {
+      const current = sql[index];
+      if (current === "\"") {
+        if (sql[index + 1] === "\"") {
+          value += "\"";
+          index += 2;
+          continue;
+        }
+
+        return { value, nextIndex: index + 1 };
+      }
+
+      value += current;
+      index += 1;
+    }
+
+    return null;
+  }
+
+  if (!/[A-Za-z_]/.test(first)) {
+    return null;
+  }
+
+  let index = cursor + 1;
+  while (index < sql.length && /[A-Za-z0-9_$]/.test(sql[index]!)) {
+    index += 1;
+  }
+
+  return { value: sql.slice(cursor, index), nextIndex: index };
+}
+
+function skipWhitespace(sql: string, index: number): number {
+  let cursor = index;
+  while (cursor < sql.length && /\s/.test(sql[cursor]!)) {
+    cursor += 1;
+  }
+  return cursor;
+}
+
+function skipBalancedParentheses(sql: string, openIndex: number): number {
+  if (sql[openIndex] !== "(") {
+    return -1;
+  }
+
+  let depth = 0;
+  let index = openIndex;
+
+  while (index < sql.length) {
+    const char = sql[index]!;
+
+    if (char === "'") {
+      index = skipSingleQuotedString(sql, index);
+      continue;
+    }
+
+    if (char === "\"") {
+      index = skipDoubleQuotedIdentifier(sql, index);
+      continue;
+    }
+
+    if (char === "(") {
+      depth += 1;
+      index += 1;
+      continue;
+    }
+
+    if (char === ")") {
+      depth -= 1;
+      if (depth === 0) {
+        return index;
+      }
+      index += 1;
+      continue;
+    }
+
+    index += 1;
+  }
+
+  return -1;
+}
+
+function skipSingleQuotedString(sql: string, quoteIndex: number): number {
+  let index = quoteIndex + 1;
+  while (index < sql.length) {
+    if (sql[index] === "'") {
+      if (sql[index + 1] === "'") {
+        index += 2;
+        continue;
+      }
+
+      return index + 1;
+    }
+    index += 1;
+  }
+
+  return sql.length;
+}
+
+function skipDoubleQuotedIdentifier(sql: string, quoteIndex: number): number {
+  let index = quoteIndex + 1;
+  while (index < sql.length) {
+    if (sql[index] === "\"") {
+      if (sql[index + 1] === "\"") {
+        index += 2;
+        continue;
+      }
+
+      return index + 1;
+    }
+    index += 1;
+  }
+
+  return sql.length;
 }
