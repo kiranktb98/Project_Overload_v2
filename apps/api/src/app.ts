@@ -64,7 +64,7 @@ export async function buildApiApp(options: Partial<ApiDependencies> = {}) {
     new RuntimeConnectionManager({
       fallback_row_provider: localRowProviderRuntime.row_provider,
       fallback_source: localRowProviderRuntime.source,
-      default_timeout_ms: Number.parseInt(process.env.DEFAULT_QUERY_TIMEOUT_MS ?? "15000", 10),
+      default_timeout_ms: Number.parseInt(process.env.DEFAULT_QUERY_TIMEOUT_MS ?? "900000", 10),
       default_limit: Number.parseInt(process.env.DEFAULT_QUERY_ROW_LIMIT ?? "200", 10),
       state_store: store
     });

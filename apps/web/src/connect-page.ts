@@ -6,20 +6,22 @@ export function renderConnectionPage(): string {
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <title>Project Overload | Database Connection Wizard</title>
     <style>
-      @import url("https://fonts.googleapis.com/css2?family=Sora:wght@400;600;700&family=IBM+Plex+Mono:wght@400;500&display=swap");
+      @import url("https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap");
 
       :root {
-        --ink: #102a43;
-        --ink-soft: #486581;
-        --line: rgba(16, 42, 67, 0.16);
-        --surface: rgba(255, 255, 255, 0.94);
-        --bg-start: #f0f9ff;
-        --bg-end: #e6fffa;
-        --accent: #0ea5e9;
-        --accent-2: #14b8a6;
-        --warn: #f59e0b;
-        --danger: #ef4444;
-        --ok: #22c55e;
+        --ink: #0e1c36;
+        --ink-soft: #4c6389;
+        --line: rgba(17, 44, 90, 0.16);
+        --line-soft: rgba(17, 44, 90, 0.08);
+        --surface: rgba(255, 255, 255, 0.92);
+        --surface-strong: #ffffff;
+        --primary: #103575;
+        --primary-2: #1f4f9f;
+        --primary-3: #2e6dd0;
+        --warn: #cc8f19;
+        --danger: #d64545;
+        --ok: #1ea85b;
+        --shadow: 0 28px 54px rgba(7, 20, 44, 0.18);
       }
 
       * { box-sizing: border-box; }
@@ -27,27 +29,41 @@ export function renderConnectionPage(): string {
       body {
         margin: 0;
         min-height: 100vh;
-        font-family: "Sora", sans-serif;
+        font-family: "Space Grotesk", sans-serif;
         color: var(--ink);
         background:
-          radial-gradient(circle at 15% 15%, rgba(14, 165, 233, 0.2), transparent 30%),
-          radial-gradient(circle at 80% 0%, rgba(20, 184, 166, 0.2), transparent 30%),
-          linear-gradient(155deg, var(--bg-start), var(--bg-end));
+          radial-gradient(circle at 10% 10%, rgba(16, 53, 117, 0.2), transparent 34%),
+          radial-gradient(circle at 90% -8%, rgba(46, 109, 208, 0.24), transparent 36%),
+          radial-gradient(circle at 50% 120%, rgba(93, 155, 255, 0.18), transparent 36%),
+          linear-gradient(152deg, #edf4ff 0%, #e7f1ff 38%, #f8fbff 100%);
+      }
+
+      body::before {
+        content: "";
+        position: fixed;
+        inset: 0;
+        pointer-events: none;
+        background-image:
+          linear-gradient(to right, rgba(17, 44, 90, 0.03) 1px, transparent 1px),
+          linear-gradient(to bottom, rgba(17, 44, 90, 0.03) 1px, transparent 1px);
+        background-size: 42px 42px;
+        mask-image: radial-gradient(circle at 50% 35%, rgba(0, 0, 0, 0.88), transparent 80%);
       }
 
       .page {
-        width: min(1180px, 100% - 28px);
-        margin: 18px auto 28px;
+        width: min(1460px, 100% - 28px);
+        margin: 18px auto 26px;
         display: grid;
-        grid-template-columns: 1.1fr 1fr;
+        grid-template-columns: 1.15fr 1fr;
         gap: 16px;
       }
 
       .card {
         border: 1px solid var(--line);
-        border-radius: 18px;
+        border-radius: 20px;
         background: var(--surface);
-        box-shadow: 0 18px 40px rgba(16, 42, 67, 0.14);
+        backdrop-filter: blur(12px);
+        box-shadow: var(--shadow);
         padding: 16px;
       }
 
@@ -56,25 +72,41 @@ export function renderConnectionPage(): string {
         display: flex;
         justify-content: space-between;
         align-items: center;
+        background: linear-gradient(145deg, rgba(255, 255, 255, 0.96), rgba(246, 250, 255, 0.84));
       }
 
       .top h1 {
         margin: 0;
-        font-size: 1.1rem;
+        font-size: 1.16rem;
       }
 
       .top a {
         text-decoration: none;
-        color: #075985;
-        border: 1px solid rgba(7, 89, 133, 0.25);
+        color: #153a80;
+        border: 1px solid rgba(21, 58, 128, 0.2);
         padding: 8px 12px;
         border-radius: 999px;
-        font-size: 0.8rem;
+        font-size: 0.78rem;
+        transition: transform 140ms ease, border-color 140ms ease, background 140ms ease;
+      }
+
+      .top a:hover {
+        transform: translateY(-1px);
+        border-color: rgba(21, 58, 128, 0.32);
+        background: rgba(255, 255, 255, 0.8);
+      }
+
+      h2 {
+        margin: 14px 0 8px;
+        font-size: 0.9rem;
+        letter-spacing: 0.015em;
+        text-transform: uppercase;
+        color: #1b3f80;
       }
 
       label {
         display: block;
-        font-size: 0.8rem;
+        font-size: 0.78rem;
         color: var(--ink-soft);
         margin-bottom: 6px;
       }
@@ -83,17 +115,26 @@ export function renderConnectionPage(): string {
       textarea,
       button,
       select {
-        font-family: "IBM Plex Mono", monospace;
+        font-family: "JetBrains Mono", monospace;
       }
 
       input,
-      textarea {
+      textarea,
+      select {
         width: 100%;
         border-radius: 12px;
         border: 1px solid var(--line);
         padding: 11px 12px;
-        background: rgba(255, 255, 255, 0.95);
+        background: rgba(255, 255, 255, 0.96);
         color: var(--ink);
+      }
+
+      input:focus,
+      textarea:focus,
+      select:focus {
+        outline: none;
+        border-color: var(--primary-3);
+        box-shadow: 0 0 0 3px rgba(46, 109, 208, 0.12);
       }
 
       textarea {
@@ -120,43 +161,50 @@ export function renderConnectionPage(): string {
       }
 
       button {
-        border: none;
-        border-radius: 10px;
+        border-radius: 11px;
         padding: 10px 14px;
         cursor: pointer;
-        font-size: 0.78rem;
+        font-size: 0.76rem;
+        transition: transform 130ms ease, box-shadow 130ms ease, filter 130ms ease;
+      }
+
+      button:hover {
+        transform: translateY(-1px);
+        filter: saturate(1.03);
       }
 
       .primary {
-        background: linear-gradient(130deg, var(--accent), var(--accent-2));
-        color: #06202e;
+        border: 1px solid rgba(16, 53, 117, 0.28);
+        background: linear-gradient(134deg, var(--primary), var(--primary-2), var(--primary-3));
+        color: #ffffff;
+        box-shadow: 0 12px 22px rgba(31, 79, 159, 0.26);
       }
 
       .secondary {
-        background: rgba(14, 165, 233, 0.12);
-        color: #0f3f64;
-        border: 1px solid rgba(14, 165, 233, 0.3);
+        background: rgba(255, 255, 255, 0.86);
+        color: #153a80;
+        border: 1px solid rgba(21, 58, 128, 0.28);
       }
 
       .warn {
-        background: rgba(245, 158, 11, 0.16);
-        color: #5a3b03;
-        border: 1px solid rgba(245, 158, 11, 0.4);
+        background: rgba(204, 143, 25, 0.16);
+        color: #6a4200;
+        border: 1px solid rgba(204, 143, 25, 0.42);
       }
 
       .danger {
-        background: rgba(239, 68, 68, 0.12);
-        color: #7f1d1d;
-        border: 1px solid rgba(239, 68, 68, 0.4);
+        background: rgba(214, 69, 69, 0.14);
+        color: #852020;
+        border: 1px solid rgba(214, 69, 69, 0.42);
       }
 
       .muted {
         color: var(--ink-soft);
-        font-size: 0.78rem;
+        font-size: 0.75rem;
       }
 
       .status {
-        font-size: 0.78rem;
+        font-size: 0.76rem;
         color: var(--ink-soft);
         margin-bottom: 8px;
       }
@@ -172,20 +220,20 @@ export function renderConnectionPage(): string {
         border: 1px solid var(--line);
         border-radius: 12px;
         padding: 10px 12px;
-        background: rgba(255, 255, 255, 0.92);
+        background: rgba(255, 255, 255, 0.96);
         min-height: 56px;
       }
 
       .kv .k {
         display: block;
-        font-size: 0.72rem;
+        font-size: 0.7rem;
         color: var(--ink-soft);
         margin-bottom: 6px;
       }
 
       .kv .v {
-        font-family: "IBM Plex Mono", monospace;
-        font-size: 0.74rem;
+        font-family: "JetBrains Mono", monospace;
+        font-size: 0.72rem;
         color: var(--ink);
         word-break: break-word;
       }
@@ -196,7 +244,7 @@ export function renderConnectionPage(): string {
         padding: 10px;
         max-height: 360px;
         overflow: auto;
-        background: rgba(255, 255, 255, 0.92);
+        background: rgba(255, 255, 255, 0.94);
       }
 
       .table-item {
@@ -204,7 +252,13 @@ export function renderConnectionPage(): string {
         align-items: center;
         gap: 8px;
         margin-bottom: 6px;
-        font-size: 0.78rem;
+        font-size: 0.76rem;
+        padding: 4px 6px;
+        border-radius: 8px;
+      }
+
+      .table-item:hover {
+        background: rgba(23, 63, 133, 0.06);
       }
 
       .badges {
@@ -215,43 +269,43 @@ export function renderConnectionPage(): string {
       }
 
       .badge {
-        font-size: 0.68rem;
+        font-size: 0.66rem;
         border-radius: 999px;
         padding: 3px 8px;
         border: 1px solid var(--line);
-        background: rgba(16, 42, 67, 0.06);
+        background: rgba(17, 44, 90, 0.06);
         color: var(--ink-soft);
         white-space: nowrap;
       }
 
       .badge.ok {
-        background: rgba(34, 197, 94, 0.14);
-        border-color: rgba(34, 197, 94, 0.3);
-        color: #14532d;
+        background: rgba(30, 168, 91, 0.14);
+        border-color: rgba(30, 168, 91, 0.3);
+        color: #166239;
       }
 
       .badge.warn {
-        background: rgba(245, 158, 11, 0.14);
-        border-color: rgba(245, 158, 11, 0.35);
-        color: #5a3b03;
+        background: rgba(204, 143, 25, 0.14);
+        border-color: rgba(204, 143, 25, 0.35);
+        color: #6a4200;
       }
 
       .badge.danger {
-        background: rgba(239, 68, 68, 0.12);
-        border-color: rgba(239, 68, 68, 0.35);
-        color: #7f1d1d;
+        background: rgba(214, 69, 69, 0.12);
+        border-color: rgba(214, 69, 69, 0.35);
+        color: #842323;
       }
 
       .output {
-        border: 1px solid var(--line);
+        border: 1px solid rgba(17, 44, 90, 0.28);
         border-radius: 12px;
         padding: 10px;
         max-height: 360px;
         overflow: auto;
-        background: #0b1f30;
-        color: #d7ecff;
-        font-family: "IBM Plex Mono", monospace;
-        font-size: 0.74rem;
+        background: linear-gradient(165deg, #0e2240 0%, #0f2749 70%, #14345f 100%);
+        color: #dceafe;
+        font-family: "JetBrains Mono", monospace;
+        font-size: 0.73rem;
         white-space: pre-wrap;
       }
 
@@ -259,31 +313,31 @@ export function renderConnectionPage(): string {
         margin-top: 12px;
         border: 1px solid var(--line);
         border-radius: 14px;
-        background: rgba(255, 255, 255, 0.92);
+        background: rgba(255, 255, 255, 0.94);
         overflow: hidden;
       }
 
       .validation-summary {
         padding: 10px 14px;
-        font-size: 0.82rem;
+        font-size: 0.8rem;
         font-weight: 600;
-        border-bottom: 1px solid var(--line);
+        border-bottom: 1px solid var(--line-soft);
       }
 
       .validation-summary.all-ok {
-        background: rgba(34, 197, 94, 0.1);
-        color: #166534;
+        background: rgba(30, 168, 91, 0.1);
+        color: #166239;
       }
 
       .validation-summary.has-errors {
-        background: rgba(239, 68, 68, 0.1);
-        color: #991b1b;
+        background: rgba(214, 69, 69, 0.1);
+        color: #8a2323;
       }
 
       .val-table {
         padding: 8px 14px;
-        border-bottom: 1px solid rgba(15, 23, 42, 0.06);
-        font-size: 0.78rem;
+        border-bottom: 1px solid var(--line-soft);
+        font-size: 0.76rem;
       }
 
       .val-table:last-child {
@@ -298,8 +352,8 @@ export function renderConnectionPage(): string {
         cursor: pointer;
       }
 
-      .val-icon-ok { color: #22c55e; }
-      .val-icon-fail { color: #ef4444; }
+      .val-icon-ok { color: var(--ok); }
+      .val-icon-fail { color: var(--danger); }
 
       .val-cols {
         margin-top: 6px;
@@ -320,29 +374,29 @@ export function renderConnectionPage(): string {
       }
 
       .val-col.fail {
-        color: #991b1b;
+        color: #8a2323;
       }
 
       .val-spinner {
         text-align: center;
         padding: 12px;
         color: var(--ink-soft);
-        font-size: 0.82rem;
+        font-size: 0.8rem;
         font-style: italic;
       }
 
       .callout {
         border-radius: 14px;
-        border: 1px solid rgba(245, 158, 11, 0.35);
-        background: rgba(245, 158, 11, 0.12);
+        border: 1px solid rgba(204, 143, 25, 0.35);
+        background: rgba(204, 143, 25, 0.12);
         padding: 10px 12px;
-        font-size: 0.78rem;
-        color: #5a3b03;
+        font-size: 0.76rem;
+        color: #6a4200;
         margin-top: 10px;
       }
 
       .callout strong {
-        color: #4b2c00;
+        color: #4f3100;
       }
 
       .modal {
@@ -352,7 +406,7 @@ export function renderConnectionPage(): string {
         align-items: center;
         justify-content: center;
         padding: 18px;
-        background: rgba(15, 23, 42, 0.45);
+        background: rgba(8, 20, 41, 0.52);
         z-index: 50;
       }
 
@@ -362,10 +416,10 @@ export function renderConnectionPage(): string {
 
       .modal-card {
         width: min(920px, 100%);
-        border-radius: 18px;
-        border: 1px solid rgba(255, 255, 255, 0.22);
-        background: rgba(255, 255, 255, 0.96);
-        box-shadow: 0 20px 60px rgba(2, 6, 23, 0.28);
+        border-radius: 20px;
+        border: 1px solid rgba(255, 255, 255, 0.25);
+        background: rgba(255, 255, 255, 0.97);
+        box-shadow: 0 24px 60px rgba(5, 16, 34, 0.3);
         padding: 16px;
       }
 
@@ -383,16 +437,22 @@ export function renderConnectionPage(): string {
 
       .modal-body textarea {
         min-height: 260px;
-        background: #0b1f30;
-        color: #d7ecff;
+        background: linear-gradient(165deg, #0e2240 0%, #0f2749 70%, #14345f 100%);
+        color: #dceafe;
       }
 
       @media (max-width: 980px) {
         .page {
+          width: calc(100% - 16px);
+          margin: 10px auto 18px;
           grid-template-columns: 1fr;
         }
 
         .kvs {
+          grid-template-columns: 1fr;
+        }
+
+        .row {
           grid-template-columns: 1fr;
         }
       }
@@ -421,8 +481,21 @@ export function renderConnectionPage(): string {
           </div>
         </div>
 
+        <div style="margin-top: 10px;">
+          <label for="connection-provider">Data Source</label>
+          <select id="connection-provider">
+            <option value="postgres">Postgres</option>
+            <option value="supabase">Supabase (Postgres)</option>
+            <option value="neon">Neon (Postgres)</option>
+            <option value="mysql">MySQL (coming soon)</option>
+            <option value="snowflake">Snowflake (coming soon)</option>
+            <option value="bigquery">BigQuery (coming soon)</option>
+          </select>
+          <p class="muted">Postgres-compatible sources (Postgres/Supabase/Neon) are enabled in this runtime.</p>
+        </div>
+
         <div>
-          <label for="connection-string">Postgres Connection String</label>
+          <label for="connection-string">Connection String</label>
           <input id="connection-string" type="password" placeholder="postgresql://user:pass@host:5432/db?sslmode=require" />
           <p class="muted">Credentials never run in the browser. This string is sent to the server, stored encrypted, and used for governed SELECT-only execution.</p>
         </div>
@@ -437,7 +510,7 @@ export function renderConnectionPage(): string {
         </details>
 
         <div style="margin-top: 10px;">
-          <label for="business-context">Business Context (optional)</label>
+          <label for="business-context">Business Context (required)</label>
           <textarea id="business-context" style="min-height: 80px;" placeholder="E.g. We're a B2B SaaS company selling project management tools. Our main revenue comes from monthly subscriptions. We track sales by region, plan tier, and customer segment."></textarea>
           <p class="muted">Describe what your business does so the chat assistant can suggest relevant reports and understand your data better.</p>
         </div>
@@ -522,6 +595,7 @@ export function renderConnectionPage(): string {
         const elements = {
           status: document.getElementById("connection-status"),
           name: document.getElementById("connection-name"),
+          provider: document.getElementById("connection-provider"),
           connectionString: document.getElementById("connection-string"),
           tlsCaPem: document.getElementById("tls-ca-pem"),
           queryLimit: document.getElementById("query-limit"),
@@ -795,6 +869,7 @@ export function renderConnectionPage(): string {
           }
 
           const source = typeof context.source === "string" ? context.source : "runtime";
+          const provider = typeof context.provider === "string" ? context.provider : "postgres";
           const db = context.database || context.name || "unknown";
           const tableCount = Array.isArray(context.allowed_relations) ? context.allowed_relations.length : 0;
           const businessId =
@@ -807,6 +882,8 @@ export function renderConnectionPage(): string {
           elements.status.textContent =
             "Connected: " +
             db +
+            " | provider: " +
+            provider +
             " | source: " +
             source +
             " | allowlisted: " +
@@ -867,6 +944,9 @@ export function renderConnectionPage(): string {
           const relations = tables && Array.isArray(tables.relations) ? tables.relations : [];
           state.relations = relations;
           state.selected = new Set(Array.isArray(context.allowed_relations) ? context.allowed_relations.map((v) => String(v).toLowerCase()) : []);
+          if (context && typeof context.provider === "string") {
+            elements.provider.value = context.provider;
+          }
 
           renderSchemaFilter();
           renderRelations();
@@ -899,10 +979,12 @@ export function renderConnectionPage(): string {
             if (!connectionString) {
               throw new Error("Connection string is required.");
             }
+            const provider = String(elements.provider.value || "postgres").trim().toLowerCase();
 
             const tlsCaPem = String(elements.tlsCaPem.value || "").trim();
             const body = {
-              connection_string: connectionString
+              connection_string: connectionString,
+              provider
             };
             if (tlsCaPem) {
               body.tls_ca_pem = tlsCaPem;
@@ -943,19 +1025,22 @@ export function renderConnectionPage(): string {
             if (state.selected.size === 0) {
               throw new Error("Select at least one table/view for your allowlist.");
             }
+            const provider = String(elements.provider.value || "postgres").trim().toLowerCase();
 
             const tlsCaPem = String(elements.tlsCaPem.value || "").trim();
             const businessContext = String(elements.businessContext.value || "").trim();
+            if (!businessContext || businessContext.length < 5) {
+              throw new Error("Business context is required (minimum 5 characters).");
+            }
             const body = {
               name: String(elements.name.value || "").trim() || undefined,
               connection_string: connectionString,
-              allowed_relations: Array.from(state.selected)
+              provider,
+              allowed_relations: Array.from(state.selected),
+              business_context: businessContext
             };
             if (tlsCaPem) {
               body.tls_ca_pem = tlsCaPem;
-            }
-            if (businessContext) {
-              body.business_context = businessContext;
             }
 
             const context = await request("/api/db/connect", "POST", body);
@@ -1137,11 +1222,13 @@ export function renderConnectionPage(): string {
             if (!connectionString) {
               throw new Error("Re-enter the connection string (we don't store it in the browser).");
             }
+            const provider = String(elements.provider.value || "postgres").trim().toLowerCase();
 
             const tlsCaPem = String(elements.tlsCaPem.value || "").trim();
             elements.fixStatus.textContent = "Re-testing...";
             const body = {
-              connection_string: connectionString
+              connection_string: connectionString,
+              provider
             };
             if (tlsCaPem) {
               body.tls_ca_pem = tlsCaPem;

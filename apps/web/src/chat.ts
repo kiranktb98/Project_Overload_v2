@@ -6,10 +6,38 @@ import {
 import { z } from "zod";
 import type {
   QueryRouterClient,
-  QueryRoutingDecision
+  QueryRoutingDecision,
+  SqlDialect
 } from "./query-router";
 
-const DEFAULT_TIMEOUT_MS = 15000;
+function parseTimeoutMsFromEnv(value: string | undefined, fallbackMs: number): number {
+  const parsed = Number.parseInt(value ?? "", 10);
+  if (Number.isNaN(parsed) || parsed <= 0) {
+    return fallbackMs;
+  }
+  return parsed;
+}
+
+const DEFAULT_TIMEOUT_MS = parseTimeoutMsFromEnv(
+  process.env.DEFAULT_QUERY_TIMEOUT_MS ?? process.env.LLM_TIMEOUT_MS,
+  900_000
+);
+const DEFAULT_WEB_API_TIMEOUT_MS = parseTimeoutMsFromEnv(
+  process.env.WEB_API_TIMEOUT_MS ?? process.env.LLM_TIMEOUT_MS,
+  900_000
+);
+const PREPARE_TIMEOUT_MS = parseTimeoutMsFromEnv(
+  process.env.WEB_PREPARE_TIMEOUT_MS ?? process.env.WEB_API_TIMEOUT_MS ?? process.env.LLM_TIMEOUT_MS,
+  900_000
+);
+const RUN_TIMEOUT_MS = parseTimeoutMsFromEnv(
+  process.env.WEB_RUN_TIMEOUT_MS ?? process.env.WEB_API_TIMEOUT_MS ?? process.env.LLM_TIMEOUT_MS,
+  900_000
+);
+const PDF_TIMEOUT_MS = parseTimeoutMsFromEnv(
+  process.env.WEB_PDF_TIMEOUT_MS ?? process.env.WEB_API_TIMEOUT_MS ?? process.env.LLM_TIMEOUT_MS,
+  900_000
+);
 
 export const ChatDraftSchema = z.object({
   name: z.string(),
@@ -30,6 +58,18 @@ export const ChatHistoryTurnSchema = z.object({
   at: z.string().datetime().optional()
 });
 
+const ChatMetricDefinitionSchema = z.object({
+  metric_key: z.string().min(1),
+  display_name: z.string().min(1),
+  definition: z.string().min(1),
+  source_type: z.enum(["column", "derived"]).default("derived"),
+  source_columns: z.array(z.string().min(1)).default([]),
+  requires_confirmation: z.boolean().default(false),
+  confirmation_question: z.string().nullable().default(null),
+  confirmed: z.boolean().default(true),
+  context: z.enum(["single_query", "deep_analysis"]).default("deep_analysis")
+});
+
 export const ChatStateSchema = z.object({
   draft: ChatDraftSchema,
   contract_id: z.string().nullable(),
@@ -40,9 +80,39 @@ export const ChatStateSchema = z.object({
   prep_pending: z.boolean().default(false),
   prep_complete: z.boolean().default(false),
   scope_pending: z.boolean().default(false),
+  metric_definitions: z.array(ChatMetricDefinitionSchema).default([]),
+  pending_metric_confirmations: z.array(ChatMetricDefinitionSchema).default([]),
+  pending_metric_resume_message: z.string().nullable().default(null),
+  pending_metric_resume_mode: z.enum(["single_query", "deep_analysis"]).nullable().default(null),
+  scope_clarification_pending: z.boolean().default(false),
+  scope_source_prompt: z.string().nullable().default(null),
+  scope_questions: z
+    .array(
+      z.object({
+        question_number: z.number().int().min(1),
+        question: z.string().min(1),
+        clarification: z.string().min(1),
+        answer: z.string().nullable().default(null),
+        metric_key: z.string().nullable().default(null),
+        metric_display_name: z.string().nullable().default(null),
+        metric_definition_draft: z.string().nullable().default(null),
+        metric_source_columns: z.array(z.string().min(1)).default([])
+      })
+    )
+    .default([]),
   pending_query_sql: z.string().nullable().default(null),
   pending_query_limit: z.number().int().positive().nullable().default(null),
   pending_single_query_request: z.string().nullable().default(null),
+  last_single_query_snapshot: z
+    .object({
+      normalized_request: z.string().min(1),
+      context_key: z.string().min(1),
+      query_id: z.string().min(1),
+      assistant_message: z.string().min(1),
+      created_at: z.string().datetime()
+    })
+    .nullable()
+    .default(null),
   planner_summary: z.string().nullable().default(null),
   preparation_summary: z.string().nullable().default(null),
   prepared_payloads: z.array(
@@ -84,6 +154,9 @@ export const ChatStateSchema = z.object({
     })
   ).default([]),
   awaiting_pdf_confirmation: z.boolean().default(false),
+  awaiting_post_run_refinement: z.boolean().default(false),
+  refinement_active: z.boolean().default(false),
+  refinement_questions_remaining: z.number().int().min(0).max(2).default(0),
   awaiting_save_confirmation: z.boolean().default(false),
   awaiting_schedule_confirmation: z.boolean().default(false),
   awaiting_schedule_mode_selection: z.boolean().default(false),
@@ -117,6 +190,7 @@ export const ChatTurnRequestSchema = z.object({
 export type ChatDraft = z.infer<typeof ChatDraftSchema>;
 export type ChatHistoryTurn = z.infer<typeof ChatHistoryTurnSchema>;
 export type ChatState = z.infer<typeof ChatStateSchema>;
+type ChatMetricDefinition = z.infer<typeof ChatMetricDefinitionSchema>;
 
 export type ChatTurnResponse = {
   assistant_message: string;
@@ -278,6 +352,7 @@ const ScheduleContractResponseSchema = z.object({
 
 const ConnectionContextSchema = z.object({
   connected: z.boolean(),
+  provider: z.enum(["postgres", "supabase", "neon", "mysql", "snowflake", "bigquery"]).nullable().optional(),
   name: z.string().nullable().optional(),
   database: z.string().nullable().optional(),
   connected_at: z.string().nullable().optional(),
@@ -373,13 +448,24 @@ export function createInitialChatState(): ChatState {
     prep_pending: false,
     prep_complete: false,
     scope_pending: false,
+    metric_definitions: [],
+    pending_metric_confirmations: [],
+    pending_metric_resume_message: null,
+    pending_metric_resume_mode: null,
+    scope_clarification_pending: false,
+    scope_source_prompt: null,
+    scope_questions: [],
     pending_query_sql: null,
     pending_query_limit: null,
     pending_single_query_request: null,
+    last_single_query_snapshot: null,
     planner_summary: null,
     preparation_summary: null,
     prepared_payloads: [],
     awaiting_pdf_confirmation: false,
+    awaiting_post_run_refinement: false,
+    refinement_active: false,
+    refinement_questions_remaining: 0,
     awaiting_save_confirmation: false,
     awaiting_schedule_confirmation: false,
     awaiting_schedule_mode_selection: false,
@@ -414,13 +500,53 @@ export function parseChatState(value: unknown): ChatState {
     prep_pending: parsed.data.prep_pending ?? false,
     prep_complete: parsed.data.prep_complete ?? false,
     scope_pending: parsed.data.scope_pending ?? false,
+    metric_definitions: parsed.data.metric_definitions.map((entry) => ({
+      metric_key: entry.metric_key,
+      display_name: entry.display_name,
+      definition: entry.definition,
+      source_type: entry.source_type,
+      source_columns: [...entry.source_columns],
+      requires_confirmation: entry.requires_confirmation,
+      confirmation_question: entry.confirmation_question ?? null,
+      confirmed: entry.confirmed ?? true,
+      context: entry.context
+    })),
+    pending_metric_confirmations: parsed.data.pending_metric_confirmations.map((entry) => ({
+      metric_key: entry.metric_key,
+      display_name: entry.display_name,
+      definition: entry.definition,
+      source_type: entry.source_type,
+      source_columns: [...entry.source_columns],
+      requires_confirmation: entry.requires_confirmation,
+      confirmation_question: entry.confirmation_question ?? null,
+      confirmed: entry.confirmed ?? false,
+      context: entry.context
+    })),
+    pending_metric_resume_message: parsed.data.pending_metric_resume_message ?? null,
+    pending_metric_resume_mode: parsed.data.pending_metric_resume_mode ?? null,
+    scope_clarification_pending: parsed.data.scope_clarification_pending ?? false,
+    scope_source_prompt: parsed.data.scope_source_prompt ?? null,
+    scope_questions: parsed.data.scope_questions.map((entry) => ({
+      question_number: entry.question_number,
+      question: entry.question,
+      clarification: entry.clarification,
+      answer: entry.answer ?? null,
+      metric_key: entry.metric_key ?? null,
+      metric_display_name: entry.metric_display_name ?? null,
+      metric_definition_draft: entry.metric_definition_draft ?? null,
+      metric_source_columns: [...entry.metric_source_columns]
+    })),
     pending_query_sql: parsed.data.pending_query_sql ?? null,
     pending_query_limit: parsed.data.pending_query_limit ?? null,
     pending_single_query_request: parsed.data.pending_single_query_request ?? null,
+    last_single_query_snapshot: parsed.data.last_single_query_snapshot ?? null,
     planner_summary: parsed.data.planner_summary ?? null,
     preparation_summary: parsed.data.preparation_summary ?? null,
     prepared_payloads: [...parsed.data.prepared_payloads],
     awaiting_pdf_confirmation: parsed.data.awaiting_pdf_confirmation ?? false,
+    awaiting_post_run_refinement: parsed.data.awaiting_post_run_refinement ?? false,
+    refinement_active: parsed.data.refinement_active ?? false,
+    refinement_questions_remaining: parsed.data.refinement_questions_remaining ?? 0,
     awaiting_save_confirmation: parsed.data.awaiting_save_confirmation ?? false,
     awaiting_schedule_confirmation: parsed.data.awaiting_schedule_confirmation ?? false,
     awaiting_schedule_mode_selection: parsed.data.awaiting_schedule_mode_selection ?? false,
@@ -468,9 +594,14 @@ export function appendConversationTurn(
 
 import type { DraftUpdates } from "./conversation";
 
-export function applyLlmDraftUpdates(state: ChatState, updates: DraftUpdates): ChatState {
+export function applyLlmDraftUpdates(
+  state: ChatState,
+  updates: DraftUpdates,
+  options?: { preserve_prepared_state?: boolean }
+): ChatState {
   const next = parseChatState(state);
   let changed = false;
+  const preservePreparedState = options?.preserve_prepared_state ?? false;
 
   if (updates.name !== undefined && updates.name !== next.draft.name) {
     next.draft.name = updates.name;
@@ -524,7 +655,7 @@ export function applyLlmDraftUpdates(state: ChatState, updates: DraftUpdates): C
     changed = true;
   }
 
-  if (changed) {
+  if (changed && !preservePreparedState) {
     resetPreparedState(next);
   }
 
@@ -639,6 +770,34 @@ async function verifyDataScope(
 export function createWebApiClient(options: CreateWebApiClientOptions): WebApiClient {
   const fetcher = options.fetch_impl ?? fetch;
   const baseUrl = options.base_url.replace(/\/+$/, "");
+  const requestWithRetry = async (
+    path: string,
+    init: RequestInit,
+    options: { retries?: number; timeout_ms?: number } = {}
+  ): Promise<Response> => {
+    const retries = options.retries ?? 1;
+    const timeoutMs = options.timeout_ms ?? DEFAULT_WEB_API_TIMEOUT_MS;
+    let lastError: unknown;
+
+    for (let attempt = 0; attempt <= retries; attempt += 1) {
+      try {
+        return await fetchWithTimeout(
+          fetcher,
+          `${baseUrl}${path}`,
+          init,
+          timeoutMs
+        );
+      } catch (error) {
+        lastError = error;
+        if (attempt >= retries || !isTransientNetworkError(error)) {
+          throw error;
+        }
+        await sleep(250 * (attempt + 1));
+      }
+    }
+
+    throw lastError instanceof Error ? lastError : new Error("Network request failed");
+  };
 
   return {
     async createContract(payload) {
@@ -676,27 +835,39 @@ export function createWebApiClient(options: CreateWebApiClientOptions): WebApiCl
       return parseJsonResponse(response, ReportContractSchema);
     },
     async prepareContract(contractId) {
-      const response = await fetcher(`${baseUrl}/report-contracts/${encodeURIComponent(contractId)}/prepare`, {
-        method: "POST",
-        headers: { "content-type": "application/json" },
-        body: "{}"
-      });
+      const response = await requestWithRetry(
+        `/report-contracts/${encodeURIComponent(contractId)}/prepare`,
+        {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: "{}"
+        },
+        { retries: 2, timeout_ms: PREPARE_TIMEOUT_MS }
+      );
 
       return parseJsonResponse(response, PrepareContractResponseSchema);
     },
     async runContract(contractId) {
-      const response = await fetcher(`${baseUrl}/report-contracts/${encodeURIComponent(contractId)}/run`, {
-        method: "POST",
-        headers: { "content-type": "application/json" },
-        body: "{}"
-      });
+      const response = await requestWithRetry(
+        `/report-contracts/${encodeURIComponent(contractId)}/run`,
+        {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: "{}"
+        },
+        { retries: 2, timeout_ms: RUN_TIMEOUT_MS }
+      );
 
       return parseJsonResponse(response, RunContractResponseSchema);
     },
     async downloadRunPdf(runId) {
-      const response = await fetcher(`${baseUrl}/report-runs/${encodeURIComponent(runId)}/pdf`, {
-        method: "GET"
-      });
+      const response = await requestWithRetry(
+        `/report-runs/${encodeURIComponent(runId)}/pdf`,
+        {
+          method: "GET"
+        },
+        { retries: 1, timeout_ms: PDF_TIMEOUT_MS }
+      );
 
       if (!response.ok) {
         const text = await response.text();
@@ -795,11 +966,47 @@ export async function handleChatTurn(input: {
   const command = rawMessage.toLowerCase();
   let nextState = parseChatState(input.state);
 
+  // Legacy migration: fold pending metric confirmations into scope clarifications.
+  if (nextState.pending_metric_confirmations.length > 0) {
+    migratePendingMetricConfirmationsToScope(nextState);
+  }
+
+  // Recovery: if scope answers are already captured but the pending flags drifted,
+  // restore the correct next decision so UI controls remain available.
+  const hasAnsweredScopeItems =
+    nextState.scope_questions.length > 0 &&
+    nextState.scope_questions.every((entry) => Boolean(entry.answer && entry.answer.trim().length > 0));
+  if (
+    hasAnsweredScopeItems &&
+    !nextState.scope_clarification_pending &&
+    !nextState.prep_complete &&
+    !nextState.prep_pending &&
+    !nextState.scope_pending
+  ) {
+    nextState.prep_pending = true;
+  }
+
+  if (
+    nextState.prep_complete &&
+    nextState.prepared_payloads.length > 0 &&
+    !nextState.scope_pending &&
+    !nextState.prep_pending &&
+    !nextState.awaiting_post_run_refinement &&
+    !nextState.refinement_active &&
+    !nextState.awaiting_pdf_confirmation &&
+    !nextState.awaiting_save_confirmation &&
+    !nextState.awaiting_schedule_confirmation &&
+    !nextState.awaiting_schedule_mode_selection &&
+    !nextState.awaiting_custom_day_input
+  ) {
+    nextState.scope_pending = true;
+  }
+
   // --- Query intent confirmation gate ---
 
   if (nextState.pending_query_sql) {
     if (isQueryExecutionChoice(command)) {
-      return executePendingQuery(nextState, input.api_client);
+      return executePendingQuery(nextState, input.api_client, input.query_router);
     }
 
     if (isQueryOtherInstructionChoice(command)) {
@@ -854,23 +1061,178 @@ export async function handleChatTurn(input: {
     };
   }
 
+  // --- Multi-question scope clarification gate ---
+
+  if (nextState.scope_clarification_pending) {
+    const allScopeAnswersPresent = nextState.scope_questions.every(
+      (entry) => Boolean(entry.answer && entry.answer.trim().length > 0)
+    );
+
+    if (isScopeContinueChoice(command)) {
+      nextState.scope_clarification_pending = false;
+      nextState.scope_questions = [];
+      nextState.scope_source_prompt = null;
+      return {
+        assistant_message:
+          "Scope clarification paused. Tell me what to refine and I will restage the analysis questions.",
+        state: nextState
+      };
+    }
+
+    if (
+      isRunPreparationChoice(command) ||
+      isScopeRunChoice(command) ||
+      isPdfGenerateYesChoice(command) ||
+      isPdfGenerateNoChoice(command) ||
+      isUiControlCommand(command)
+    ) {
+      if (allScopeAnswersPresent) {
+        nextState.scope_clarification_pending = false;
+        const preparation = await buildPreparationConfirmation(nextState, input.api_client);
+        const answeredLines = nextState.scope_questions.map((entry) =>
+          `- Q${entry.question_number}: ${entry.answer ?? ""}`
+        );
+        return {
+          assistant_message: [
+            "Scope clarifications captured for all questions.",
+            answeredLines.join("\n"),
+            "",
+            preparation.assistant_message
+          ].join("\n"),
+          state: preparation.state
+        };
+      }
+      return {
+        assistant_message: buildScopeClarificationPendingMessage(nextState),
+        state: nextState
+      };
+    }
+
+    const clarification = await applyScopeClarificationAnswersWithLlm(
+      nextState,
+      rawMessage,
+      input.query_router
+    );
+
+    if (clarification.all_answered) {
+      nextState.scope_clarification_pending = false;
+      const preparation = await buildPreparationConfirmation(nextState, input.api_client);
+      const answeredLines = nextState.scope_questions.map((entry) =>
+        `- Q${entry.question_number}: ${entry.answer ?? ""}`
+      );
+      return {
+        assistant_message: [
+          "Scope clarifications captured for all questions.",
+          answeredLines.join("\n"),
+          "",
+          preparation.assistant_message
+        ].join("\n"),
+        state: preparation.state
+      };
+    }
+
+    if (clarification.answered_count === 0) {
+      return {
+        assistant_message: buildScopeClarificationPendingMessage(nextState),
+        state: nextState
+      };
+    }
+
+    if (!clarification.all_answered) {
+      return {
+        assistant_message: [
+          `Captured ${clarification.answered_count} clarification answer${clarification.answered_count === 1 ? "" : "s"}.`,
+          buildScopeClarificationPendingMessage(nextState)
+        ].join("\n\n"),
+        state: nextState
+      };
+    }
+
+    return {
+      assistant_message: buildScopeClarificationPendingMessage(nextState),
+      state: nextState
+    };
+  }
+
+  // --- Post-analysis refinement gate ---
+
+  if (nextState.awaiting_post_run_refinement) {
+    if (isStartRefinementChoice(command)) {
+      nextState.awaiting_post_run_refinement = false;
+      nextState.refinement_active = true;
+      nextState.refinement_questions_remaining = 2;
+      return {
+        assistant_message:
+          "Refinement mode is on. Ask your first follow-up question (up to 2 total) and I'll answer from this run payload.",
+        state: nextState
+      };
+    }
+
+    if (isStartNewConversationChoice(command)) {
+      nextState.awaiting_post_run_refinement = false;
+      nextState.refinement_active = false;
+      nextState.refinement_questions_remaining = 0;
+      return {
+        assistant_message:
+          "Understood. Start a new conversation for a fresh report scope whenever you're ready.",
+        state: nextState
+      };
+    }
+
+    if (isPdfGenerateYesChoice(command)) {
+      nextState.awaiting_post_run_refinement = false;
+      nextState.refinement_active = false;
+      nextState.refinement_questions_remaining = 0;
+      return completePdfGeneration(nextState);
+    }
+
+    if (nextState.last_run_id && looksLikePayloadQaQuestion(rawMessage)) {
+      nextState.awaiting_post_run_refinement = false;
+      nextState.refinement_active = true;
+      nextState.refinement_questions_remaining = 2;
+      return executeRefinementQa(nextState, rawMessage, input.api_client);
+    }
+
+    return {
+      assistant_message:
+        "Before PDF, choose one path: ask follow-up questions (max 2), generate the PDF now, or start a new conversation.",
+      state: nextState
+    };
+  }
+
+  if (nextState.refinement_active) {
+    if (isPdfGenerateYesChoice(command)) {
+      nextState.refinement_active = false;
+      nextState.refinement_questions_remaining = 0;
+      return completePdfGeneration(nextState);
+    }
+
+    if (isStartNewConversationChoice(command)) {
+      nextState.refinement_active = false;
+      nextState.refinement_questions_remaining = 0;
+      return {
+        assistant_message:
+          "Understood. Start a new conversation for a fresh report scope whenever you're ready.",
+        state: nextState
+      };
+    }
+
+    if (nextState.last_run_id && looksLikePayloadQaQuestion(rawMessage)) {
+      return executeRefinementQa(nextState, rawMessage, input.api_client);
+    }
+
+    return {
+      assistant_message:
+        `Refinement mode is active. Ask a follow-up question (${nextState.refinement_questions_remaining} remaining), or choose Generate report PDF.`,
+      state: nextState
+    };
+  }
+
   // --- PDF confirmation gate ---
 
   if (nextState.awaiting_pdf_confirmation) {
     if (isPdfGenerateYesChoice(command)) {
-      nextState.awaiting_pdf_confirmation = false;
-      if (!nextState.last_run_id) {
-        return {
-          assistant_message: "No run is available for PDF generation yet.",
-          state: nextState
-        };
-      }
-      nextState.awaiting_save_confirmation = true;
-      return {
-        assistant_message: `PDF is ready for run ${nextState.last_run_id}.\nWould you like to save this run to report logs?`,
-        state: nextState,
-        pdf_download_url: `/api/runs/${nextState.last_run_id}/pdf`
-      };
+      return completePdfGeneration(nextState);
     }
 
     if (isPdfGenerateNoChoice(command)) {
@@ -882,7 +1244,11 @@ export async function handleChatTurn(input: {
     }
 
     if (nextState.last_run_id && looksLikePayloadQaQuestion(rawMessage)) {
-      return executePayloadQa(nextState, rawMessage, input.api_client);
+      return {
+        assistant_message:
+          "Refinement limit is reached for this run. Generate the PDF now, or start a new conversation for additional analysis questions.",
+        state: nextState
+      };
     }
 
     return {
@@ -1055,7 +1421,7 @@ export async function handleChatTurn(input: {
   // --- Data preparation gate ---
 
   if (nextState.prep_pending) {
-    if (isRunPreparationChoice(command)) {
+    if (isRunPreparationChoice(command) || isScopeRunChoice(command)) {
       return executePreparation(nextState, input.api_client);
     }
 
@@ -1127,6 +1493,10 @@ export async function handleChatTurn(input: {
   }
 
   if (/^__ui_finish_scoping_run_analysis__$/.test(command)) {
+    if (nextState.prep_pending) {
+      return executePreparation(nextState, input.api_client);
+    }
+
     if (nextState.prep_complete) {
       return executeRun(nextState, input.api_client);
     }
@@ -1181,6 +1551,11 @@ export async function handleChatTurn(input: {
       ].join("\n"),
       state: nextState
     };
+  }
+
+  const repeatedSingleQuery = maybeReuseSingleQuerySnapshot(rawMessage, nextState);
+  if (repeatedSingleQuery) {
+    return repeatedSingleQuery;
   }
 
   const routedSingleOrAnalysis = await attemptSingleQueryOrAnalysisRouting(
@@ -1303,7 +1678,11 @@ async function executeSave(state: ChatState, apiClient: WebApiClient): Promise<C
   };
 }
 
-async function executePendingQuery(state: ChatState, apiClient: WebApiClient): Promise<ChatTurnResponse> {
+async function executePendingQuery(
+  state: ChatState,
+  apiClient: WebApiClient,
+  queryRouter?: QueryRouterClient
+): Promise<ChatTurnResponse> {
   const nextState = parseChatState(state);
   const sql = nextState.pending_query_sql ? normalizeExecutableSql(nextState.pending_query_sql) : null;
 
@@ -1321,11 +1700,21 @@ async function executePendingQuery(state: ChatState, apiClient: WebApiClient): P
   nextState.last_query_id = queryId;
 
   try {
+    const compiled = await maybeCompileSqlForExecution({
+      query_router: queryRouter,
+      api_client: apiClient,
+      state: nextState,
+      user_message: "run pending query",
+      source_sql: sql,
+      purpose: "pending_sql_execution"
+    });
+
     const startedAt = Date.now();
-    const result = await apiClient.runSafeQuery(sql, limit);
+    const result = await apiClient.runSafeQuery(compiled.sql, limit);
     const elapsedMs = Date.now() - startedAt;
     const preview = result.rows.slice(0, 10);
-    const warnings = result.warnings.length > 0 ? `\nWarnings: ${result.warnings.join("; ")}` : "";
+    const combinedWarnings = [...result.warnings, ...(compiled.note ? [compiled.note] : [])];
+    const warnings = combinedWarnings.length > 0 ? `\nWarnings: ${combinedWarnings.join("; ")}` : "";
 
     return {
       assistant_message: [
@@ -1361,14 +1750,29 @@ async function executeNaturalSimpleQuery(
   const queryId = `qry_${randomUUID()}`;
   nextState.last_query_id = queryId;
   nextState.pending_single_query_request = null;
+  const normalizedRequest = normalizeSingleQueryRequest(options.user_message ?? "");
+  const contextKey = buildNaturalQueryContextKey(action);
 
   try {
+    const compiled = await maybeCompileSqlForExecution({
+      query_router: options.query_router,
+      api_client: apiClient,
+      state: nextState,
+      user_message: options.user_message ?? "",
+      source_sql: action.sql,
+      purpose: action.explanation
+    });
+
     const startedAt = Date.now();
-    const result = await apiClient.runSafeQuery(action.sql, action.limit);
+    const result = await apiClient.runSafeQuery(compiled.sql, action.limit);
     const elapsedMs = Date.now() - startedAt;
     const summary = summarizeNaturalQueryResult(action, result.rows[0]);
-    const method = summarizeSingleQueryMethod(action.explanation, result.governed_sql);
-    const warnings = result.warnings.length > 0 ? `\nWarnings: ${result.warnings.join("; ")}` : "";
+    const method = summarizeSingleQueryMethod(
+      compiled.note ? `${action.explanation} ${compiled.note}` : action.explanation,
+      result.governed_sql
+    );
+    const warningLines = [...result.warnings, ...(compiled.note ? [compiled.note] : [])];
+    const warnings = warningLines.length > 0 ? `\nWarnings: ${warningLines.join("; ")}` : "";
     const naturalNarration = await maybeNarrateSingleQueryResponse({
       query_router: options.query_router,
       query_id: queryId,
@@ -1379,35 +1783,132 @@ async function executeNaturalSimpleQuery(
       rows: result.rows,
       row_count: result.row_count,
       elapsed_ms: elapsedMs,
-      warnings: result.warnings
+      warnings: warningLines
     });
 
     if (naturalNarration) {
+      nextState.last_single_query_snapshot = {
+        normalized_request: normalizedRequest,
+        context_key: contextKey,
+        query_id: queryId,
+        assistant_message: naturalNarration,
+        created_at: new Date().toISOString()
+      };
       return {
         assistant_message: naturalNarration,
         state: nextState
       };
     }
 
+    const assistantMessage = [
+      `Query completed. Query ID: ${queryId}.`,
+      summary,
+      method,
+      `Elapsed: ${elapsedMs}ms.`,
+      `${warnings}`.trim()
+    ]
+      .filter((line) => line.length > 0)
+      .join("\n");
+    nextState.last_single_query_snapshot = {
+      normalized_request: normalizedRequest,
+      context_key: contextKey,
+      query_id: queryId,
+      assistant_message: assistantMessage,
+      created_at: new Date().toISOString()
+    };
     return {
-      assistant_message: [
-        `Query completed. Query ID: ${queryId}.`,
-        summary,
-        method,
-        `Elapsed: ${elapsedMs}ms.`,
-        `${warnings}`.trim()
-      ]
-        .filter((line) => line.length > 0)
-        .join("\n"),
+      assistant_message: assistantMessage,
       state: nextState
     };
   } catch (error) {
     const reason = error instanceof Error ? error.message : "unknown error";
+    nextState.last_single_query_snapshot = null;
     return {
       assistant_message: `Query failed. Query ID: ${queryId}. Error: ${reason}`,
       state: nextState
     };
   }
+}
+
+async function maybeCompileSqlForExecution(input: {
+  query_router?: QueryRouterClient;
+  api_client: WebApiClient;
+  state: ChatState;
+  user_message: string;
+  source_sql: string;
+  purpose: string;
+}): Promise<{ sql: string; note: string | null }> {
+  const fallbackSql = normalizeExecutableSql(input.source_sql);
+  if (!input.query_router?.compile_sql) {
+    return { sql: fallbackSql, note: null };
+  }
+
+  let context: ConnectionContextRecord | null = null;
+  try {
+    context = await input.api_client.getConnectionContext();
+  } catch {
+    context = null;
+  }
+
+  const dialect = mapProviderToSqlDialect(context?.provider);
+  const catalog = await fetchCatalogContext(input.api_client).catch(() => ({
+    catalog_summary: "",
+    business_context: ""
+  }));
+
+  const allowedRelations =
+    input.state.draft.allowed_relations.length > 0
+      ? input.state.draft.allowed_relations
+      : context?.allowed_relations ?? [];
+  const allowedSchemas =
+    input.state.draft.allowed_schemas.length > 0
+      ? input.state.draft.allowed_schemas
+      : context?.allowed_schemas ?? [];
+
+  try {
+    const compiled = await input.query_router.compile_sql({
+      sql: fallbackSql,
+      dialect,
+      user_message: input.user_message || input.purpose,
+      allowed_relations: [...allowedRelations],
+      allowed_schemas: [...allowedSchemas],
+      catalog_summary: catalog.catalog_summary
+    });
+
+    const compiledSql = normalizeExecutableSql(compiled.sql);
+    if (!isLikelySingleSelectSql(compiledSql)) {
+      return {
+        sql: fallbackSql,
+        note: null
+      };
+    }
+
+    const changed = compiledSql !== fallbackSql;
+    return {
+      sql: compiledSql,
+      note: changed ? `Dialect compiler adapted SQL for ${dialect}.` : null
+    };
+  } catch {
+    return {
+      sql: fallbackSql,
+      note: null
+    };
+  }
+}
+
+function mapProviderToSqlDialect(
+  provider: ConnectionContextRecord["provider"] | null | undefined
+): SqlDialect {
+  if (provider === "mysql") {
+    return "mysql";
+  }
+  if (provider === "snowflake") {
+    return "snowflake";
+  }
+  if (provider === "bigquery") {
+    return "bigquery";
+  }
+  return "postgres";
 }
 
 async function inferLlmQueryRoutingDecision(
@@ -1441,11 +1942,14 @@ async function inferLlmQueryRoutingDecision(
   if (!catalog.catalog_summary || catalog.catalog_summary.trim().length === 0) {
     return null;
   }
+  const connectionContext = await apiClient.getConnectionContext().catch(() => null);
+  const sqlDialect = mapProviderToSqlDialect(connectionContext?.provider);
 
   try {
     return await queryRouter.decide({
       message: rawMessage,
       now_iso: new Date().toISOString(),
+      sql_dialect: sqlDialect,
       business_context: catalog.business_context,
       catalog_summary: catalog.catalog_summary,
       allowed_relations: [...state.draft.allowed_relations],
@@ -1481,7 +1985,12 @@ async function attemptSingleQueryOrAnalysisRouting(
   );
 
   if (llmQueryRouting?.route === "single_query" && llmQueryRouting.sql) {
-    const clarificationPrompt = buildSingleQueryClarificationPrompt(rawMessage, state);
+    const clarificationPrompt = await buildSingleQueryClarificationPrompt(
+      rawMessage,
+      state,
+      apiClient,
+      queryRouter
+    );
     if (clarificationPrompt) {
       const nextState = parseChatState(state);
       nextState.pending_single_query_request = rawMessage;
@@ -1494,17 +2003,13 @@ async function attemptSingleQueryOrAnalysisRouting(
   }
 
   if (llmQueryRouting?.route === "deep_analysis") {
-    const preparation = await buildPreparationConfirmation(state, apiClient);
-    const routerLine = llmQueryRouting.reason
-      ? `Routing decision: ${llmQueryRouting.reason}`
-      : "";
-
-    return {
-      assistant_message: [routerLine, preparation.assistant_message]
-        .filter((line) => line.trim().length > 0)
-        .join("\n\n"),
-      state: preparation.state
-    };
+    const scopeClarification = await buildScopeClarificationStep(
+      state,
+      rawMessage,
+      apiClient,
+      queryRouter
+    );
+    return scopeClarification;
   }
 
   const naturalQueryAction = await inferNaturalQueryAction(rawMessage, state, apiClient);
@@ -1512,7 +2017,12 @@ async function attemptSingleQueryOrAnalysisRouting(
     return null;
   }
 
-  const clarificationPrompt = buildSingleQueryClarificationPrompt(rawMessage, state);
+  const clarificationPrompt = await buildSingleQueryClarificationPrompt(
+    rawMessage,
+    state,
+    apiClient,
+    queryRouter
+  );
   if (clarificationPrompt) {
     const nextState = parseChatState(state);
     nextState.pending_single_query_request = rawMessage;
@@ -1528,6 +2038,1158 @@ async function attemptSingleQueryOrAnalysisRouting(
   });
 }
 
+async function buildScopeClarificationStep(
+  state: ChatState,
+  rawMessage: string,
+  apiClient: WebApiClient,
+  queryRouter: QueryRouterClient | undefined
+): Promise<ChatTurnResponse> {
+  const nextState = parseChatState(state);
+  const llmQuestions = await generateLlmScopeQuestions(
+    rawMessage,
+    state,
+    apiClient,
+    queryRouter,
+    "deep_analysis"
+  );
+  const fallbackQuestions = formulateScopeQuestions(rawMessage).map((entry, index) => ({
+    question_number: index + 1,
+    question: entry.question,
+    clarification: entry.clarification,
+    answer: null,
+    metric_key: null,
+    metric_display_name: null,
+    metric_definition_draft: null,
+    metric_source_columns: []
+  }));
+  const scopeQuestions = llmQuestions.length > 0 ? llmQuestions : fallbackQuestions;
+  const metricQuestions = await buildMetricScopeQuestions({
+    state: nextState,
+    raw_message: rawMessage,
+    existing_scope_questions: scopeQuestions,
+    api_client: apiClient,
+    query_router: queryRouter
+  });
+  const allQuestions = renumberScopeQuestions(
+    removeDuplicateScopeQuestions([...scopeQuestions, ...metricQuestions]).map(sanitizeScopeQuestionLanguage)
+  );
+
+  nextState.scope_questions = allQuestions;
+  nextState.scope_source_prompt = rawMessage;
+  nextState.scope_clarification_pending = true;
+  nextState.prep_pending = false;
+  nextState.scope_pending = false;
+
+  const questionLines = allQuestions.map(
+    (entry) =>
+      `- Q${entry.question_number}: ${entry.question}\n  Clarification: ${entry.clarification}`
+  );
+
+  return {
+    assistant_message: [
+      "Before data preparation, please confirm the scope details below.",
+      "This includes timeline/filter clarifications and any formula clarifications that need a final call.",
+      "You can answer all at once (for example: `Q1: ... Q2: ... Q3: ...`) or across multiple messages.",
+      questionLines.join("\n"),
+      "",
+      "Once all items are answered, I will proceed to data preparation."
+    ]
+      .filter((line) => line.trim().length > 0)
+      .join("\n"),
+    state: nextState
+  };
+}
+
+async function generateLlmScopeQuestions(
+  rawMessage: string,
+  state: ChatState,
+  apiClient: WebApiClient,
+  queryRouter: QueryRouterClient | undefined,
+  mode: "single_query" | "deep_analysis"
+): Promise<
+  Array<{
+    question_number: number;
+    question: string;
+    clarification: string;
+    answer: null;
+    metric_key: null;
+    metric_display_name: null;
+    metric_definition_draft: null;
+    metric_source_columns: string[];
+  }>
+> {
+  if (!queryRouter?.scope_clarifications) {
+    return [];
+  }
+
+  const catalog = await fetchCatalogContext(apiClient).catch(() => ({
+    catalog_summary: "",
+    business_context: ""
+  }));
+  if (!catalog.catalog_summary || catalog.catalog_summary.trim().length === 0) {
+    return [];
+  }
+
+  try {
+    const response = await queryRouter.scope_clarifications({
+      user_message: rawMessage,
+      mode,
+      now_iso: new Date().toISOString(),
+      business_context: catalog.business_context,
+      catalog_summary: catalog.catalog_summary,
+      allowed_relations: [...state.draft.allowed_relations],
+      allowed_schemas: [...state.draft.allowed_schemas],
+      draft_metrics: [...state.draft.metric_ids],
+      draft_dimensions: [...state.draft.dimension_ids],
+      conversation_history: state.conversation_history
+        .slice(-8)
+        .map((turn) => ({ role: turn.role, content: turn.content }))
+    });
+
+    return response.questions
+      .slice(0, mode === "single_query" ? 1 : 5)
+      .map((entry, index) => ({
+        question_number: index + 1,
+        question: entry.question.trim(),
+        clarification: entry.clarification.trim(),
+        answer: null,
+        metric_key: null,
+        metric_display_name: null,
+        metric_definition_draft: null,
+        metric_source_columns: []
+      }))
+      .filter(
+        (entry) =>
+          entry.question.length > 0 &&
+          entry.clarification.length > 0 &&
+          !looksLikeInternalScopeReasoning(entry.question, entry.clarification)
+      );
+  } catch {
+    return [];
+  }
+}
+
+async function inferMetricDefinitionsFromLlm(input: {
+  state: ChatState;
+  raw_message: string;
+  mode: "single_query" | "deep_analysis";
+  sql?: string;
+  api_client: WebApiClient;
+  query_router: QueryRouterClient | undefined;
+}): Promise<ChatMetricDefinition[]> {
+  if (!input.query_router?.propose_metrics) {
+    return [];
+  }
+
+  const catalog = await fetchCatalogContext(input.api_client).catch(() => ({
+    catalog_summary: "",
+    business_context: ""
+  }));
+  if (!catalog.catalog_summary || catalog.catalog_summary.trim().length === 0) {
+    return [];
+  }
+
+  try {
+    const response = await input.query_router.propose_metrics({
+      user_message: input.raw_message,
+      mode: input.mode,
+      now_iso: new Date().toISOString(),
+      sql: input.sql,
+      business_context: catalog.business_context,
+      catalog_summary: catalog.catalog_summary,
+      allowed_relations: [...input.state.draft.allowed_relations],
+      allowed_schemas: [...input.state.draft.allowed_schemas],
+      conversation_history: input.state.conversation_history
+        .slice(-8)
+        .map((turn) => ({ role: turn.role, content: turn.content }))
+    });
+
+    const normalized = response.metrics
+      .slice(0, 6)
+      .map((entry) => normalizeMetricDefinition(entry, input.mode))
+      .filter((entry): entry is ChatMetricDefinition => entry !== null);
+    return prioritizeMetricDefinitionsForWorkflow(normalized, input.raw_message, input.mode);
+  } catch {
+    return [];
+  }
+}
+
+async function buildMetricScopeQuestions(input: {
+  state: ChatState;
+  raw_message: string;
+  existing_scope_questions: Array<{
+    question_number: number;
+    question: string;
+    clarification: string;
+    answer: string | null;
+    metric_key: string | null;
+    metric_display_name: string | null;
+    metric_definition_draft: string | null;
+    metric_source_columns: string[];
+  }>;
+  api_client: WebApiClient;
+  query_router: QueryRouterClient | undefined;
+}): Promise<
+  Array<{
+    question_number: number;
+    question: string;
+    clarification: string;
+    answer: null;
+    metric_key: string | null;
+    metric_display_name: string | null;
+    metric_definition_draft: string | null;
+    metric_source_columns: string[];
+  }>
+> {
+  const proposed = await inferMetricDefinitionsFromLlm({
+    state: input.state,
+    raw_message: input.raw_message,
+    mode: "deep_analysis",
+    api_client: input.api_client,
+    query_router: input.query_router
+  });
+
+  if (proposed.length === 0) {
+    return [];
+  }
+
+  const autoConfirmed = proposed.filter((entry) => !entry.requires_confirmation);
+  if (autoConfirmed.length > 0) {
+    mergeConfirmedMetricDefinitions(input.state, autoConfirmed);
+  }
+
+  const pending = proposed.filter((entry) => {
+    if (!entry.requires_confirmation) {
+      return false;
+    }
+    if (isMetricClarificationAlreadyCovered(entry, input.existing_scope_questions)) {
+      return false;
+    }
+    return !hasConfirmedMetricDefinition(input.state, entry.metric_key, entry.definition);
+  });
+
+  return pending.map((entry, index) => {
+    const clarification =
+      entry.confirmation_question && entry.confirmation_question.trim().length > 0
+        ? entry.confirmation_question.trim()
+        : `Please confirm the exact formula for "${entry.display_name}".`;
+    const draftDefinition = entry.definition.trim();
+    const draftLine = draftDefinition.length > 0 ? ` Current interpretation: ${draftDefinition}` : "";
+    return {
+      question_number: index + 1,
+      question: `${entry.display_name} calculation`,
+      clarification: `${clarification}${draftLine}`,
+      answer: null,
+      metric_key: entry.metric_key,
+      metric_display_name: entry.display_name,
+      metric_definition_draft: entry.definition,
+      metric_source_columns: [...entry.source_columns]
+    };
+  });
+}
+
+function isMetricClarificationAlreadyCovered(
+  metric: ChatMetricDefinition,
+  scopeQuestions: Array<{
+    question_number: number;
+    question: string;
+    clarification: string;
+    answer: string | null;
+    metric_key: string | null;
+    metric_display_name: string | null;
+    metric_definition_draft: string | null;
+    metric_source_columns: string[];
+  }>
+): boolean {
+  const directKey = metric.metric_key.trim().toLowerCase();
+  const metricTokens = tokenizeForSimilarity(metric.display_name);
+  if (metricTokens.length === 0) {
+    return false;
+  }
+
+  for (const scope of scopeQuestions) {
+    if (scope.metric_key && scope.metric_key.trim().toLowerCase() === directKey) {
+      return true;
+    }
+    const text = `${scope.question} ${scope.clarification}`.toLowerCase();
+    const matchCount = metricTokens.filter((token) => text.includes(token)).length;
+    const hasFormulaLanguage =
+      /\b(rate|ratio|percent|percentage|formula|denominator|numerator|count-based|value-based|calculated|calculation)\b/i.test(
+        text
+      );
+    if (matchCount >= Math.min(2, metricTokens.length) && hasFormulaLanguage) {
+      return true;
+    }
+  }
+
+  return false;
+}
+
+function renumberScopeQuestions(
+  questions: Array<{
+    question_number: number;
+    question: string;
+    clarification: string;
+    answer: string | null;
+    metric_key: string | null;
+    metric_display_name: string | null;
+    metric_definition_draft: string | null;
+    metric_source_columns: string[];
+  }>
+): Array<{
+  question_number: number;
+  question: string;
+  clarification: string;
+  answer: string | null;
+  metric_key: string | null;
+  metric_display_name: string | null;
+  metric_definition_draft: string | null;
+  metric_source_columns: string[];
+}> {
+  return questions.map((entry, index) => ({
+    ...entry,
+    question_number: index + 1
+  }));
+}
+
+function removeDuplicateScopeQuestions(
+  questions: Array<{
+    question_number: number;
+    question: string;
+    clarification: string;
+    answer: string | null;
+    metric_key: string | null;
+    metric_display_name: string | null;
+    metric_definition_draft: string | null;
+    metric_source_columns: string[];
+  }>
+): Array<{
+  question_number: number;
+  question: string;
+  clarification: string;
+  answer: string | null;
+  metric_key: string | null;
+  metric_display_name: string | null;
+  metric_definition_draft: string | null;
+  metric_source_columns: string[];
+}> {
+  const kept: Array<{
+    question_number: number;
+    question: string;
+    clarification: string;
+    answer: string | null;
+    metric_key: string | null;
+    metric_display_name: string | null;
+    metric_definition_draft: string | null;
+    metric_source_columns: string[];
+  }> = [];
+
+  for (const question of questions) {
+    const duplicate = kept.some((existing) => areScopeQuestionsEquivalent(existing, question));
+    if (duplicate) {
+      continue;
+    }
+    kept.push(question);
+  }
+
+  return kept;
+}
+
+function areScopeQuestionsEquivalent(
+  left: {
+    question: string;
+    clarification: string;
+    metric_key: string | null;
+  },
+  right: {
+    question: string;
+    clarification: string;
+    metric_key: string | null;
+  }
+): boolean {
+  const leftMetric = left.metric_key?.trim().toLowerCase();
+  const rightMetric = right.metric_key?.trim().toLowerCase();
+  if (leftMetric && rightMetric && leftMetric === rightMetric) {
+    return true;
+  }
+
+  const leftText = normalizeSimilarityText(`${left.question} ${left.clarification}`);
+  const rightText = normalizeSimilarityText(`${right.question} ${right.clarification}`);
+  if (leftText.length === 0 || rightText.length === 0) {
+    return false;
+  }
+  if (leftText === rightText) {
+    return true;
+  }
+  if ((leftText.includes(rightText) || rightText.includes(leftText)) && Math.min(leftText.length, rightText.length) > 40) {
+    return true;
+  }
+
+  const leftTokens = tokenizeForSimilarity(leftText);
+  const rightTokens = tokenizeForSimilarity(rightText);
+  if (leftTokens.length === 0 || rightTokens.length === 0) {
+    return false;
+  }
+
+  const leftSet = new Set(leftTokens);
+  const rightSet = new Set(rightTokens);
+  let intersection = 0;
+  for (const token of leftSet) {
+    if (rightSet.has(token)) {
+      intersection += 1;
+    }
+  }
+  const union = leftSet.size + rightSet.size - intersection;
+  if (union === 0) {
+    return false;
+  }
+  const jaccard = intersection / union;
+  if (jaccard >= 0.72 && intersection >= 5) {
+    return true;
+  }
+
+  const smallerSetSize = Math.max(1, Math.min(leftSet.size, rightSet.size));
+  const overlapCoefficient = intersection / smallerSetSize;
+  if (overlapCoefficient >= 0.8 && intersection >= 3) {
+    return true;
+  }
+
+  const leftQuestionTokens = tokenizeForSimilarity(left.question).filter(
+    (token) => !isGenericScopeToken(token)
+  );
+  const rightQuestionTokens = tokenizeForSimilarity(right.question).filter(
+    (token) => !isGenericScopeToken(token)
+  );
+  if (leftQuestionTokens.length === 0 || rightQuestionTokens.length === 0) {
+    return false;
+  }
+
+  const leftQuestionSet = new Set(leftQuestionTokens);
+  const rightQuestionSet = new Set(rightQuestionTokens);
+  let questionIntersection = 0;
+  for (const token of leftQuestionSet) {
+    if (rightQuestionSet.has(token)) {
+      questionIntersection += 1;
+    }
+  }
+  const minQuestionSize = Math.max(1, Math.min(leftQuestionSet.size, rightQuestionSet.size));
+  const questionOverlap = questionIntersection / minQuestionSize;
+  return questionOverlap >= 0.8 && questionIntersection >= 2;
+}
+
+function sanitizeScopeQuestionLanguage(entry: {
+  question_number: number;
+  question: string;
+  clarification: string;
+  answer: string | null;
+  metric_key: string | null;
+  metric_display_name: string | null;
+  metric_definition_draft: string | null;
+  metric_source_columns: string[];
+}): {
+  question_number: number;
+  question: string;
+  clarification: string;
+  answer: string | null;
+  metric_key: string | null;
+  metric_display_name: string | null;
+  metric_definition_draft: string | null;
+  metric_source_columns: string[];
+} {
+  const rewrite = (value: string): string =>
+    value
+      .replace(/^routing decision\s*:\s*/i, "")
+      .replace(/^analysis task\s*:\s*/i, "")
+      .replace(/^data[_\s-]*analysis task\s*:\s*/i, "")
+      .replace(/\bmetric definition\b/gi, "calculation")
+      .replace(/^calculation\s*:\s*/i, "")
+      .replace(/\s+/g, " ")
+      .trim();
+
+  return {
+    ...entry,
+    question: rewrite(entry.question),
+    clarification: rewrite(entry.clarification)
+  };
+}
+
+function normalizeSimilarityText(value: string): string {
+  return value
+    .toLowerCase()
+    .replace(/[^a-z0-9\s]/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+function looksLikeInternalScopeReasoning(question: string, clarification: string): boolean {
+  const text = `${question} ${clarification}`.toLowerCase();
+  return (
+    /\brouting decision\b/.test(text) ||
+    /\bthis requires multiple queries\b/.test(text) ||
+    /\bcomparison diagnostics\b/.test(text) ||
+    /\bdata[_\s-]*analysis task\b/.test(text)
+  );
+}
+
+function isGenericScopeToken(token: string): boolean {
+  return (
+    token === "question" ||
+    token === "clarification" ||
+    token === "confirm" ||
+    token === "should" ||
+    token === "would" ||
+    token === "calculation"
+  );
+}
+
+function tokenizeForSimilarity(value: string): string[] {
+  const stopWords = new Set([
+    "the",
+    "and",
+    "for",
+    "with",
+    "from",
+    "that",
+    "this",
+    "your",
+    "into",
+    "then",
+    "also",
+    "please",
+    "confirm",
+    "question",
+    "clarification",
+    "should",
+    "would"
+  ]);
+
+  return Array.from(
+    new Set(
+      normalizeSimilarityText(value)
+        .split(" ")
+        .map((token) => token.trim())
+        .filter((token) => token.length >= 3 && !stopWords.has(token))
+    )
+  );
+}
+
+function migratePendingMetricConfirmationsToScope(state: ChatState): void {
+  if (state.pending_metric_confirmations.length === 0) {
+    return;
+  }
+
+  const existingMetricKeys = new Set(
+    state.scope_questions
+      .map((entry) => entry.metric_key?.trim().toLowerCase())
+      .filter((value): value is string => Boolean(value))
+  );
+
+  const injected = state.pending_metric_confirmations
+    .filter((entry) => !existingMetricKeys.has(entry.metric_key.trim().toLowerCase()))
+    .map((entry, index) => ({
+      question_number: state.scope_questions.length + index + 1,
+      question: `${entry.display_name} calculation`,
+      clarification:
+        entry.confirmation_question?.trim() && entry.confirmation_question.trim().length > 0
+          ? `${entry.confirmation_question.trim()} Current interpretation: ${entry.definition}`
+          : `Please confirm how "${entry.display_name}" should be calculated. Current interpretation: ${entry.definition}`,
+      answer: null,
+      metric_key: entry.metric_key,
+      metric_display_name: entry.display_name,
+      metric_definition_draft: entry.definition,
+      metric_source_columns: [...entry.source_columns]
+    }));
+
+  if (injected.length > 0) {
+    state.scope_questions = renumberScopeQuestions(
+      removeDuplicateScopeQuestions([...state.scope_questions, ...injected]).map(
+        sanitizeScopeQuestionLanguage
+      )
+    );
+    state.scope_clarification_pending = true;
+    state.prep_pending = false;
+    state.scope_pending = false;
+  }
+
+  state.pending_metric_confirmations = [];
+  state.pending_metric_resume_message = null;
+  state.pending_metric_resume_mode = null;
+}
+
+function prioritizeMetricDefinitionsForWorkflow(
+  definitions: ChatMetricDefinition[],
+  rawMessage: string,
+  mode: "single_query" | "deep_analysis"
+): ChatMetricDefinition[] {
+  const deduped: ChatMetricDefinition[] = [];
+  const seen = new Set<string>();
+
+  for (const definition of definitions) {
+    const fingerprint = `${definition.metric_key.trim().toLowerCase()}|${definition.definition
+      .trim()
+      .toLowerCase()}`;
+    if (seen.has(fingerprint)) {
+      continue;
+    }
+    seen.add(fingerprint);
+    deduped.push(definition);
+  }
+
+  const autoConfirmed: ChatMetricDefinition[] = [];
+  const confirmationCandidates: ChatMetricDefinition[] = [];
+
+  for (const definition of deduped) {
+    if (shouldRequireMetricConfirmation(definition, rawMessage, mode)) {
+      confirmationCandidates.push({
+        ...definition,
+        requires_confirmation: true,
+        confirmed: false,
+        confirmation_question:
+          definition.confirmation_question && definition.confirmation_question.trim().length > 0
+            ? definition.confirmation_question
+            : `Please confirm how "${definition.display_name}" should be calculated.`
+      });
+      continue;
+    }
+
+    autoConfirmed.push({
+      ...definition,
+      requires_confirmation: false,
+      confirmation_question: null,
+      confirmed: true
+    });
+  }
+
+  confirmationCandidates.sort(
+    (left, right) =>
+      metricConfirmationPriority(right, rawMessage) - metricConfirmationPriority(left, rawMessage)
+  );
+
+  const pending = confirmationCandidates.slice(0, 3);
+  return [...autoConfirmed, ...pending];
+}
+
+function shouldRequireMetricConfirmation(
+  definition: ChatMetricDefinition,
+  rawMessage: string,
+  mode: "single_query" | "deep_analysis"
+): boolean {
+  if (!definition.requires_confirmation) {
+    return false;
+  }
+
+  if (definition.source_type === "column" && definition.source_columns.length > 0) {
+    return false;
+  }
+
+  const text = [
+    definition.display_name,
+    definition.metric_key,
+    definition.definition,
+    definition.confirmation_question ?? ""
+  ]
+    .join(" ")
+    .toLowerCase();
+
+  const ambiguousMetricPattern =
+    /\b(rate|ratio|percent|percentage|share|margin|conversion|churn|retention|utilization|coverage|efficiency|score|index|per\s+\w+|average|avg|arpu|ltv|cac|nps)\b/i;
+  if (!ambiguousMetricPattern.test(text)) {
+    return false;
+  }
+
+  const timeWindowTemplatePattern =
+    /\b(monthly|weekly|daily|recent|prior|previous|period|window|trend|comparison|compare|vs|delta|change)\b/i;
+  if (timeWindowTemplatePattern.test(text) && !/\b(rate|ratio|percent|percentage|margin|share)\b/i.test(text)) {
+    return false;
+  }
+
+  if (mode === "single_query" && !metricMentionedByUser(definition, rawMessage)) {
+    return false;
+  }
+
+  return true;
+}
+
+function metricConfirmationPriority(definition: ChatMetricDefinition, rawMessage: string): number {
+  let score = 0;
+  if (metricMentionedByUser(definition, rawMessage)) {
+    score += 4;
+  }
+  const text = `${definition.display_name} ${definition.definition}`.toLowerCase();
+  if (/\b(rate|ratio|percent|percentage|margin|share)\b/.test(text)) {
+    score += 3;
+  }
+  if (definition.source_columns.length === 0) {
+    score += 1;
+  }
+  return score;
+}
+
+function metricMentionedByUser(definition: ChatMetricDefinition, rawMessage: string): boolean {
+  const user = rawMessage.toLowerCase();
+  const display = definition.display_name.toLowerCase().trim();
+  if (display.length > 0 && user.includes(display)) {
+    return true;
+  }
+
+  const stopWords = new Set([
+    "the",
+    "and",
+    "for",
+    "with",
+    "from",
+    "past",
+    "last",
+    "this",
+    "that",
+    "trend",
+    "comparison",
+    "metric"
+  ]);
+  const tokens = Array.from(
+    new Set(
+      `${definition.display_name} ${definition.metric_key}`
+        .toLowerCase()
+        .split(/[^a-z0-9]+/)
+        .map((token) => token.trim())
+        .filter((token) => token.length >= 3 && !stopWords.has(token))
+    )
+  );
+
+  if (tokens.length === 0) {
+    return false;
+  }
+  const overlap = tokens.filter((token) => user.includes(token)).length;
+  return overlap >= Math.min(2, tokens.length);
+}
+
+function normalizeMetricDefinition(
+  entry: {
+    metric_key: string;
+    display_name: string;
+    definition: string;
+    source_type: "column" | "derived";
+    source_columns: string[];
+    requires_confirmation: boolean;
+    confirmation_question?: string;
+  },
+  context: "single_query" | "deep_analysis"
+): ChatMetricDefinition | null {
+  const metricKey = sanitizeMetricKey(entry.metric_key || entry.display_name);
+  const displayName = entry.display_name?.trim();
+  const definition = entry.definition?.trim();
+  if (!metricKey || !displayName || !definition) {
+    return null;
+  }
+
+  const sourceColumns = Array.from(
+    new Set(
+      (entry.source_columns ?? [])
+        .map((column) => column.trim())
+        .filter((column) => column.length > 0)
+    )
+  );
+
+  return {
+    metric_key: metricKey,
+    display_name: displayName,
+    definition,
+    source_type: entry.source_type ?? "derived",
+    source_columns: sourceColumns,
+    requires_confirmation: Boolean(entry.requires_confirmation),
+    confirmation_question: entry.confirmation_question?.trim() || null,
+    confirmed: !entry.requires_confirmation,
+    context
+  };
+}
+
+function sanitizeMetricKey(value: string): string {
+  const normalized = value
+    .toLowerCase()
+    .replace(/[^a-z0-9_]+/g, "_")
+    .replace(/^_+|_+$/g, "")
+    .slice(0, 48);
+  return normalized.length > 0 ? normalized : `metric_${randomUUID().slice(0, 8)}`;
+}
+
+function hasConfirmedMetricDefinition(
+  state: ChatState,
+  metricKey: string,
+  definition: string
+): boolean {
+  const normalizedKey = metricKey.trim().toLowerCase();
+  const normalizedDefinition = definition.trim().toLowerCase();
+  return state.metric_definitions.some(
+    (entry) =>
+      entry.confirmed &&
+      entry.metric_key.trim().toLowerCase() === normalizedKey &&
+      entry.definition.trim().toLowerCase() === normalizedDefinition
+  );
+}
+
+function mergeConfirmedMetricDefinitions(
+  state: ChatState,
+  definitions: ChatMetricDefinition[]
+): void {
+  for (const definition of definitions) {
+    const key = definition.metric_key.trim().toLowerCase();
+    const index = state.metric_definitions.findIndex(
+      (entry) => entry.metric_key.trim().toLowerCase() === key
+    );
+    if (index === -1) {
+      state.metric_definitions.push({
+        ...definition,
+        confirmed: true,
+        requires_confirmation: false
+      });
+      continue;
+    }
+
+    state.metric_definitions[index] = {
+      ...state.metric_definitions[index]!,
+      ...definition,
+      confirmed: true,
+      requires_confirmation: false
+    };
+  }
+}
+
+function formulateScopeQuestions(
+  rawMessage: string
+): Array<{ question: string; clarification: string }> {
+  const normalized = rawMessage
+    .replace(/\r/g, "\n")
+    .replace(/\s+/g, " ")
+    .trim();
+
+  if (normalized.length === 0) {
+    return [
+      {
+        question: "Primary analysis question",
+        clarification: "Confirm exact timeframe and the date column to use."
+      }
+    ];
+  }
+
+  const numbered: Array<{ question: string; clarification: string }> = [];
+  const numberedRegex = /\bq\s*(\d+)\s*[:.)-]\s*([^?!.]+(?:[?!.][^?!.]+)*)/gi;
+  let numberedMatch: RegExpExecArray | null;
+  while ((numberedMatch = numberedRegex.exec(normalized)) !== null) {
+    const question = cleanScopeQuestionText(numberedMatch[2] ?? "");
+    if (question.length === 0) {
+      continue;
+    }
+    numbered.push({
+      question,
+      clarification: buildClarificationForScopeQuestion(question)
+    });
+  }
+  if (numbered.length > 0) {
+    return numbered.slice(0, 5);
+  }
+
+  let segments = normalized
+    .split(/\?\s+|;\s+|(?:\.\s+)(?=(?:also|plus)\b)/i)
+    .map((segment) => cleanScopeQuestionText(segment))
+    .filter((segment) => segment.length > 0);
+
+  if (segments.length <= 1) {
+    segments = normalized
+      .split(/\b(?:also|plus|and also)\b/gi)
+      .map((segment) => cleanScopeQuestionText(segment))
+      .filter((segment) => segment.length > 0);
+  }
+
+  if (segments.length === 0) {
+    segments = [cleanScopeQuestionText(normalized)];
+  }
+
+  return segments.slice(0, 5).map((question) => ({
+    question,
+    clarification: buildClarificationForScopeQuestion(question)
+  }));
+}
+
+function cleanScopeQuestionText(value: string): string {
+  return value
+    .replace(/^\s*(and|also|plus)\s+/i, "")
+    .replace(/\s+/g, " ")
+    .trim()
+    .replace(/[.?!]+$/g, "")
+    .trim();
+}
+
+function buildClarificationForScopeQuestion(question: string): string {
+  const lower = question.toLowerCase();
+  if (/\b(vs|versus|compare|comparison|prior|previous)\b/.test(lower)) {
+    return "Confirm exact period A vs period B window and the primary date column for this comparison.";
+  }
+  if (/\b(refund|refunded|cancell|return)\b/.test(lower)) {
+    return "Confirm which statuses count in-scope and which date column should anchor the time window.";
+  }
+  if (!/\b(day|days|week|weeks|month|months|quarter|quarters|year|years|date|timeline|window|period)\b/.test(lower)) {
+    return "Confirm exact timeframe and the primary date column for this question.";
+  }
+  return "Confirm the final filters and primary date column before execution.";
+}
+
+async function applyScopeClarificationAnswersWithLlm(
+  state: ChatState,
+  rawMessage: string,
+  queryRouter: QueryRouterClient | undefined
+): Promise<{ answered_count: number; all_answered: boolean }> {
+  if (state.scope_questions.length === 0) {
+    return { answered_count: 0, all_answered: true };
+  }
+
+  if (!queryRouter?.resolve_scope_answers) {
+    const fallback = applyScopeClarificationAnswers(state, rawMessage);
+    applyMetricDefinitionAnswersFromScope(state);
+    return fallback;
+  }
+
+  try {
+    const response = await queryRouter.resolve_scope_answers({
+      user_message: rawMessage,
+      now_iso: new Date().toISOString(),
+      scope_questions: state.scope_questions.map((entry) => ({
+        question_number: entry.question_number,
+        question: entry.question,
+        clarification: entry.clarification,
+        answer: entry.answer
+      })),
+      conversation_history: state.conversation_history
+        .slice(-12)
+        .map((turn) => ({ role: turn.role, content: turn.content }))
+    });
+
+    let answeredCount = 0;
+    for (const assignment of response.assignments) {
+      const target = state.scope_questions.find(
+        (entry) => entry.question_number === assignment.question_number
+      );
+      if (!target) {
+        continue;
+      }
+      const normalized = normalizeScopeAnswer(assignment.answer ?? "");
+      if (normalized.length === 0) {
+        continue;
+      }
+      if (!target.answer || target.answer.trim().length === 0) {
+        answeredCount += 1;
+      }
+      target.answer = normalized;
+    }
+
+    if (answeredCount === 0) {
+      const fallback = applyScopeClarificationAnswers(state, rawMessage);
+      applyMetricDefinitionAnswersFromScope(state);
+      return fallback;
+    }
+
+    applyMetricDefinitionAnswersFromScope(state);
+    const allAnswered = state.scope_questions.every(
+      (entry) => Boolean(entry.answer && entry.answer.trim().length > 0)
+    );
+    return {
+      answered_count: answeredCount,
+      all_answered: allAnswered
+    };
+  } catch {
+    const fallback = applyScopeClarificationAnswers(state, rawMessage);
+    applyMetricDefinitionAnswersFromScope(state);
+    return fallback;
+  }
+}
+
+function applyScopeClarificationAnswers(
+  state: ChatState,
+  rawMessage: string
+): { answered_count: number; all_answered: boolean } {
+  if (state.scope_questions.length === 0) {
+    return { answered_count: 0, all_answered: true };
+  }
+
+  const unanswered = () => state.scope_questions.filter((entry) => !entry.answer || entry.answer.trim().length === 0);
+  let answeredCount = 0;
+
+  const explicitAnswers = extractExplicitScopeAnswers(rawMessage);
+  if (explicitAnswers.size > 0) {
+    for (const [questionNumber, answer] of explicitAnswers.entries()) {
+      const target = state.scope_questions.find(
+        (entry) => entry.question_number === questionNumber
+      );
+      if (!target) {
+        continue;
+      }
+      if (!target.answer || target.answer.trim().length === 0) {
+        answeredCount += 1;
+      }
+      target.answer = answer;
+    }
+    applyMetricDefinitionAnswersFromScope(state);
+    return { answered_count: answeredCount, all_answered: unanswered().length === 0 };
+  }
+
+  const lower = rawMessage.toLowerCase();
+  if (/\b(all questions|all of them|same for all)\b/.test(lower)) {
+    const answer = normalizeScopeAnswer(rawMessage);
+    if (answer.length === 0) {
+      return { answered_count: 0, all_answered: unanswered().length === 0 };
+    }
+    for (const entry of state.scope_questions) {
+      if (!entry.answer || entry.answer.trim().length === 0) {
+        answeredCount += 1;
+      }
+      entry.answer = answer;
+    }
+    applyMetricDefinitionAnswersFromScope(state);
+    return { answered_count: answeredCount, all_answered: true };
+  }
+
+  const pending = unanswered();
+  if (pending.length === 0) {
+    return { answered_count: 0, all_answered: true };
+  }
+
+  const splitAnswers = rawMessage
+    .split(/\n+|;\s+/)
+    .map((part) => normalizeScopeAnswer(part))
+    .filter((part) => part.length > 0);
+  if (splitAnswers.length > 1) {
+    for (let index = 0; index < pending.length && index < splitAnswers.length; index += 1) {
+      pending[index]!.answer = splitAnswers[index]!;
+      answeredCount += 1;
+    }
+    applyMetricDefinitionAnswersFromScope(state);
+    return { answered_count: answeredCount, all_answered: unanswered().length === 0 };
+  }
+
+  const singleAnswer = normalizeScopeAnswer(rawMessage);
+  if (singleAnswer.length === 0) {
+    return { answered_count: 0, all_answered: unanswered().length === 0 };
+  }
+  pending[0]!.answer = singleAnswer;
+  answeredCount += 1;
+  const result = { answered_count: answeredCount, all_answered: unanswered().length === 0 };
+  applyMetricDefinitionAnswersFromScope(state);
+  return result;
+}
+
+function extractExplicitScopeAnswers(rawMessage: string): Map<number, string> {
+  const answers = new Map<number, string>();
+
+  const normalizedMessage = rawMessage.replace(/[–—]/g, "-");
+  const questionRegex =
+    /\bq(?:uestion)?\s*(\d+)\s*[:-]\s*([\s\S]*?)(?=\bq(?:uestion)?\s*\d+\s*[:-]|\n{2,}|$)/gi;
+  let match: RegExpExecArray | null;
+  while ((match = questionRegex.exec(normalizedMessage)) !== null) {
+    const questionNumber = Number.parseInt(match[1] ?? "", 10);
+    const answer = normalizeScopeAnswer(match[2] ?? "");
+    if (!Number.isNaN(questionNumber) && answer.length > 0) {
+      answers.set(questionNumber, answer);
+    }
+  }
+
+  if (answers.size > 0) {
+    return answers;
+  }
+
+  const numericRegex = /(?:^|\n)\s*(\d+)[).:-]\s*([\s\S]*?)(?=(?:\n\s*\d+[).:-])|\n{2,}|$)/g;
+  while ((match = numericRegex.exec(normalizedMessage)) !== null) {
+    const questionNumber = Number.parseInt(match[1] ?? "", 10);
+    const answer = normalizeScopeAnswer(match[2] ?? "");
+    if (!Number.isNaN(questionNumber) && answer.length > 0) {
+      answers.set(questionNumber, answer);
+    }
+  }
+
+  return answers;
+}
+
+function normalizeScopeAnswer(value: string): string {
+  return value
+    .replace(/^\s*(q(?:uestion)?\s*\d+|[1-9]\d*)\s*[):.-]\s*/i, "")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+function buildScopeClarificationPendingMessage(state: ChatState): string {
+  const pending = state.scope_questions.filter((entry) => !entry.answer || entry.answer.trim().length === 0);
+  if (pending.length === 0) {
+    return "All scope clarifications are captured.";
+  }
+
+  const lines = pending.map((entry) => {
+    const metricLine =
+      entry.metric_display_name && entry.metric_display_name.trim().length > 0
+        ? ` (metric: ${entry.metric_display_name})`
+        : "";
+    return `- Q${entry.question_number}${metricLine}: ${entry.clarification}`;
+  });
+  return [
+    `Need clarification for ${pending.length} scope item${pending.length === 1 ? "" : "s"} before data preparation:`,
+    lines.join("\n"),
+    "Reply with `Q1: ... Q2: ...` (all at once) or answer across multiple messages."
+  ].join("\n");
+}
+
+function applyMetricDefinitionAnswersFromScope(state: ChatState): void {
+  const metricAnswers = state.scope_questions.filter(
+    (entry) =>
+      Boolean(entry.metric_key && entry.metric_key.trim().length > 0) &&
+      Boolean(entry.answer && entry.answer.trim().length > 0)
+  );
+
+  if (metricAnswers.length === 0) {
+    return;
+  }
+
+  const definitions: ChatMetricDefinition[] = [];
+  for (const entry of metricAnswers) {
+    const metricKey = entry.metric_key?.trim();
+    const displayName = entry.metric_display_name?.trim();
+    if (!metricKey || !displayName) {
+      continue;
+    }
+    const resolvedDefinition = resolveMetricDefinitionFromScopeAnswer(
+      entry.answer ?? "",
+      entry.metric_definition_draft ?? ""
+    );
+    if (resolvedDefinition.length === 0) {
+      continue;
+    }
+    definitions.push({
+      metric_key: metricKey,
+      display_name: displayName,
+      definition: resolvedDefinition,
+      source_type: "derived",
+      source_columns: [...entry.metric_source_columns],
+      requires_confirmation: false,
+      confirmation_question: null,
+      confirmed: true,
+      context: "deep_analysis"
+    });
+  }
+
+  if (definitions.length > 0) {
+    mergeConfirmedMetricDefinitions(state, definitions);
+  }
+}
+
+function resolveMetricDefinitionFromScopeAnswer(answer: string, draftDefinition: string): string {
+  const normalizedAnswer = normalizeScopeAnswer(answer);
+  if (normalizedAnswer.length === 0) {
+    return "";
+  }
+
+  if (/^(yes|y|approved|looks good|use draft|use that|go ahead|confirm)\b/i.test(normalizedAnswer)) {
+    return draftDefinition.trim();
+  }
+
+  return normalizedAnswer;
+}
+
 async function executeLlmRoutedSingleQuery(
   state: ChatState,
   apiClient: WebApiClient,
@@ -1539,9 +3201,21 @@ async function executeLlmRoutedSingleQuery(
   const queryId = `qry_${randomUUID()}`;
   nextState.last_query_id = queryId;
   nextState.pending_single_query_request = null;
+  const normalizedRequest = normalizeSingleQueryRequest(userMessage);
 
-  const sql = decision.sql ? normalizeExecutableSql(decision.sql) : "";
+  const baseSql = decision.sql ? normalizeExecutableSql(decision.sql) : "";
+  const compiled = await maybeCompileSqlForExecution({
+    query_router: queryRouter,
+    api_client: apiClient,
+    state: nextState,
+    user_message: userMessage,
+    source_sql: baseSql,
+    purpose: decision.reason
+  });
+  const sql = compiled.sql;
+  const contextKey = buildSqlQueryContextKey(sql);
   if (!isLikelySingleSelectSql(sql)) {
+    nextState.last_single_query_snapshot = null;
     return {
       assistant_message: `Could not execute routed query. Query ID: ${queryId}. Reason: generated SQL was not a single SELECT statement.`,
       state: nextState
@@ -1553,8 +3227,12 @@ async function executeLlmRoutedSingleQuery(
     const result = await apiClient.runSafeQuery(sql);
     const elapsedMs = Date.now() - startedAt;
     const summary = summarizeLlmRoutedQueryResult(userMessage, result.rows, result.row_count);
-    const method = summarizeSingleQueryMethod(decision.reason, result.governed_sql || sql);
-    const warnings = result.warnings.length > 0 ? `\nWarnings: ${result.warnings.join("; ")}` : "";
+    const method = summarizeSingleQueryMethod(
+      compiled.note ? `${decision.reason} ${compiled.note}` : decision.reason,
+      result.governed_sql || sql
+    );
+    const warningLines = [...result.warnings, ...(compiled.note ? [compiled.note] : [])];
+    const warnings = warningLines.length > 0 ? `\nWarnings: ${warningLines.join("; ")}` : "";
     const naturalNarration = await maybeNarrateSingleQueryResponse({
       query_router: queryRouter,
       query_id: queryId,
@@ -1565,34 +3243,160 @@ async function executeLlmRoutedSingleQuery(
       rows: result.rows,
       row_count: result.row_count,
       elapsed_ms: elapsedMs,
-      warnings: result.warnings
+      warnings: warningLines
     });
 
     if (naturalNarration) {
+      nextState.last_single_query_snapshot = {
+        normalized_request: normalizedRequest,
+        context_key: contextKey,
+        query_id: queryId,
+        assistant_message: naturalNarration,
+        created_at: new Date().toISOString()
+      };
       return {
         assistant_message: naturalNarration,
         state: nextState
       };
     }
+    const assistantMessage = [
+      `Query completed. Query ID: ${queryId}.`,
+      summary,
+      method,
+      `Elapsed: ${elapsedMs}ms.`,
+      `${warnings}`.trim()
+    ]
+      .filter((line) => line.length > 0)
+      .join("\n");
+    nextState.last_single_query_snapshot = {
+      normalized_request: normalizedRequest,
+      context_key: contextKey,
+      query_id: queryId,
+      assistant_message: assistantMessage,
+      created_at: new Date().toISOString()
+    };
     return {
-      assistant_message: [
-        `Query completed. Query ID: ${queryId}.`,
-        summary,
-        method,
-        `Elapsed: ${elapsedMs}ms.`,
-        `${warnings}`.trim()
-      ]
-        .filter((line) => line.length > 0)
-        .join("\n"),
+      assistant_message: assistantMessage,
       state: nextState
     };
   } catch (error) {
     const reason = error instanceof Error ? error.message : "unknown error";
+    nextState.last_single_query_snapshot = null;
     return {
       assistant_message: `Query failed. Query ID: ${queryId}. Error: ${reason}`,
       state: nextState
     };
   }
+}
+
+function maybeReuseSingleQuerySnapshot(rawMessage: string, state: ChatState): ChatTurnResponse | null {
+  const snapshot = state.last_single_query_snapshot;
+  if (!snapshot) {
+    return null;
+  }
+
+  const lower = rawMessage.toLowerCase().trim();
+  if (lower.length < 2) {
+    return null;
+  }
+
+  if (
+    parseSetCommand(rawMessage) ||
+    parseQueryCommand(rawMessage) ||
+    isUiControlCommand(lower) ||
+    asksForPdf(lower) ||
+    asksToUseConnectedTables(lower) ||
+    looksLikeAnalysisIntent(lower) ||
+    looksLikeComplexMultiQuestionPrompt(lower)
+  ) {
+    return null;
+  }
+
+  const explicitRepeat = isExplicitSingleQueryRepeatRequest(lower);
+  const normalizedRequest = normalizeSingleQueryRequest(rawMessage);
+  const sameRequest =
+    normalizedRequest.length > 0 &&
+    snapshot.normalized_request.length > 0 &&
+    normalizedRequest === snapshot.normalized_request;
+
+  if (!explicitRepeat && !sameRequest) {
+    return null;
+  }
+
+  const nextState = parseChatState(state);
+  nextState.pending_single_query_request = null;
+  nextState.last_query_id = snapshot.query_id;
+
+  return {
+    assistant_message: [
+      "Using the same context as your previous single-query request.",
+      snapshot.assistant_message
+    ].join("\n\n"),
+    state: nextState
+  };
+}
+
+function isExplicitSingleQueryRepeatRequest(lower: string): boolean {
+  return (
+    /\b(same question|same query|same context|same as above)\b/.test(lower) ||
+    /\b(repeat that|repeat it|again please|show again|give again)\b/.test(lower) ||
+    /^again\b/.test(lower)
+  );
+}
+
+function normalizeSingleQueryRequest(message: string): string {
+  const stopWords = new Set([
+    "can",
+    "could",
+    "would",
+    "please",
+    "just",
+    "me",
+    "you",
+    "my",
+    "the",
+    "a",
+    "an",
+    "show",
+    "give",
+    "tell",
+    "what",
+    "whats",
+    "is",
+    "are"
+  ]);
+
+  return message
+    .toLowerCase()
+    .replace(/[^a-z0-9\s]/g, " ")
+    .split(/\s+/)
+    .map((token) => token.trim())
+    .filter((token) => token.length > 0)
+    .filter((token) => !stopWords.has(token))
+    .join(" ");
+}
+
+function buildNaturalQueryContextKey(action: NaturalQueryAction): string {
+  return [
+    action.kind,
+    action.relation,
+    action.date_column ?? "",
+    String(action.requested_months ?? ""),
+    String(action.requested_days ?? ""),
+    action.metric_column ?? "",
+    action.city_filter ?? "",
+    action.product_filter ?? "",
+    (action.joined_relations ?? []).join(","),
+    action.window_label ?? "",
+    String(action.limit ?? "")
+  ].join("|");
+}
+
+function buildSqlQueryContextKey(sql: string): string {
+  return sql
+    .toLowerCase()
+    .replace(/\s+/g, " ")
+    .trim();
 }
 
 function summarizeLlmRoutedQueryResult(
@@ -2221,6 +4025,20 @@ function isRunPreparationChoice(command: string): boolean {
   );
 }
 
+function isStartRefinementChoice(command: string): boolean {
+  return (
+    /^__ui_refine_report__$/.test(command) ||
+    /^(ask follow-up|refine|continue refinement|continue with refinements|ask questions)\b/.test(command)
+  );
+}
+
+function isStartNewConversationChoice(command: string): boolean {
+  return (
+    /^__ui_start_new_conversation__$/.test(command) ||
+    /^(start new conversation|new conversation|new report)\b/.test(command)
+  );
+}
+
 function isPdfGenerateYesChoice(command: string): boolean {
   return (
     /^__ui_generate_pdf_yes__$/.test(command) ||
@@ -2233,6 +4051,73 @@ function isPdfGenerateNoChoice(command: string): boolean {
     /^__ui_generate_pdf_no__$/.test(command) ||
     /^(not yet|no|skip pdf|later)\b/.test(command)
   );
+}
+
+function completePdfGeneration(state: ChatState): ChatTurnResponse {
+  const nextState = parseChatState(state);
+  nextState.awaiting_pdf_confirmation = false;
+  nextState.awaiting_post_run_refinement = false;
+  nextState.refinement_active = false;
+  nextState.refinement_questions_remaining = 0;
+  if (!nextState.last_run_id) {
+    return {
+      assistant_message: "No run is available for PDF generation yet.",
+      state: nextState
+    };
+  }
+  nextState.awaiting_save_confirmation = true;
+  return {
+    assistant_message: `PDF is ready for run ${nextState.last_run_id}.\nWould you like to save this run to report logs?`,
+    state: nextState,
+    pdf_download_url: `/api/runs/${nextState.last_run_id}/pdf`
+  };
+}
+
+async function executeRefinementQa(
+  state: ChatState,
+  question: string,
+  apiClient: WebApiClient
+): Promise<ChatTurnResponse> {
+  const nextState = parseChatState(state);
+  if (!nextState.last_run_id) {
+    nextState.refinement_active = false;
+    nextState.refinement_questions_remaining = 0;
+    nextState.awaiting_pdf_confirmation = true;
+    return {
+      assistant_message: "No completed run found yet. Generate the report again before follow-up refinement.",
+      state: nextState
+    };
+  }
+
+  const response = await apiClient.askRunQuestion(nextState.last_run_id, question);
+  const citationLine = response.citations.length > 0
+    ? `\nReferences: ${response.citations.join(", ")}`
+    : "";
+
+  const remaining = Math.max(0, (nextState.refinement_questions_remaining ?? 0) - 1);
+  nextState.refinement_questions_remaining = remaining;
+
+  if (remaining > 0) {
+    nextState.refinement_active = true;
+    nextState.awaiting_pdf_confirmation = false;
+    return {
+      assistant_message: [
+        `${response.answer}${citationLine}`,
+        `You can ask ${remaining} more follow-up question${remaining === 1 ? "" : "s"} before PDF, or choose Generate report PDF now.`
+      ].join("\n\n"),
+      state: nextState
+    };
+  }
+
+  nextState.refinement_active = false;
+  nextState.awaiting_pdf_confirmation = true;
+  return {
+    assistant_message: [
+      `${response.answer}${citationLine}`,
+      "Refinement limit reached for this run. PDF decision is now pending."
+    ].join("\n\n"),
+    state: nextState
+  };
 }
 
 function isSaveReportYesChoice(command: string): boolean {
@@ -2320,14 +4205,34 @@ async function executePreparation(state: ChatState, apiClient: WebApiClient): Pr
   nextState.prep_pending = false;
 
   if (!nextState.contract_id) {
-    const contract = buildContractPayload(nextState);
-    const created = await apiClient.createContract(contract);
-    nextState.contract_id = created.id;
+    try {
+      const contract = buildContractPayload(nextState);
+      const created = await apiClient.createContract(contract);
+      nextState.contract_id = created.id;
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "Failed to save contract before preparation.";
+      nextState.prep_pending = true;
+      return {
+        assistant_message: `Preparation could not start yet. ${message}`,
+        state: nextState
+      };
+    }
   }
 
-  const prepared = await apiClient.prepareContract(nextState.contract_id!);
+  let prepared: Awaited<ReturnType<WebApiClient["prepareContract"]>>;
+  try {
+    prepared = await apiClient.prepareContract(nextState.contract_id!);
+  } catch (error) {
+    const message = error instanceof Error ? error.message : "Data preparation failed.";
+    nextState.prep_pending = true;
+    return {
+      assistant_message: `Data preparation did not complete. ${message}`,
+      state: nextState
+    };
+  }
   nextState.prep_complete = true;
   nextState.scope_pending = true;
+  nextState.scope_clarification_pending = false;
   nextState.prepared_payloads = prepared.prepared_payloads;
   nextState.preparation_summary = prepared.planner_summary ?? null;
   if (prepared.token_usage) {
@@ -2394,18 +4299,40 @@ async function executeRun(state: ChatState, apiClient: WebApiClient): Promise<Ch
   nextState.pending_query_limit = null;
 
   if (!nextState.contract_id) {
-    const contract = buildContractPayload(nextState);
-    const created = await apiClient.createContract(contract);
-    nextState.contract_id = created.id;
+    try {
+      const contract = buildContractPayload(nextState);
+      const created = await apiClient.createContract(contract);
+      nextState.contract_id = created.id;
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "Failed to save contract before run.";
+      nextState.scope_pending = true;
+      return {
+        assistant_message: `Run could not start. ${message}`,
+        state: nextState
+      };
+    }
   }
 
-  const run = await apiClient.runContract(nextState.contract_id!);
+  let run: Awaited<ReturnType<WebApiClient["runContract"]>>;
+  try {
+    run = await apiClient.runContract(nextState.contract_id!);
+  } catch (error) {
+    const message = error instanceof Error ? error.message : "Run execution failed.";
+    nextState.scope_pending = true;
+    return {
+      assistant_message: `Run execution did not complete. ${message}`,
+      state: nextState
+    };
+  }
   nextState.last_run_id = run.run_id;
   nextState.last_exec_brief = run.exec_brief;
   nextState.planner_summary = run.planner_summary ?? null;
   nextState.last_concise_summary = run.concise_summary ?? null;
   nextState.prepared_payloads = run.prepared_payloads ?? nextState.prepared_payloads;
-  nextState.awaiting_pdf_confirmation = true;
+  nextState.awaiting_pdf_confirmation = false;
+  nextState.awaiting_post_run_refinement = true;
+  nextState.refinement_active = false;
+  nextState.refinement_questions_remaining = 2;
   if (run.token_usage) {
     nextState.last_token_usage = run.token_usage;
   }
@@ -2435,15 +4362,21 @@ async function executeRun(state: ChatState, apiClient: WebApiClient): Promise<Ch
   const tokenUsageLine = run.token_usage
     ? `Tokens used - input: ${run.token_usage.input_tokens}, output: ${run.token_usage.output_tokens}, total: ${run.token_usage.total_tokens}.`
     : "";
+  const metricDefinitionLine = nextState.metric_definitions
+    .filter((entry) => entry.confirmed)
+    .slice(0, 5)
+    .map((entry) => `${entry.display_name}: ${entry.definition}`)
+    .join(" | ");
 
   return {
     assistant_message: [
       `Report executed. Run ID: ${run.run_id}.`,
       run.concise_summary ?? "",
+      metricDefinitionLine ? `Calculation choices used: ${metricDefinitionLine}` : "",
       briefLines.join("\n"),
       diagnosticsBlock,
       tokenUsageLine,
-      "PDF generation decision is pending."
+      "Before PDF, choose one path: ask follow-up refinement questions (max 2), generate PDF now, or start a new conversation."
     ].filter((line) => line.length > 0).join("\n\n"),
     state: nextState,
     exec_brief_html: run.exec_brief_html
@@ -2647,6 +4580,10 @@ function buildStateContext(state: ChatState): string {
     parts.push(`Last query ID: ${state.last_query_id}.`);
   }
 
+  if (state.last_single_query_snapshot) {
+    parts.push("Single-query context is available for replay.");
+  }
+
   if (state.last_exec_brief) {
     const eb = state.last_exec_brief;
     parts.push(`Last analysis: ${eb.what_changed.join("; ")}.`);
@@ -2660,12 +4597,39 @@ function buildStateContext(state: ChatState): string {
     parts.push("A single-query clarification is pending.");
   }
 
+  if (state.pending_metric_confirmations.length > 0) {
+    parts.push(`Metric calculation confirmation pending (${state.pending_metric_confirmations.length}).`);
+  }
+
+  if (state.metric_definitions.length > 0) {
+    const metrics = state.metric_definitions
+      .filter((entry) => entry.confirmed)
+      .slice(0, 4)
+      .map((entry) => `${entry.display_name}: ${entry.definition}`)
+      .join(" | ");
+    if (metrics.length > 0) {
+      parts.push(`Confirmed metric calculations: ${metrics}`);
+    }
+  }
+
+  if (state.scope_clarification_pending) {
+    parts.push("Scope clarification is pending for multi-question analysis.");
+  }
+
   if (state.prep_pending) {
     parts.push("Data preparation is waiting for confirmation.");
   }
 
   if (state.scope_pending) {
     parts.push("Analysis execution is waiting for scope confirmation.");
+  }
+
+  if (state.awaiting_post_run_refinement) {
+    parts.push("Post-analysis refinement decision is waiting.");
+  }
+
+  if (state.refinement_active) {
+    parts.push(`Refinement mode is active (${state.refinement_questions_remaining} follow-up question(s) remaining).`);
   }
 
   if (state.awaiting_pdf_confirmation) {
@@ -3092,7 +5056,31 @@ function looksLikeSingleQueryCandidate(lower: string, state: ChatState): boolean
   return looksLikeSimpleQueryIntent(lower, state);
 }
 
-function buildSingleQueryClarificationPrompt(rawMessage: string, state: ChatState): string | null {
+async function buildSingleQueryClarificationPrompt(
+  rawMessage: string,
+  state: ChatState,
+  apiClient: WebApiClient,
+  queryRouter: QueryRouterClient | undefined
+): Promise<string | null> {
+  const llmQuestions = await generateLlmScopeQuestions(
+    rawMessage,
+    state,
+    apiClient,
+    queryRouter,
+    "single_query"
+  );
+  if (llmQuestions.length > 0) {
+    const first = llmQuestions[0]!;
+    return [
+      "Before I run this query, I want to lock one detail for accuracy:",
+      `- ${first.clarification}`
+    ].join("\n");
+  }
+
+  return buildSingleQueryClarificationPromptFallback(rawMessage, state);
+}
+
+function buildSingleQueryClarificationPromptFallback(rawMessage: string, state: ChatState): string | null {
   const lower = rawMessage.toLowerCase();
   if (!(asksForSalesSum(lower) || looksLikeSalesNumericFollowUp(lower, state))) {
     return null;
@@ -4452,9 +6440,18 @@ function resetPreparedState(state: ChatState): void {
   state.prep_pending = false;
   state.prep_complete = false;
   state.scope_pending = false;
+  state.pending_metric_confirmations = [];
+  state.pending_metric_resume_message = null;
+  state.pending_metric_resume_mode = null;
+  state.scope_clarification_pending = false;
+  state.scope_source_prompt = null;
+  state.scope_questions = [];
   state.preparation_summary = null;
   state.prepared_payloads = [];
   state.awaiting_pdf_confirmation = false;
+  state.awaiting_post_run_refinement = false;
+  state.refinement_active = false;
+  state.refinement_questions_remaining = 0;
   state.awaiting_save_confirmation = false;
   state.awaiting_schedule_confirmation = false;
   state.awaiting_schedule_mode_selection = false;
@@ -4545,6 +6542,15 @@ function buildContractPayload(state: ChatState): ReportContractRecord {
 
   const allowedRelations = draft.allowed_relations.length > 0 ? draft.allowed_relations : ["analytics.sales"];
   const allowedSchemas = draft.allowed_schemas.length > 0 ? draft.allowed_schemas : deriveSchemas(allowedRelations);
+  const metricDefinitions = state.metric_definitions
+    .filter((entry) => entry.confirmed)
+    .map((entry) => ({
+      metric_key: entry.metric_key,
+      display_name: entry.display_name,
+      definition: entry.definition,
+      source_type: entry.source_type,
+      source_columns: entry.source_columns
+    }));
 
   return ReportContractSchema.parse({
     id: state.contract_id ?? `contract_${randomUUID()}`,
@@ -4554,6 +6560,7 @@ function buildContractPayload(state: ChatState): ReportContractRecord {
     schedule_cron: draft.schedule_cron,
     sql_template: sql,
     metric_ids: draft.metric_ids,
+    metric_definitions: metricDefinitions,
     dimension_ids: draft.dimension_ids,
     insight_mode: draft.insight_mode ?? "business",
     guardrails: {
@@ -4910,6 +6917,33 @@ function formatNumber(n: number): string {
   if (n >= 1_000_000) return `${(n / 1_000_000).toFixed(1)}M`;
   if (n >= 1_000) return `${(n / 1_000).toFixed(1)}K`;
   return String(n);
+}
+
+function isTransientNetworkError(error: unknown): boolean {
+  const message = error instanceof Error ? error.message : String(error);
+  return /fetch failed|network|socket|timed out|timeout|econn|enotfound|aborted/i.test(message);
+}
+
+function sleep(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+async function fetchWithTimeout(
+  fetcher: typeof fetch,
+  url: string,
+  init: RequestInit,
+  timeoutMs: number
+): Promise<Response> {
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), timeoutMs);
+  try {
+    return await fetcher(url, {
+      ...init,
+      signal: controller.signal
+    });
+  } finally {
+    clearTimeout(timeout);
+  }
 }
 
 // ---------------------------------------------------------------------------

@@ -148,6 +148,115 @@ describe("web chat interface", () => {
     await app.close();
   });
 
+  it("compiles routed SQL to connection dialect before execution", async () => {
+    let executedSql = "";
+    const router: QueryRouterClient = {
+      provider: "openrouter",
+      mode: "provider",
+      async decide() {
+        return {
+          route: "single_query",
+          sql: "SELECT SUM(total_amount) AS total_sales FROM public.demo_orders WHERE order_date >= CURRENT_DATE - INTERVAL '30 days'",
+          reason: "Single metric request can be answered with one aggregate query.",
+          confidence: 0.9
+        };
+      },
+      async compile_sql() {
+        return {
+          sql: "SELECT SUM(total_amount) AS total_sales FROM public.demo_orders WHERE order_date >= DATE_SUB(CURRENT_DATE, INTERVAL 30 DAY)",
+          rationale: "Converted interval syntax for mysql."
+        };
+      }
+    };
+
+    const fetchImpl: typeof fetch = async (input, init) => {
+      const url = typeof input === "string" ? input : input instanceof URL ? input.toString() : input.url;
+      const method = init?.method?.toUpperCase() ?? "GET";
+
+      if (url.endsWith("/connections/active") && method === "GET") {
+        return new Response(
+          JSON.stringify({
+            connected: true,
+            provider: "mysql",
+            name: "mysql",
+            database: "demo",
+            connected_at: "2026-02-01T00:00:00.000Z",
+            allowed_relations: ["public.demo_orders"],
+            allowed_schemas: ["public"],
+            available_relations: ["public.demo_orders"],
+            source: "runtime"
+          }),
+          { status: 200, headers: { "content-type": "application/json" } }
+        );
+      }
+
+      if (url.endsWith("/connections/catalog") && method === "GET") {
+        return new Response(
+          JSON.stringify({
+            business_id: "biz_test",
+            business_context: "",
+            cataloged_at: "2026-02-01T00:00:00.000Z",
+            tables: [
+              {
+                table_id: "tbl_orders",
+                qualified_name: "public.demo_orders",
+                relation_type: "TABLE",
+                summary: "Orders and sales",
+                columns: [
+                  { column_name: "order_date", data_type: "timestamp", is_nullable: false },
+                  { column_name: "total_amount", data_type: "decimal", is_nullable: false }
+                ],
+                low_cardinality_columns: [],
+                sample_rows: [],
+                row_count_estimate: 1000
+              }
+            ]
+          }),
+          { status: 200, headers: { "content-type": "application/json" } }
+        );
+      }
+
+      if (url.endsWith("/connections/query") && method === "POST") {
+        const body = typeof init?.body === "string" ? (JSON.parse(init.body) as { sql?: string }) : {};
+        executedSql = body.sql ?? "";
+        return new Response(
+          JSON.stringify({
+            rows: [{ total_sales: "1200.50" }],
+            row_count: 1,
+            governed_sql: executedSql,
+            warnings: []
+          }),
+          { status: 200, headers: { "content-type": "application/json" } }
+        );
+      }
+
+      return new Response(JSON.stringify({ message: `Unhandled request: ${method} ${url}` }), {
+        status: 404,
+        headers: { "content-type": "application/json" }
+      });
+    };
+
+    const app = buildWebApp({
+      api_base_url: "http://api.local",
+      fetch_impl: fetchImpl,
+      query_router: router,
+      conversation_client: createPassthroughConversationClient()
+    });
+
+    const response = await app.inject({
+      method: "POST",
+      url: "/api/chat",
+      payload: {
+        message: "total sales in last 30 days"
+      }
+    });
+
+    expect(response.statusCode).toBe(200);
+    expect(executedSql).toContain("DATE_SUB(CURRENT_DATE, INTERVAL 30 DAY)");
+
+    await app.close();
+  });
+
   it("uses LLM narrator for natural single-query explanation when available", async () => {
     const router: QueryRouterClient = {
       provider: "openrouter",
@@ -245,6 +354,135 @@ describe("web chat interface", () => {
     expect(body.assistant_message).toContain("I calculated total sales");
     expect(body.assistant_message).not.toContain("Tables used:");
     expect(body.assistant_message).not.toContain("Filters used:");
+
+    await app.close();
+  });
+
+  it("does not block single-query execution behind metric confirmation prompts", async () => {
+    let queryRuns = 0;
+    const router: QueryRouterClient = {
+      provider: "openrouter",
+      mode: "provider",
+      async decide() {
+        return {
+          route: "single_query",
+          sql: "SELECT SUM(total_amount) AS total_refunds FROM public.demo_orders WHERE status = 'refunded'",
+          reason: "Single metric request can be answered with one aggregate query.",
+          confidence: 0.94
+        };
+      },
+      async propose_metrics() {
+        return {
+          metrics: [
+            {
+              metric_key: "refund_rate",
+              display_name: "Refund Rate",
+              definition: "Refunded orders divided by total orders in the selected window.",
+              source_type: "derived",
+              source_columns: ["public.demo_orders.status", "public.demo_orders.order_id"],
+              requires_confirmation: true,
+              confirmation_question: "Should refund rate use all orders as denominator?"
+            },
+            {
+              metric_key: "monthly_refund_count",
+              display_name: "Monthly Refund Count",
+              definition: "Count of refunded orders by month for the selected timeline.",
+              source_type: "derived",
+              source_columns: ["public.demo_orders.status", "public.demo_orders.order_date"],
+              requires_confirmation: true,
+              confirmation_question: "Confirm monthly window split."
+            },
+            {
+              metric_key: "refund_change",
+              display_name: "Refund Change",
+              definition: "Change in refund count between comparison periods.",
+              source_type: "derived",
+              source_columns: ["public.demo_orders.status", "public.demo_orders.order_date"],
+              requires_confirmation: true,
+              confirmation_question: "Confirm comparison periods."
+            }
+          ]
+        };
+      }
+    };
+
+    const fetchImpl: typeof fetch = async (input, init) => {
+      const url = typeof input === "string" ? input : input instanceof URL ? input.toString() : input.url;
+      const method = init?.method?.toUpperCase() ?? "GET";
+
+      if (url.endsWith("/connections/catalog") && method === "GET") {
+        return new Response(
+          JSON.stringify({
+            business_id: "biz_test",
+            business_context: "",
+            cataloged_at: "2026-02-01T00:00:00.000Z",
+            tables: [
+              {
+                table_id: "tbl_orders",
+                qualified_name: "public.demo_orders",
+                relation_type: "TABLE",
+                summary: "Orders and statuses",
+                columns: [
+                  { column_name: "order_id", data_type: "uuid", is_nullable: false },
+                  { column_name: "order_date", data_type: "timestamp with time zone", is_nullable: false },
+                  { column_name: "status", data_type: "text", is_nullable: false },
+                  { column_name: "total_amount", data_type: "numeric", is_nullable: false }
+                ],
+                low_cardinality_columns: [],
+                sample_rows: [],
+                row_count_estimate: 5000
+              }
+            ]
+          }),
+          {
+            status: 200,
+            headers: { "content-type": "application/json" }
+          }
+        );
+      }
+
+      if (url.endsWith("/connections/query") && method === "POST") {
+        queryRuns += 1;
+        return new Response(
+          JSON.stringify({
+            rows: [{ total_refunds: "2200.10" }],
+            row_count: 1,
+            governed_sql:
+              "SELECT SUM(total_amount) AS total_refunds FROM public.demo_orders WHERE status = 'refunded' LIMIT 500",
+            warnings: []
+          }),
+          {
+            status: 200,
+            headers: { "content-type": "application/json" }
+          }
+        );
+      }
+
+      return new Response(JSON.stringify({ message: `Unhandled request: ${method} ${url}` }), {
+        status: 404,
+        headers: { "content-type": "application/json" }
+      });
+    };
+
+    const app = buildWebApp({
+      api_base_url: "http://api.local",
+      fetch_impl: fetchImpl,
+      query_router: router,
+      conversation_client: createPassthroughConversationClient()
+    });
+
+    const first = await app.inject({
+      method: "POST",
+      url: "/api/chat",
+      payload: {
+        message: "I need refund rate for the past 4 months."
+      }
+    });
+    expect(first.statusCode).toBe(200);
+    const firstBody = first.json();
+    expect(firstBody.assistant_message).toContain("Query completed. Query ID:");
+    expect(firstBody.state.pending_metric_confirmations).toHaveLength(0);
+    expect(queryRuns).toBe(1);
 
     await app.close();
   });
@@ -357,10 +595,129 @@ describe("web chat interface", () => {
 
     expect(response.statusCode).toBe(200);
     const body = response.json();
-    expect(body.assistant_message).toContain("Routing decision:");
-    expect(body.assistant_message).toContain("Ready to prepare data for:");
-    expect(body.state.prep_pending).toBe(true);
+    expect(body.assistant_message).not.toContain("Routing decision:");
+    expect(body.assistant_message).toContain("Before data preparation, please confirm the scope details below.");
+    expect(body.state.scope_clarification_pending).toBe(true);
+    expect(body.state.scope_questions.length).toBeGreaterThan(0);
+    expect(body.state.prep_pending).toBe(false);
     expect(body.state.scope_pending).toBe(false);
+
+    await app.close();
+  });
+
+  it("does not duplicate metric clarification when scope already covers the same ask", async () => {
+    const router: QueryRouterClient = {
+      provider: "openrouter",
+      mode: "provider",
+      async decide() {
+        return {
+          route: "deep_analysis",
+          reason: "Multi-part analytical request.",
+          confidence: 0.95
+        };
+      },
+      async scope_clarifications() {
+        return {
+          questions: [
+            {
+              question_number: 1,
+              question: "For refund rate by city, should it be count-based or value-based?",
+              clarification: "Please confirm whether refund rate is refunded orders/total orders or refunded amount/total revenue."
+            }
+          ]
+        };
+      },
+      async propose_metrics() {
+        return {
+          metrics: [
+            {
+              metric_key: "refund_rate_city",
+              display_name: "Refund Rate by City",
+              definition: "Rate of refunds per city.",
+              source_type: "derived",
+              source_columns: ["public.demo_orders.status", "public.demo_orders.total_amount", "public.demo_customers.city"],
+              requires_confirmation: true,
+              confirmation_question:
+                "For refund rate by city, should this be count-based (refunded orders / total orders) or value-based (refunded amount / total revenue)?"
+            }
+          ]
+        };
+      }
+    };
+
+    const fetchImpl: typeof fetch = async (input, init) => {
+      const url = typeof input === "string" ? input : input instanceof URL ? input.toString() : input.url;
+      const method = init?.method?.toUpperCase() ?? "GET";
+
+      if (url.endsWith("/connections/catalog") && method === "GET") {
+        return new Response(
+          JSON.stringify({
+            business_id: "biz_test",
+            business_context: "",
+            cataloged_at: "2026-02-01T00:00:00.000Z",
+            tables: [
+              {
+                table_id: "tbl_orders",
+                qualified_name: "public.demo_orders",
+                relation_type: "TABLE",
+                summary: "Orders and refunds",
+                columns: [
+                  { column_name: "order_id", data_type: "uuid", is_nullable: false },
+                  { column_name: "status", data_type: "text", is_nullable: false },
+                  { column_name: "total_amount", data_type: "numeric", is_nullable: false },
+                  { column_name: "order_date", data_type: "timestamp with time zone", is_nullable: false }
+                ],
+                low_cardinality_columns: [],
+                sample_rows: [],
+                row_count_estimate: 1000
+              }
+            ]
+          }),
+          {
+            status: 200,
+            headers: { "content-type": "application/json" }
+          }
+        );
+      }
+
+      if (url.endsWith("/connections/tables") && method === "GET") {
+        return new Response(
+          JSON.stringify({
+            relations: []
+          }),
+          {
+            status: 200,
+            headers: { "content-type": "application/json" }
+          }
+        );
+      }
+
+      return new Response(JSON.stringify({ message: `Unhandled request: ${method} ${url}` }), {
+        status: 404,
+        headers: { "content-type": "application/json" }
+      });
+    };
+
+    const app = buildWebApp({
+      api_base_url: "http://api.local",
+      fetch_impl: fetchImpl,
+      query_router: router,
+      conversation_client: createPassthroughConversationClient()
+    });
+
+    const response = await app.inject({
+      method: "POST",
+      url: "/api/chat",
+      payload: {
+        message: "Compare refund trend and refund rate by city for the last 4 months."
+      }
+    });
+
+    expect(response.statusCode).toBe(200);
+    const body = response.json();
+    expect(body.assistant_message.toLowerCase()).not.toContain("metric definition");
+    expect(body.state.scope_questions.length).toBe(1);
+    expect(body.state.scope_questions[0].question.toLowerCase()).toContain("refund rate");
 
     await app.close();
   });
@@ -1059,6 +1416,109 @@ describe("web chat interface", () => {
     await app.close();
   });
 
+  it("reuses previous single-query context for repeated asks without executing another query", async () => {
+    let queryCalls = 0;
+    const fetchImpl: typeof fetch = async (input, init) => {
+      const url = typeof input === "string" ? input : input instanceof URL ? input.toString() : input.url;
+      const method = init?.method?.toUpperCase() ?? "GET";
+
+      if (url.endsWith("/connections/catalog") && method === "GET") {
+        return new Response(
+          JSON.stringify({
+            business_id: "biz_test",
+            business_context: "",
+            cataloged_at: "2026-02-01T00:00:00.000Z",
+            tables: [
+              {
+                table_id: "tbl_orders",
+                qualified_name: "public.demo_orders",
+                relation_type: "TABLE",
+                summary: "Orders",
+                columns: [
+                  { column_name: "order_date", data_type: "timestamp with time zone", is_nullable: false },
+                  { column_name: "total_amount", data_type: "numeric", is_nullable: false }
+                ],
+                low_cardinality_columns: [],
+                sample_rows: [],
+                row_count_estimate: 4200
+              }
+            ]
+          }),
+          {
+            status: 200,
+            headers: { "content-type": "application/json" }
+          }
+        );
+      }
+
+      if (url.endsWith("/connections/query") && method === "POST") {
+        queryCalls += 1;
+        return new Response(
+          JSON.stringify({
+            rows: [
+              {
+                total_value: "10123.88",
+                observed_months: 2,
+                expected_months: 2,
+                missing_months: [],
+                from_month: "2025-12-01",
+                to_month: "2026-01-31"
+              }
+            ],
+            row_count: 1,
+            governed_sql: "SELECT ...",
+            warnings: []
+          }),
+          {
+            status: 200,
+            headers: { "content-type": "application/json" }
+          }
+        );
+      }
+
+      return new Response(JSON.stringify({ message: `Unhandled request: ${method} ${url}` }), {
+        status: 404,
+        headers: { "content-type": "application/json" }
+      });
+    };
+
+    const app = buildWebApp({
+      api_base_url: "http://api.local",
+      fetch_impl: fetchImpl,
+      conversation_client: createPassthroughConversationClient()
+    });
+
+    const first = await app.inject({
+      method: "POST",
+      url: "/api/chat",
+      payload: {
+        message: "Can you give me past 2 months sales?"
+      }
+    });
+
+    expect(first.statusCode).toBe(200);
+    const firstBody = first.json();
+    expect(firstBody.assistant_message).toContain("Query completed. Query ID:");
+    expect(queryCalls).toBe(1);
+
+    const second = await app.inject({
+      method: "POST",
+      url: "/api/chat",
+      payload: {
+        message: "same question again",
+        state: firstBody.state
+      }
+    });
+
+    expect(second.statusCode).toBe(200);
+    const secondBody = second.json();
+    expect(secondBody.assistant_message).toContain("Using the same context as your previous single-query request.");
+    expect(secondBody.assistant_message).toContain("Query completed. Query ID:");
+    expect(queryCalls).toBe(1);
+
+    await app.close();
+  });
+
   it("keeps month window on sales follow-up and does not regress to 1-day query", async () => {
     const executedSql: string[] = [];
 
@@ -1676,7 +2136,7 @@ describe("web chat interface", () => {
     await app.close();
   });
 
-  it("falls back to deterministic action context when conversation provider throws", async () => {
+  it("returns transient provider-error message when conversation provider throws", async () => {
     const fetchImpl: typeof fetch = async (input, init) => {
       const url = typeof input === "string" ? input : input instanceof URL ? input.toString() : input.url;
       const method = init?.method?.toUpperCase() ?? "GET";
@@ -1713,7 +2173,9 @@ describe("web chat interface", () => {
     });
 
     expect(response.statusCode).toBe(200);
-    expect(response.json().assistant_message).toContain("No specific action was executed for this message.");
+    expect(response.json().assistant_message).toContain(
+      "temporary AI connectivity issue"
+    );
 
     await app.close();
   });
@@ -1903,8 +2365,982 @@ describe("web chat interface", () => {
 
     expect(response.statusCode).toBe(200);
     expect(response.json().assistant_message).toContain("Report executed. Run ID: run_web_test.");
-    expect(response.json().state.awaiting_pdf_confirmation).toBe(true);
+    expect(response.json().state.awaiting_post_run_refinement).toBe(true);
+    expect(response.json().state.awaiting_pdf_confirmation).toBe(false);
     expect(conversationCalls).toBe(0);
+
+    await app.close();
+  });
+
+  it("keeps authoritative run result when provider returns contradictory network-error wording", async () => {
+    let conversationCalls = 0;
+    const fetchImpl: typeof fetch = async (input, init) => {
+      const url = typeof input === "string" ? input : input instanceof URL ? input.toString() : input.url;
+      const method = init?.method?.toUpperCase() ?? "GET";
+
+      if (url.endsWith("/report-contracts/contract_run_test/run") && method === "POST") {
+        return new Response(JSON.stringify({
+          run_id: "run_web_test",
+          exec_brief: {
+            what_changed: ["Revenue up 12%"],
+            why: ["Higher order frequency"],
+            so_what: ["Growth target is on track"],
+            what_to_do: ["Increase top-performing channel budget"],
+            confidence: { score: 0.84, rationale: "Coverage includes all top regions." },
+            appendix_refs: ["evidence_contract_web_test_1"],
+            deltas_vs_last_run: ["NA revenue +8%"],
+            generated_at: "2026-01-01T00:00:00.000Z"
+          },
+          concise_summary: "Test Report summary",
+          prepared_payloads: [],
+          token_usage: {
+            input_tokens: 260,
+            output_tokens: 80,
+            total_tokens: 340,
+            by_agent: {}
+          },
+          pdf_path: "/report-runs/run_web_test/pdf"
+        }), {
+          status: 200,
+          headers: { "content-type": "application/json" }
+        });
+      }
+
+      if (url.endsWith("/connections/catalog") && method === "GET") {
+        return new Response(JSON.stringify({ tables: [], business_context: "", cataloged_at: null }), {
+          status: 200,
+          headers: { "content-type": "application/json" }
+        });
+      }
+
+      return new Response(JSON.stringify({ message: `Unhandled request: ${method} ${url}` }), {
+        status: 404,
+        headers: { "content-type": "application/json" }
+      });
+    };
+
+    const app = buildWebApp({
+      api_base_url: "http://api.local",
+      fetch_impl: fetchImpl,
+      conversation_client: {
+        provider: "openrouter",
+        mode: "provider",
+        async respond() {
+          conversationCalls += 1;
+          return {
+            message:
+              "Looks like the run hit a network error on its end — the execution didn't go through. Nothing was lost on our end though; the report contract and all the prepped data are still intact.\n\nJust try running it again and it should go through cleanly!"
+          };
+        }
+      }
+    });
+
+    const initial = await app.inject({
+      method: "POST",
+      url: "/api/chat",
+      payload: { message: "set name: Weekly Revenue" }
+    });
+    expect(initial.statusCode).toBe(200);
+    conversationCalls = 0;
+    const readyToRunState = {
+      ...initial.json().state,
+      contract_id: "contract_run_test",
+      prep_complete: true,
+      scope_pending: true
+    };
+
+    const response = await app.inject({
+      method: "POST",
+      url: "/api/chat",
+      payload: {
+        message: "__ui_finish_scoping_run_analysis__",
+        state: readyToRunState
+      }
+    });
+
+    expect(response.statusCode).toBe(200);
+    expect(response.json().assistant_message).toContain("Report executed. Run ID: run_web_test.");
+    expect(response.json().assistant_message).not.toContain("execution didn't go through");
+    expect(response.json().state.awaiting_post_run_refinement).toBe(true);
+    expect(conversationCalls).toBe(0);
+
+    await app.close();
+  });
+
+  it("requires per-question clarifications before enabling data preparation", async () => {
+    const router: QueryRouterClient = {
+      provider: "openrouter",
+      mode: "provider",
+      async decide() {
+        return {
+          route: "deep_analysis",
+          reason: "Multi-part diagnostic request",
+          confidence: 0.94
+        };
+      }
+    };
+
+    const fetchImpl: typeof fetch = async (input, init) => {
+      const url = typeof input === "string" ? input : input instanceof URL ? input.toString() : input.url;
+      const method = init?.method?.toUpperCase() ?? "GET";
+
+      if (url.endsWith("/connections/catalog") && method === "GET") {
+        return new Response(
+          JSON.stringify({
+            business_id: "biz_test",
+            business_context: "",
+            cataloged_at: "2026-02-01T00:00:00.000Z",
+            tables: [
+              {
+                table_id: "tbl_sales",
+                qualified_name: "analytics.sales",
+                relation_type: "TABLE",
+                summary: "Sales rows",
+                columns: [
+                  { column_name: "order_date", data_type: "timestamp with time zone", is_nullable: false },
+                  { column_name: "status", data_type: "text", is_nullable: false },
+                  { column_name: "refund_amount", data_type: "numeric", is_nullable: true }
+                ],
+                low_cardinality_columns: [],
+                sample_rows: [],
+                row_count_estimate: 1000
+              }
+            ]
+          }),
+          {
+            status: 200,
+            headers: { "content-type": "application/json" }
+          }
+        );
+      }
+
+      if (url.endsWith("/connections/tables") && method === "GET") {
+        return new Response(
+          JSON.stringify({
+            relations: [
+              {
+                qualified_name: "analytics.sales",
+                relation_type: "TABLE",
+                status: "OK",
+                has_rls: false,
+                force_rls: false,
+                rls_active_for_me: false,
+                policies_count_for_me: 0
+              }
+            ]
+          }),
+          {
+            status: 200,
+            headers: { "content-type": "application/json" }
+          }
+        );
+      }
+
+      if (url.endsWith("/connections/query") && method === "POST") {
+        return new Response(
+          JSON.stringify({
+            rows: [{ row_count: 1000 }],
+            row_count: 1,
+            governed_sql: "SELECT COUNT(*) AS row_count FROM analytics.sales",
+            warnings: []
+          }),
+          {
+            status: 200,
+            headers: { "content-type": "application/json" }
+          }
+        );
+      }
+
+      return new Response(JSON.stringify({ message: `Unhandled request: ${method} ${url}` }), {
+        status: 404,
+        headers: { "content-type": "application/json" }
+      });
+    };
+
+    const app = buildWebApp({
+      api_base_url: "http://api.local",
+      fetch_impl: fetchImpl,
+      query_router: router,
+      conversation_client: createPassthroughConversationClient()
+    });
+
+    const first = await app.inject({
+      method: "POST",
+      url: "/api/chat",
+      payload: {
+        message:
+          "I need a refund trend by month. Also compare last 6 months vs prior 6 months."
+      }
+    });
+
+    expect(first.statusCode).toBe(200);
+    expect(first.json().state.scope_clarification_pending).toBe(true);
+    expect(first.json().state.scope_questions.length).toBeGreaterThanOrEqual(2);
+
+    const second = await app.inject({
+      method: "POST",
+      url: "/api/chat",
+      payload: {
+        message: "Q1: Use order_date and last 6 full calendar months.",
+        state: first.json().state
+      }
+    });
+
+    expect(second.statusCode).toBe(200);
+    expect(second.json().state.scope_clarification_pending).toBe(true);
+    expect(second.json().state.prep_pending).toBe(false);
+
+    const third = await app.inject({
+      method: "POST",
+      url: "/api/chat",
+      payload: {
+        message: "Q2: Compare against the previous 6 full months and include refunded status only.",
+        state: second.json().state
+      }
+    });
+
+    expect(third.statusCode).toBe(200);
+    expect(third.json().state.scope_clarification_pending).toBe(false);
+    expect(third.json().state.prep_pending).toBe(true);
+    expect(third.json().assistant_message).toContain("Scope clarifications captured for all questions.");
+    expect(third.json().assistant_message).toContain("Ready to prepare data for:");
+
+    await app.close();
+  });
+
+  it("accepts inline Q1/Q2/Q3 clarifications in a single message and proceeds", async () => {
+    const router: QueryRouterClient = {
+      provider: "openrouter",
+      mode: "provider",
+      async decide() {
+        return {
+          route: "deep_analysis",
+          reason: "Multi-part diagnostic request",
+          confidence: 0.94
+        };
+      },
+      async resolve_scope_answers() {
+        return {
+          assignments: [],
+          unresolved_question_numbers: [1, 2, 3]
+        };
+      }
+    };
+
+    const fetchImpl: typeof fetch = async (input, init) => {
+      const url = typeof input === "string" ? input : input instanceof URL ? input.toString() : input.url;
+      const method = init?.method?.toUpperCase() ?? "GET";
+
+      if (url.endsWith("/connections/catalog") && method === "GET") {
+        return new Response(
+          JSON.stringify({
+            business_id: "biz_test",
+            business_context: "",
+            cataloged_at: "2026-02-01T00:00:00.000Z",
+            tables: [
+              {
+                table_id: "tbl_sales",
+                qualified_name: "analytics.sales",
+                relation_type: "TABLE",
+                summary: "Sales rows",
+                columns: [
+                  { column_name: "order_date", data_type: "timestamp with time zone", is_nullable: false },
+                  { column_name: "status", data_type: "text", is_nullable: false },
+                  { column_name: "refund_amount", data_type: "numeric", is_nullable: true }
+                ],
+                low_cardinality_columns: [],
+                sample_rows: [],
+                row_count_estimate: 1000
+              }
+            ]
+          }),
+          {
+            status: 200,
+            headers: { "content-type": "application/json" }
+          }
+        );
+      }
+
+      if (url.endsWith("/connections/tables") && method === "GET") {
+        return new Response(
+          JSON.stringify({
+            relations: [
+              {
+                qualified_name: "analytics.sales",
+                relation_type: "TABLE",
+                status: "OK",
+                has_rls: false,
+                force_rls: false,
+                rls_active_for_me: false,
+                policies_count_for_me: 0
+              }
+            ]
+          }),
+          {
+            status: 200,
+            headers: { "content-type": "application/json" }
+          }
+        );
+      }
+
+      if (url.endsWith("/connections/query") && method === "POST") {
+        return new Response(
+          JSON.stringify({
+            rows: [{ row_count: 1000 }],
+            row_count: 1,
+            governed_sql: "SELECT COUNT(*) AS row_count FROM analytics.sales",
+            warnings: []
+          }),
+          {
+            status: 200,
+            headers: { "content-type": "application/json" }
+          }
+        );
+      }
+
+      return new Response(JSON.stringify({ message: `Unhandled request: ${method} ${url}` }), {
+        status: 404,
+        headers: { "content-type": "application/json" }
+      });
+    };
+
+    const app = buildWebApp({
+      api_base_url: "http://api.local",
+      fetch_impl: fetchImpl,
+      query_router: router,
+      conversation_client: createPassthroughConversationClient()
+    });
+
+    const first = await app.inject({
+      method: "POST",
+      url: "/api/chat",
+      payload: {
+        message:
+          "I need a refund trend by month. Also compare last 6 months vs prior 6 months. Include support-ticket linkage."
+      }
+    });
+
+    expect(first.statusCode).toBe(200);
+    expect(first.json().state.scope_clarification_pending).toBe(true);
+
+    const second = await app.inject({
+      method: "POST",
+      url: "/api/chat",
+      payload: {
+        message:
+          "Q1- use refund amount / total revenue and rank top 6 cities Q2- use Nov 2025 to Feb 2026 and compare Nov-Dec vs Jan-Feb Q3- only include non-null order_id and customer_id-linked tickets",
+        state: first.json().state
+      }
+    });
+
+    expect(second.statusCode).toBe(200);
+    expect(second.json().state.scope_clarification_pending).toBe(false);
+    expect(second.json().state.prep_pending).toBe(true);
+    expect(second.json().assistant_message).toContain("Scope clarifications captured for all questions.");
+    expect(second.json().assistant_message).toContain("Ready to prepare data for:");
+
+    await app.close();
+  });
+
+  it("preserves prep decision buttons when provider returns draft updates", async () => {
+    const router: QueryRouterClient = {
+      provider: "openrouter",
+      mode: "provider",
+      async decide() {
+        return {
+          route: "deep_analysis",
+          reason: "Multi-part diagnostic request",
+          confidence: 0.94
+        };
+      }
+    };
+
+    const fetchImpl: typeof fetch = async (input, init) => {
+      const url = typeof input === "string" ? input : input instanceof URL ? input.toString() : input.url;
+      const method = init?.method?.toUpperCase() ?? "GET";
+
+      if (url.endsWith("/connections/catalog") && method === "GET") {
+        return new Response(
+          JSON.stringify({
+            business_id: "biz_test",
+            business_context: "",
+            cataloged_at: "2026-02-01T00:00:00.000Z",
+            tables: [
+              {
+                table_id: "tbl_sales",
+                qualified_name: "analytics.sales",
+                relation_type: "TABLE",
+                summary: "Sales rows",
+                columns: [
+                  { column_name: "order_date", data_type: "timestamp with time zone", is_nullable: false },
+                  { column_name: "status", data_type: "text", is_nullable: false },
+                  { column_name: "refund_amount", data_type: "numeric", is_nullable: true }
+                ],
+                low_cardinality_columns: [],
+                sample_rows: [],
+                row_count_estimate: 1000
+              }
+            ]
+          }),
+          {
+            status: 200,
+            headers: { "content-type": "application/json" }
+          }
+        );
+      }
+
+      if (url.endsWith("/connections/tables") && method === "GET") {
+        return new Response(
+          JSON.stringify({
+            relations: [
+              {
+                qualified_name: "analytics.sales",
+                relation_type: "TABLE",
+                status: "OK",
+                has_rls: false,
+                force_rls: false,
+                rls_active_for_me: false,
+                policies_count_for_me: 0
+              }
+            ]
+          }),
+          {
+            status: 200,
+            headers: { "content-type": "application/json" }
+          }
+        );
+      }
+
+      if (url.endsWith("/connections/query") && method === "POST") {
+        return new Response(
+          JSON.stringify({
+            rows: [{ row_count: 1000 }],
+            row_count: 1,
+            governed_sql: "SELECT COUNT(*) AS row_count FROM analytics.sales",
+            warnings: []
+          }),
+          {
+            status: 200,
+            headers: { "content-type": "application/json" }
+          }
+        );
+      }
+
+      return new Response(JSON.stringify({ message: `Unhandled request: ${method} ${url}` }), {
+        status: 404,
+        headers: { "content-type": "application/json" }
+      });
+    };
+
+    const app = buildWebApp({
+      api_base_url: "http://api.local",
+      fetch_impl: fetchImpl,
+      query_router: router,
+      conversation_client: {
+        provider: "openrouter",
+        mode: "provider",
+        async respond(input) {
+          return {
+            message: `${input.action_context}\n\nNoted.`,
+            draft_updates: {
+              metric_ids: ["metric_refunds"]
+            }
+          };
+        }
+      }
+    });
+
+    const first = await app.inject({
+      method: "POST",
+      url: "/api/chat",
+      payload: {
+        message:
+          "I need a refund trend by month. Also compare last 6 months vs prior 6 months."
+      }
+    });
+
+    expect(first.statusCode).toBe(200);
+    expect(first.json().state.scope_clarification_pending).toBe(true);
+
+    const second = await app.inject({
+      method: "POST",
+      url: "/api/chat",
+      payload: {
+        message:
+          "Q1: Use order_date and last 6 full calendar months. Q2: Compare against the previous 6 full months and include refunded status only.",
+        state: first.json().state
+      }
+    });
+
+    expect(second.statusCode).toBe(200);
+    expect(second.json().state.scope_clarification_pending).toBe(false);
+    expect(second.json().state.prep_pending).toBe(true);
+
+    await app.close();
+  });
+
+  it("advances to preparation when scope is already fully answered", async () => {
+    const fetchImpl: typeof fetch = async (input, init) => {
+      const url = typeof input === "string" ? input : input instanceof URL ? input.toString() : input.url;
+      const method = init?.method?.toUpperCase() ?? "GET";
+
+      if (url.endsWith("/connections/catalog") && method === "GET") {
+        return new Response(
+          JSON.stringify({
+            business_id: "biz_test",
+            business_context: "",
+            cataloged_at: "2026-02-01T00:00:00.000Z",
+            tables: [
+              {
+                table_id: "tbl_sales",
+                qualified_name: "analytics.sales",
+                relation_type: "TABLE",
+                summary: "Sales rows",
+                columns: [
+                  { column_name: "order_date", data_type: "timestamp with time zone", is_nullable: false },
+                  { column_name: "status", data_type: "text", is_nullable: false },
+                  { column_name: "refund_amount", data_type: "numeric", is_nullable: true }
+                ],
+                low_cardinality_columns: [],
+                sample_rows: [],
+                row_count_estimate: 1000
+              }
+            ]
+          }),
+          {
+            status: 200,
+            headers: { "content-type": "application/json" }
+          }
+        );
+      }
+
+      if (url.endsWith("/connections/tables") && method === "GET") {
+        return new Response(
+          JSON.stringify({
+            relations: [
+              {
+                qualified_name: "analytics.sales",
+                relation_type: "TABLE",
+                status: "OK",
+                has_rls: false,
+                force_rls: false,
+                rls_active_for_me: false,
+                policies_count_for_me: 0
+              }
+            ]
+          }),
+          {
+            status: 200,
+            headers: { "content-type": "application/json" }
+          }
+        );
+      }
+
+      if (url.endsWith("/connections/query") && method === "POST") {
+        return new Response(
+          JSON.stringify({
+            rows: [{ row_count: 1000 }],
+            row_count: 1,
+            governed_sql: "SELECT COUNT(*) AS row_count FROM analytics.sales",
+            warnings: []
+          }),
+          {
+            status: 200,
+            headers: { "content-type": "application/json" }
+          }
+        );
+      }
+
+      return new Response(JSON.stringify({ message: `Unhandled request: ${method} ${url}` }), {
+        status: 404,
+        headers: { "content-type": "application/json" }
+      });
+    };
+
+    const app = buildWebApp({
+      api_base_url: "http://api.local",
+      fetch_impl: fetchImpl,
+      conversation_client: createPassthroughConversationClient()
+    });
+
+    const response = await app.inject({
+      method: "POST",
+      url: "/api/chat",
+      payload: {
+        message: "ok",
+        state: {
+          draft: {
+            name: "Weekly Refund Report",
+            audience: "Executive",
+            timezone: "UTC",
+            schedule_cron: null,
+            sql_template: "SELECT * FROM analytics.sales",
+            metric_ids: ["metric_refunds"],
+            dimension_ids: ["city"],
+            allowed_relations: ["analytics.sales"],
+            allowed_schemas: ["analytics"],
+            insight_mode: "business"
+          },
+          contract_id: null,
+          last_run_id: null,
+          last_query_id: null,
+          last_exec_brief: null,
+          conversation_history: [],
+          prep_pending: false,
+          prep_complete: false,
+          scope_pending: false,
+          metric_definitions: [],
+          pending_metric_confirmations: [],
+          pending_metric_resume_message: null,
+          pending_metric_resume_mode: null,
+          scope_clarification_pending: true,
+          scope_source_prompt: "refund trend and comparison",
+          scope_questions: [
+            {
+              question_number: 1,
+              question: "Confirm 4-month window",
+              clarification: "Use Nov-Feb window",
+              answer: "Nov-Feb is correct",
+              metric_key: null,
+              metric_display_name: null,
+              metric_definition_draft: null,
+              metric_source_columns: []
+            }
+          ],
+          pending_query_sql: null,
+          pending_query_limit: null,
+          pending_single_query_request: null,
+          last_single_query_snapshot: null,
+          planner_summary: null,
+          preparation_summary: null,
+          prepared_payloads: [],
+          awaiting_pdf_confirmation: false,
+          awaiting_post_run_refinement: false,
+          refinement_active: false,
+          refinement_questions_remaining: 0,
+          awaiting_save_confirmation: false,
+          awaiting_schedule_confirmation: false,
+          awaiting_schedule_mode_selection: false,
+          schedule_mode_pending: null,
+          schedule_day_kind: null,
+          awaiting_custom_day_input: false,
+          last_concise_summary: null,
+          last_token_usage: null
+        }
+      }
+    });
+
+    expect(response.statusCode).toBe(200);
+    expect(response.json().state.scope_clarification_pending).toBe(false);
+    expect(response.json().state.prep_pending).toBe(true);
+    expect(response.json().assistant_message).toContain("Ready to prepare data for:");
+
+    await app.close();
+  });
+
+  it("runs data preparation when prep decision is pending and user confirms with ok", async () => {
+    const requests: string[] = [];
+    const fetchImpl: typeof fetch = async (input, init) => {
+      const url = typeof input === "string" ? input : input instanceof URL ? input.toString() : input.url;
+      const method = init?.method?.toUpperCase() ?? "GET";
+      requests.push(`${method} ${url}`);
+
+      if (url.endsWith("/report-contracts/contract_prep/prepare") && method === "POST") {
+        return new Response(
+          JSON.stringify({
+            contract_id: "contract_prep",
+            planner_summary: "Preparation summary",
+            prepared_payloads: [
+              {
+                question_id: "q1",
+                question_number: 1,
+                question: "Refund trend",
+                purpose: "Trend analysis",
+                row_count_before_reduction: 320,
+                prepared_row_count: 120,
+                preparation_notes: [],
+                warnings: []
+              }
+            ]
+          }),
+          {
+            status: 200,
+            headers: { "content-type": "application/json" }
+          }
+        );
+      }
+
+      if (url.endsWith("/connections/catalog") && method === "GET") {
+        return new Response(JSON.stringify({ tables: [], business_context: "", cataloged_at: null }), {
+          status: 200,
+          headers: { "content-type": "application/json" }
+        });
+      }
+
+      return new Response(JSON.stringify({ message: `Unhandled request: ${method} ${url}` }), {
+        status: 404,
+        headers: { "content-type": "application/json" }
+      });
+    };
+
+    const app = buildWebApp({
+      api_base_url: "http://api.local",
+      fetch_impl: fetchImpl,
+      conversation_client: createPassthroughConversationClient()
+    });
+
+    const initial = await app.inject({
+      method: "POST",
+      url: "/api/chat",
+      payload: { message: "set name: Prep Confirm Report" }
+    });
+    expect(initial.statusCode).toBe(200);
+
+    const response = await app.inject({
+      method: "POST",
+      url: "/api/chat",
+      payload: {
+        message: "ok",
+        state: {
+          ...initial.json().state,
+          contract_id: "contract_prep",
+          prep_pending: true,
+          prep_complete: false,
+          scope_pending: false
+        }
+      }
+    });
+
+    expect(response.statusCode).toBe(200);
+    expect(response.json().state.prep_complete).toBe(true);
+    expect(response.json().state.scope_pending).toBe(true);
+    expect(response.json().assistant_message).toContain("Data preparation completed");
+    expect(requests.some((entry) => entry.endsWith("POST http://api.local/report-contracts/contract_prep/prepare"))).toBe(true);
+
+    await app.close();
+  });
+
+  it("recovers analysis decision and runs when prep is complete but scope flag drifted", async () => {
+    const requests: string[] = [];
+    const fetchImpl: typeof fetch = async (input, init) => {
+      const url = typeof input === "string" ? input : input instanceof URL ? input.toString() : input.url;
+      const method = init?.method?.toUpperCase() ?? "GET";
+      requests.push(`${method} ${url}`);
+
+      if (url.endsWith("/report-contracts/contract_drift/run") && method === "POST") {
+        return new Response(
+          JSON.stringify({
+            run_id: "run_drift",
+            exec_brief: {
+              what_changed: ["Refund volume increased in top 2 cities"],
+              why: ["Support backlog rose"],
+              so_what: ["Margin pressure likely next cycle"],
+              what_to_do: ["Prioritize issue triage"],
+              confidence: { score: 0.84, rationale: "Coverage is sufficient." },
+              appendix_refs: ["evidence_contract_drift_1"],
+              deltas_vs_last_run: [],
+              generated_at: "2026-01-01T00:00:00.000Z"
+            },
+            concise_summary: "Run complete"
+          }),
+          {
+            status: 200,
+            headers: { "content-type": "application/json" }
+          }
+        );
+      }
+
+      if (url.endsWith("/connections/catalog") && method === "GET") {
+        return new Response(JSON.stringify({ tables: [], business_context: "", cataloged_at: null }), {
+          status: 200,
+          headers: { "content-type": "application/json" }
+        });
+      }
+
+      return new Response(JSON.stringify({ message: `Unhandled request: ${method} ${url}` }), {
+        status: 404,
+        headers: { "content-type": "application/json" }
+      });
+    };
+
+    const app = buildWebApp({
+      api_base_url: "http://api.local",
+      fetch_impl: fetchImpl,
+      conversation_client: createPassthroughConversationClient()
+    });
+
+    const initial = await app.inject({
+      method: "POST",
+      url: "/api/chat",
+      payload: { message: "set name: Drift Recovery Report" }
+    });
+    expect(initial.statusCode).toBe(200);
+
+    const response = await app.inject({
+      method: "POST",
+      url: "/api/chat",
+      payload: {
+        message: "ok",
+        state: {
+          ...initial.json().state,
+          contract_id: "contract_drift",
+          prep_complete: true,
+          prep_pending: false,
+          scope_pending: false,
+          prepared_payloads: [
+            {
+              question_id: "q1",
+              question_number: 1,
+              question: "Refund trend",
+              purpose: "Trend analysis",
+              row_count_before_reduction: 320,
+              prepared_row_count: 120,
+              preparation_notes: [],
+              warnings: []
+            }
+          ]
+        }
+      }
+    });
+
+    expect(response.statusCode).toBe(200);
+    expect(response.json().assistant_message).toContain("Report executed. Run ID: run_drift.");
+    expect(response.json().state.scope_pending).toBe(false);
+    expect(response.json().state.awaiting_post_run_refinement).toBe(true);
+    expect(requests.some((entry) => entry.endsWith("POST http://api.local/report-contracts/contract_drift/run"))).toBe(true);
+
+    await app.close();
+  });
+
+  it("caps post-analysis refinement to two follow-up questions before PDF", async () => {
+    let qaCalls = 0;
+    const fetchImpl: typeof fetch = async (input, init) => {
+      const url = typeof input === "string" ? input : input instanceof URL ? input.toString() : input.url;
+      const method = init?.method?.toUpperCase() ?? "GET";
+
+      if (url.endsWith("/report-contracts/contract_refine/run") && method === "POST") {
+        return new Response(JSON.stringify({
+          run_id: "run_refine",
+          exec_brief: {
+            what_changed: ["Refund rate increased in two regions"],
+            why: ["More delayed shipments"],
+            so_what: ["Margin pressure is likely next month"],
+            what_to_do: ["Tighten carrier SLA monitoring"],
+            confidence: { score: 0.82, rationale: "Coverage is sufficient." },
+            appendix_refs: ["evidence_contract_refine_1"],
+            deltas_vs_last_run: [],
+            generated_at: "2026-01-01T00:00:00.000Z"
+          },
+          concise_summary: "Refinement test report",
+          prepared_payloads: [],
+          token_usage: {
+            input_tokens: 100,
+            output_tokens: 30,
+            total_tokens: 130,
+            by_agent: {}
+          }
+        }), {
+          status: 200,
+          headers: { "content-type": "application/json" }
+        });
+      }
+
+      if (url.endsWith("/report-runs/run_refine/qa") && method === "POST") {
+        qaCalls += 1;
+        return new Response(
+          JSON.stringify({
+            answer: `QA answer ${qaCalls}`,
+            citations: ["payload:q1"],
+            grounded: true
+          }),
+          {
+            status: 200,
+            headers: { "content-type": "application/json" }
+          }
+        );
+      }
+
+      if (url.endsWith("/connections/catalog") && method === "GET") {
+        return new Response(JSON.stringify({ tables: [], business_context: "", cataloged_at: null }), {
+          status: 200,
+          headers: { "content-type": "application/json" }
+        });
+      }
+
+      return new Response(JSON.stringify({ message: `Unhandled request: ${method} ${url}` }), {
+        status: 404,
+        headers: { "content-type": "application/json" }
+      });
+    };
+
+    const app = buildWebApp({
+      api_base_url: "http://api.local",
+      fetch_impl: fetchImpl,
+      conversation_client: createPassthroughConversationClient()
+    });
+
+    const initial = await app.inject({
+      method: "POST",
+      url: "/api/chat",
+      payload: { message: "set name: Refinement Report" }
+    });
+    expect(initial.statusCode).toBe(200);
+
+    const runReadyState = {
+      ...initial.json().state,
+      contract_id: "contract_refine",
+      prep_complete: true,
+      scope_pending: true
+    };
+
+    const analyzed = await app.inject({
+      method: "POST",
+      url: "/api/chat",
+      payload: {
+        message: "__ui_finish_scoping_run_analysis__",
+        state: runReadyState
+      }
+    });
+
+    expect(analyzed.statusCode).toBe(200);
+    expect(analyzed.json().state.awaiting_post_run_refinement).toBe(true);
+
+    const refineStart = await app.inject({
+      method: "POST",
+      url: "/api/chat",
+      payload: { message: "__ui_refine_report__", state: analyzed.json().state }
+    });
+    expect(refineStart.statusCode).toBe(200);
+    expect(refineStart.json().state.refinement_active).toBe(true);
+    expect(refineStart.json().state.refinement_questions_remaining).toBe(2);
+
+    const q1 = await app.inject({
+      method: "POST",
+      url: "/api/chat",
+      payload: { message: "What changed in city-level refunds?", state: refineStart.json().state }
+    });
+    expect(q1.statusCode).toBe(200);
+    expect(q1.json().state.refinement_active).toBe(true);
+    expect(q1.json().state.refinement_questions_remaining).toBe(1);
+
+    const q2 = await app.inject({
+      method: "POST",
+      url: "/api/chat",
+      payload: { message: "What was the top driver?", state: q1.json().state }
+    });
+    expect(q2.statusCode).toBe(200);
+    expect(q2.json().state.refinement_active).toBe(false);
+    expect(q2.json().state.refinement_questions_remaining).toBe(0);
+    expect(q2.json().state.awaiting_pdf_confirmation).toBe(true);
+
+    const q3 = await app.inject({
+      method: "POST",
+      url: "/api/chat",
+      payload: { message: "Can you break this down by city too?", state: q2.json().state }
+    });
+    expect(q3.statusCode).toBe(200);
+    expect(q3.json().assistant_message).toContain("Refinement limit is reached");
+    expect(qaCalls).toBe(2);
 
     await app.close();
   });
@@ -2190,7 +3626,8 @@ describe("web chat interface", () => {
       payload: { message: "__ui_finish_scoping_run_analysis__", state: prepared.json().state }
     });
     expect(analyzed.statusCode).toBe(200);
-    expect(analyzed.json().state.awaiting_pdf_confirmation).toBe(true);
+    expect(analyzed.json().state.awaiting_post_run_refinement).toBe(true);
+    expect(analyzed.json().state.awaiting_pdf_confirmation).toBe(false);
     expect(analyzed.json().assistant_message).toContain("Report executed");
 
     const qa = await app.inject({
@@ -2200,6 +3637,8 @@ describe("web chat interface", () => {
     });
     expect(qa.statusCode).toBe(200);
     expect(qa.json().assistant_message).toContain("Revenue trend");
+    expect(qa.json().state.refinement_active).toBe(true);
+    expect(qa.json().state.refinement_questions_remaining).toBe(1);
 
     const confirmPdf = await app.inject({
       method: "POST",

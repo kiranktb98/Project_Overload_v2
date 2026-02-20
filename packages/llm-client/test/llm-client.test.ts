@@ -216,6 +216,20 @@ describe("stub query strategist", () => {
     expect(result.queries[0].question).toContain("key business insights");
     expect(result.queries[0].group_id).toBeUndefined();
   });
+
+  it("provides dialect compiler fallback for safe single-statement SQL", async () => {
+    const client = createStubQueryStrategistClient();
+    const compiled = await client.compileSql?.({
+      sql: "SELECT * FROM public.sales; SELECT * FROM public.orders;",
+      dialect: "mysql",
+      allowed_relations: ["public.sales"],
+      allowed_schemas: ["public"]
+    });
+
+    expect(compiled).toBeDefined();
+    expect(compiled?.sql).toBe("SELECT * FROM public.sales");
+    expect(compiled?.rationale).toContain("mysql");
+  });
 });
 
 describe("stub report composer", () => {

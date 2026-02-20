@@ -6,7 +6,8 @@ import {
   ExecBriefSchema,
   ReportContractSchema,
   ReportContractDeliverySchema,
-  ReportGuardrailsSchema
+  ReportGuardrailsSchema,
+  type SqlDialect
 } from "@project-overload/shared";
 import type { DataPlane } from "@project-overload/dataplane";
 import type { AnalystClient, PlannerClient, QueryStrategistClient, ReportComposerClient } from "@project-overload/llm-client";
@@ -223,6 +224,7 @@ export function registerContractRoutes(
 
     try {
       const catalogSummary = buildCatalogSummary(connectionManager);
+      const sqlDialect = resolveSqlDialect(connectionManager);
 
       const result = await runReportContractPipeline({
         contract,
@@ -236,7 +238,8 @@ export function registerContractRoutes(
         query_strategist: queryStrategist,
         report_composer: reportComposer,
         planner_client: plannerClient,
-        catalog_summary: catalogSummary
+        catalog_summary: catalogSummary,
+        sql_dialect: sqlDialect
       });
       const delivery = await deliverReportRun({
         contract,
@@ -294,6 +297,7 @@ export function registerContractRoutes(
 
     try {
       const catalogSummary = buildCatalogSummary(connectionManager);
+      const sqlDialect = resolveSqlDialect(connectionManager);
       const result = await prepareReportContractData({
         contract,
         tenant_id: context.tenant_id,
@@ -301,7 +305,8 @@ export function registerContractRoutes(
         data_plane: dataPlane,
         query_strategist: queryStrategist,
         planner_client: plannerClient,
-        catalog_summary: catalogSummary
+        catalog_summary: catalogSummary,
+        sql_dialect: sqlDialect
       });
 
       return reply.code(200).send({
@@ -481,19 +486,121 @@ export function registerContractRoutes(
           ? run.report_html
           : renderExecBriefHtml(ExecBriefSchema.parse(run.exec_brief));
 
-      const customerFacingHtml = stripConfidenceFromCustomerHtml(html);
-      const pdf = await renderPdfFromHtml(customerFacingHtml);
+      const htmlWithMetrics = injectMetricDefinitionsIntoHtml(
+        html,
+        extractMetricDefinitionsFromQueryPlan(run.query_plan)
+      );
+      const customerFacingHtml = stripConfidenceFromCustomerHtml(htmlWithMetrics);
+      try {
+        const pdf = await renderPdfWithRetry(customerFacingHtml, 2);
 
-      return reply
-        .code(200)
-        .header("content-type", "application/pdf")
-        .header("content-disposition", `attachment; filename="report-${run.id}.pdf"`)
-        .send(pdf.bytes);
+        return reply
+          .code(200)
+          .header("content-type", "application/pdf")
+          .header("content-disposition", `attachment; filename="report-${run.id}.pdf"`)
+          .send(pdf.bytes);
+      } catch (pdfError) {
+        const message = pdfError instanceof Error ? pdfError.message : "PDF generation failed";
+        await store.appendAuditLog(
+          "report_pdf_fallback_html",
+          {
+            run_id: run.id,
+            contract_id: run.contract_id,
+            reason: message
+          },
+          context
+        );
+
+        return reply
+          .code(200)
+          .header("content-type", "text/html; charset=utf-8")
+          .header("content-disposition", `attachment; filename="report-${run.id}.html"`)
+          .header("x-report-fallback", "html")
+          .send(customerFacingHtml);
+      }
     } catch (error) {
       const message = error instanceof Error ? error.message : "PDF generation failed";
       return reply.code(500).send({ message });
     }
   });
+}
+
+function extractMetricDefinitionsFromQueryPlan(
+  queryPlan: Record<string, unknown>
+): Array<{
+  metric_key: string;
+  display_name: string;
+  definition: string;
+  source_type: "column" | "derived";
+  source_columns: string[];
+}> {
+  const parsed = z
+    .array(
+      z.object({
+        metric_key: z.string().min(1),
+        display_name: z.string().min(1),
+        definition: z.string().min(1),
+        source_type: z.enum(["column", "derived"]).default("derived"),
+        source_columns: z.array(z.string().min(1)).default([])
+      })
+    )
+    .safeParse(queryPlan["metric_definitions"]);
+
+  return parsed.success ? parsed.data : [];
+}
+
+function injectMetricDefinitionsIntoHtml(
+  html: string,
+  definitions: Array<{
+    metric_key: string;
+    display_name: string;
+    definition: string;
+    source_type: "column" | "derived";
+    source_columns: string[];
+  }>
+): string {
+  if (definitions.length === 0) {
+    return html;
+  }
+
+  if (/metric definitions/i.test(html)) {
+    return html;
+  }
+
+  const items = definitions
+    .slice(0, 8)
+    .map((definition) => {
+      const sources =
+        definition.source_columns.length > 0
+          ? ` (source: ${definition.source_columns.join(", ")})`
+          : definition.source_type === "column"
+            ? " (source: column metric)"
+            : " (source: derived metric)";
+      return `<li><strong>${escapeHtml(definition.display_name)}</strong>: ${escapeHtml(definition.definition)}${escapeHtml(sources)}</li>`;
+    })
+    .join("");
+
+  const section = [
+    '<section style="border:1px solid #dbeafe;border-radius:10px;padding:14px;margin:16px 0;background:#f8fbff;">',
+    '<h2 style="margin:0 0 8px 0;font-size:16px;color:#1e3a8a;">Metric Definitions</h2>',
+    `<ul style="margin:0;padding-left:18px;line-height:1.45;">${items}</ul>`,
+    "</section>"
+  ].join("");
+
+  if (/<\/body>/i.test(html)) {
+    return html.replace(/<\/body>/i, `${section}</body>`);
+  }
+
+  return `${html}\n${section}`;
+}
+
+function escapeHtml(value: string): string {
+  return value
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;")
+    .replace(/'/g, "&#39;");
 }
 
 function stripConfidenceFromCustomerHtml(html: string): string {
@@ -503,6 +610,21 @@ function stripConfidenceFromCustomerHtml(html: string): string {
     .replace(/<li[^>]*>\s*Confidence\s*:[^<]*<\/li>/gi, "")
     .replace(/<strong[^>]*>\s*Confidence\s*:?\s*<\/strong>/gi, "")
     .replace(/\bConfidence\s*:\s*\d+(?:\.\d+)?%?/gi, "");
+}
+
+async function renderPdfWithRetry(html: string, retries: number) {
+  let lastError: unknown;
+  for (let attempt = 0; attempt <= retries; attempt += 1) {
+    try {
+      return await renderPdfFromHtml(html);
+    } catch (error) {
+      lastError = error;
+      if (attempt < retries) {
+        await new Promise((resolve) => setTimeout(resolve, 200 * (attempt + 1)));
+      }
+    }
+  }
+  throw (lastError instanceof Error ? lastError : new Error("PDF generation failed"));
 }
 
 function toReportContract(body: unknown, tenantId: string) {
@@ -520,6 +642,7 @@ function toReportContract(body: unknown, tenantId: string) {
     schedule_cron: payload.schedule_cron ?? null,
     sql_template: payload.sql_template ?? "SELECT * FROM analytics.sales",
     metric_ids: Array.isArray(payload.metric_ids) ? payload.metric_ids : [],
+    metric_definitions: Array.isArray(payload.metric_definitions) ? payload.metric_definitions : [],
     dimension_ids: Array.isArray(payload.dimension_ids) ? payload.dimension_ids : [],
     insight_mode: typeof payload.insight_mode === "string" ? payload.insight_mode : "business",
     delivery,
@@ -568,6 +691,20 @@ function buildCatalogSummary(connectionManager: RuntimeConnectionManager): strin
   }
 
   return sections.join("\n\n");
+}
+
+function resolveSqlDialect(connectionManager: RuntimeConnectionManager): SqlDialect {
+  const provider = connectionManager.getContext().provider;
+  if (provider === "mysql") {
+    return "mysql";
+  }
+  if (provider === "snowflake") {
+    return "snowflake";
+  }
+  if (provider === "bigquery") {
+    return "bigquery";
+  }
+  return "postgres";
 }
 
 function buildScheduleCron(input: {

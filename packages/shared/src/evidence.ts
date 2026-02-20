@@ -26,6 +26,7 @@ export const QueryStrategyInputSchema = z.object({
   report_goal: z.string().min(1),
   audience: z.string().min(1),
   insight_mode: z.enum(["business", "data"]),
+  sql_dialect: z.enum(["postgres", "mysql", "snowflake", "bigquery"]).optional(),
   metric_ids: z.array(z.string().min(1)).default([]),
   dimension_ids: z.array(z.string().min(1)).default([]),
   allowed_relations: z.array(z.string().min(1)).default([]),
@@ -78,6 +79,7 @@ export type AnalystInput = z.infer<typeof AnalystInputSchema>;
 export type BatchAnalysis = z.infer<typeof BatchAnalysisSchema>;
 export type ExecBrief = z.infer<typeof ExecBriefSchema>;
 export type QueryStrategyInput = z.infer<typeof QueryStrategyInputSchema>;
+export type SqlDialect = NonNullable<QueryStrategyInput["sql_dialect"]>;
 export type PlannedQuery = z.infer<typeof PlannedQuerySchema>;
 export type QueryStrategyOutput = z.infer<typeof QueryStrategyOutputSchema>;
 

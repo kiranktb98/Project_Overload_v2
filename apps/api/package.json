@@ -17,6 +17,7 @@
     "@project-overload/sql-guard": "workspace:*",
     "dotenv": "^16.6.1",
     "fastify": "^5.2.1",
+    "mysql2": "^3.11.5",
     "pg": "^8.13.3",
     "zod": "^3.24.1"
   }
