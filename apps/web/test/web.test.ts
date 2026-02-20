@@ -1059,6 +1059,109 @@ describe("web chat interface", () => {
     await app.close();
   });
 
+  it("reuses previous single-query context for repeated asks without executing another query", async () => {
+    let queryCalls = 0;
+    const fetchImpl: typeof fetch = async (input, init) => {
+      const url = typeof input === "string" ? input : input instanceof URL ? input.toString() : input.url;
+      const method = init?.method?.toUpperCase() ?? "GET";
+
+      if (url.endsWith("/connections/catalog") && method === "GET") {
+        return new Response(
+          JSON.stringify({
+            business_id: "biz_test",
+            business_context: "",
+            cataloged_at: "2026-02-01T00:00:00.000Z",
+            tables: [
+              {
+                table_id: "tbl_orders",
+                qualified_name: "public.demo_orders",
+                relation_type: "TABLE",
+                summary: "Orders",
+                columns: [
+                  { column_name: "order_date", data_type: "timestamp with time zone", is_nullable: false },
+                  { column_name: "total_amount", data_type: "numeric", is_nullable: false }
+                ],
+                low_cardinality_columns: [],
+                sample_rows: [],
+                row_count_estimate: 4200
+              }
+            ]
+          }),
+          {
+            status: 200,
+            headers: { "content-type": "application/json" }
+          }
+        );
+      }
+
+      if (url.endsWith("/connections/query") && method === "POST") {
+        queryCalls += 1;
+        return new Response(
+          JSON.stringify({
+            rows: [
+              {
+                total_value: "10123.88",
+                observed_months: 2,
+                expected_months: 2,
+                missing_months: [],
+                from_month: "2025-12-01",
+                to_month: "2026-01-31"
+              }
+            ],
+            row_count: 1,
+            governed_sql: "SELECT ...",
+            warnings: []
+          }),
+          {
+            status: 200,
+            headers: { "content-type": "application/json" }
+          }
+        );
+      }
+
+      return new Response(JSON.stringify({ message: `Unhandled request: ${method} ${url}` }), {
+        status: 404,
+        headers: { "content-type": "application/json" }
+      });
+    };
+
+    const app = buildWebApp({
+      api_base_url: "http://api.local",
+      fetch_impl: fetchImpl,
+      conversation_client: createPassthroughConversationClient()
+    });
+
+    const first = await app.inject({
+      method: "POST",
+      url: "/api/chat",
+      payload: {
+        message: "Can you give me past 2 months sales?"
+      }
+    });
+
+    expect(first.statusCode).toBe(200);
+    const firstBody = first.json();
+    expect(firstBody.assistant_message).toContain("Query completed. Query ID:");
+    expect(queryCalls).toBe(1);
+
+    const second = await app.inject({
+      method: "POST",
+      url: "/api/chat",
+      payload: {
+        message: "same question again",
+        state: firstBody.state
+      }
+    });
+
+    expect(second.statusCode).toBe(200);
+    const secondBody = second.json();
+    expect(secondBody.assistant_message).toContain("Using the same context as your previous single-query request.");
+    expect(secondBody.assistant_message).toContain("Query completed. Query ID:");
+    expect(queryCalls).toBe(1);
+
+    await app.close();
+  });
+
   it("keeps month window on sales follow-up and does not regress to 1-day query", async () => {
     const executedSql: string[] = [];
 

@@ -43,6 +43,16 @@ export const ChatStateSchema = z.object({
   pending_query_sql: z.string().nullable().default(null),
   pending_query_limit: z.number().int().positive().nullable().default(null),
   pending_single_query_request: z.string().nullable().default(null),
+  last_single_query_snapshot: z
+    .object({
+      normalized_request: z.string().min(1),
+      context_key: z.string().min(1),
+      query_id: z.string().min(1),
+      assistant_message: z.string().min(1),
+      created_at: z.string().datetime()
+    })
+    .nullable()
+    .default(null),
   planner_summary: z.string().nullable().default(null),
   preparation_summary: z.string().nullable().default(null),
   prepared_payloads: z.array(
@@ -376,6 +386,7 @@ export function createInitialChatState(): ChatState {
     pending_query_sql: null,
     pending_query_limit: null,
     pending_single_query_request: null,
+    last_single_query_snapshot: null,
     planner_summary: null,
     preparation_summary: null,
     prepared_payloads: [],
@@ -417,6 +428,7 @@ export function parseChatState(value: unknown): ChatState {
     pending_query_sql: parsed.data.pending_query_sql ?? null,
     pending_query_limit: parsed.data.pending_query_limit ?? null,
     pending_single_query_request: parsed.data.pending_single_query_request ?? null,
+    last_single_query_snapshot: parsed.data.last_single_query_snapshot ?? null,
     planner_summary: parsed.data.planner_summary ?? null,
     preparation_summary: parsed.data.preparation_summary ?? null,
     prepared_payloads: [...parsed.data.prepared_payloads],
@@ -1183,6 +1195,11 @@ export async function handleChatTurn(input: {
     };
   }
 
+  const repeatedSingleQuery = maybeReuseSingleQuerySnapshot(rawMessage, nextState);
+  if (repeatedSingleQuery) {
+    return repeatedSingleQuery;
+  }
+
   const routedSingleOrAnalysis = await attemptSingleQueryOrAnalysisRouting(
     rawMessage,
     nextState,
@@ -1361,6 +1378,8 @@ async function executeNaturalSimpleQuery(
   const queryId = `qry_${randomUUID()}`;
   nextState.last_query_id = queryId;
   nextState.pending_single_query_request = null;
+  const normalizedRequest = normalizeSingleQueryRequest(options.user_message ?? "");
+  const contextKey = buildNaturalQueryContextKey(action);
 
   try {
     const startedAt = Date.now();
@@ -1383,26 +1402,42 @@ async function executeNaturalSimpleQuery(
     });
 
     if (naturalNarration) {
+      nextState.last_single_query_snapshot = {
+        normalized_request: normalizedRequest,
+        context_key: contextKey,
+        query_id: queryId,
+        assistant_message: naturalNarration,
+        created_at: new Date().toISOString()
+      };
       return {
         assistant_message: naturalNarration,
         state: nextState
       };
     }
 
+    const assistantMessage = [
+      `Query completed. Query ID: ${queryId}.`,
+      summary,
+      method,
+      `Elapsed: ${elapsedMs}ms.`,
+      `${warnings}`.trim()
+    ]
+      .filter((line) => line.length > 0)
+      .join("\n");
+    nextState.last_single_query_snapshot = {
+      normalized_request: normalizedRequest,
+      context_key: contextKey,
+      query_id: queryId,
+      assistant_message: assistantMessage,
+      created_at: new Date().toISOString()
+    };
     return {
-      assistant_message: [
-        `Query completed. Query ID: ${queryId}.`,
-        summary,
-        method,
-        `Elapsed: ${elapsedMs}ms.`,
-        `${warnings}`.trim()
-      ]
-        .filter((line) => line.length > 0)
-        .join("\n"),
+      assistant_message: assistantMessage,
       state: nextState
     };
   } catch (error) {
     const reason = error instanceof Error ? error.message : "unknown error";
+    nextState.last_single_query_snapshot = null;
     return {
       assistant_message: `Query failed. Query ID: ${queryId}. Error: ${reason}`,
       state: nextState
@@ -1539,9 +1574,12 @@ async function executeLlmRoutedSingleQuery(
   const queryId = `qry_${randomUUID()}`;
   nextState.last_query_id = queryId;
   nextState.pending_single_query_request = null;
+  const normalizedRequest = normalizeSingleQueryRequest(userMessage);
 
   const sql = decision.sql ? normalizeExecutableSql(decision.sql) : "";
+  const contextKey = buildSqlQueryContextKey(sql);
   if (!isLikelySingleSelectSql(sql)) {
+    nextState.last_single_query_snapshot = null;
     return {
       assistant_message: `Could not execute routed query. Query ID: ${queryId}. Reason: generated SQL was not a single SELECT statement.`,
       state: nextState
@@ -1569,30 +1607,156 @@ async function executeLlmRoutedSingleQuery(
     });
 
     if (naturalNarration) {
+      nextState.last_single_query_snapshot = {
+        normalized_request: normalizedRequest,
+        context_key: contextKey,
+        query_id: queryId,
+        assistant_message: naturalNarration,
+        created_at: new Date().toISOString()
+      };
       return {
         assistant_message: naturalNarration,
         state: nextState
       };
     }
+    const assistantMessage = [
+      `Query completed. Query ID: ${queryId}.`,
+      summary,
+      method,
+      `Elapsed: ${elapsedMs}ms.`,
+      `${warnings}`.trim()
+    ]
+      .filter((line) => line.length > 0)
+      .join("\n");
+    nextState.last_single_query_snapshot = {
+      normalized_request: normalizedRequest,
+      context_key: contextKey,
+      query_id: queryId,
+      assistant_message: assistantMessage,
+      created_at: new Date().toISOString()
+    };
     return {
-      assistant_message: [
-        `Query completed. Query ID: ${queryId}.`,
-        summary,
-        method,
-        `Elapsed: ${elapsedMs}ms.`,
-        `${warnings}`.trim()
-      ]
-        .filter((line) => line.length > 0)
-        .join("\n"),
+      assistant_message: assistantMessage,
       state: nextState
     };
   } catch (error) {
     const reason = error instanceof Error ? error.message : "unknown error";
+    nextState.last_single_query_snapshot = null;
     return {
       assistant_message: `Query failed. Query ID: ${queryId}. Error: ${reason}`,
       state: nextState
     };
   }
+}
+
+function maybeReuseSingleQuerySnapshot(rawMessage: string, state: ChatState): ChatTurnResponse | null {
+  const snapshot = state.last_single_query_snapshot;
+  if (!snapshot) {
+    return null;
+  }
+
+  const lower = rawMessage.toLowerCase().trim();
+  if (lower.length < 2) {
+    return null;
+  }
+
+  if (
+    parseSetCommand(rawMessage) ||
+    parseQueryCommand(rawMessage) ||
+    isUiControlCommand(lower) ||
+    asksForPdf(lower) ||
+    asksToUseConnectedTables(lower) ||
+    looksLikeAnalysisIntent(lower) ||
+    looksLikeComplexMultiQuestionPrompt(lower)
+  ) {
+    return null;
+  }
+
+  const explicitRepeat = isExplicitSingleQueryRepeatRequest(lower);
+  const normalizedRequest = normalizeSingleQueryRequest(rawMessage);
+  const sameRequest =
+    normalizedRequest.length > 0 &&
+    snapshot.normalized_request.length > 0 &&
+    normalizedRequest === snapshot.normalized_request;
+
+  if (!explicitRepeat && !sameRequest) {
+    return null;
+  }
+
+  const nextState = parseChatState(state);
+  nextState.pending_single_query_request = null;
+  nextState.last_query_id = snapshot.query_id;
+
+  return {
+    assistant_message: [
+      "Using the same context as your previous single-query request.",
+      snapshot.assistant_message
+    ].join("\n\n"),
+    state: nextState
+  };
+}
+
+function isExplicitSingleQueryRepeatRequest(lower: string): boolean {
+  return (
+    /\b(same question|same query|same context|same as above)\b/.test(lower) ||
+    /\b(repeat that|repeat it|again please|show again|give again)\b/.test(lower) ||
+    /^again\b/.test(lower)
+  );
+}
+
+function normalizeSingleQueryRequest(message: string): string {
+  const stopWords = new Set([
+    "can",
+    "could",
+    "would",
+    "please",
+    "just",
+    "me",
+    "you",
+    "my",
+    "the",
+    "a",
+    "an",
+    "show",
+    "give",
+    "tell",
+    "what",
+    "whats",
+    "is",
+    "are"
+  ]);
+
+  return message
+    .toLowerCase()
+    .replace(/[^a-z0-9\s]/g, " ")
+    .split(/\s+/)
+    .map((token) => token.trim())
+    .filter((token) => token.length > 0)
+    .filter((token) => !stopWords.has(token))
+    .join(" ");
+}
+
+function buildNaturalQueryContextKey(action: NaturalQueryAction): string {
+  return [
+    action.kind,
+    action.relation,
+    action.date_column ?? "",
+    String(action.requested_months ?? ""),
+    String(action.requested_days ?? ""),
+    action.metric_column ?? "",
+    action.city_filter ?? "",
+    action.product_filter ?? "",
+    (action.joined_relations ?? []).join(","),
+    action.window_label ?? "",
+    String(action.limit ?? "")
+  ].join("|");
+}
+
+function buildSqlQueryContextKey(sql: string): string {
+  return sql
+    .toLowerCase()
+    .replace(/\s+/g, " ")
+    .trim();
 }
 
 function summarizeLlmRoutedQueryResult(
@@ -2645,6 +2809,10 @@ function buildStateContext(state: ChatState): string {
 
   if (state.last_query_id) {
     parts.push(`Last query ID: ${state.last_query_id}.`);
+  }
+
+  if (state.last_single_query_snapshot) {
+    parts.push("Single-query context is available for replay.");
   }
 
   if (state.last_exec_brief) {
