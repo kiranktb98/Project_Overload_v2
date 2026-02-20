@@ -1,5 +1,6 @@
 import { createCipheriv, createDecipheriv, createHash, randomBytes, randomUUID } from "node:crypto";
 import * as tls from "node:tls";
+import mysql, { type Pool as MySqlPool } from "mysql2/promise";
 import { Pool, type PoolClient } from "pg";
 import {
   assertAllowlistedRelations,
@@ -36,7 +37,8 @@ const EXCLUDED_SCHEMAS = [
 export type ConnectionProvider = "postgres" | "supabase" | "neon" | "mysql" | "snowflake" | "bigquery";
 
 const POSTGRES_COMPATIBLE_PROVIDERS = new Set<ConnectionProvider>(["postgres", "supabase", "neon"]);
-const UNSUPPORTED_PROVIDERS = new Set<ConnectionProvider>(["mysql", "snowflake", "bigquery"]);
+const MYSQL_COMPATIBLE_PROVIDERS = new Set<ConnectionProvider>(["mysql"]);
+const UNSUPPORTED_PROVIDERS = new Set<ConnectionProvider>(["snowflake", "bigquery"]);
 
 export type RelationHealthStatus = "OK" | "NO_SELECT_GRANT" | "RLS_NO_POLICY";
 
@@ -190,7 +192,7 @@ type ActiveConnection = {
   encrypted_connection_string: string;
   encrypted_iv: string;
   encrypted_tag: string;
-  pool: Pool;
+  pool: Pool | MySqlPool;
   connected_at: string;
   allowed_relations: string[];
   relations_health: RelationHealth[];
@@ -199,6 +201,7 @@ type ActiveConnection = {
 };
 
 type LastTestSnapshot = {
+  provider: ConnectionProvider;
   tested_at: string;
   metadata: ConnectionMetadata;
   relations: RelationHealth[];
@@ -271,16 +274,74 @@ export class RuntimeConnectionManager {
     provider: ConnectionProvider = "postgres"
   ): Promise<ConnectionTestResult> {
     const normalized = normalizeConnectionString(rawConnectionString, provider);
-    const parsed = safeParsePgUrl(normalized.normalized_connection_string);
-    const ssl = buildSslOptions(normalized.normalized_connection_string, tlsCaPem);
+    const parsed = safeParseDbUrl(normalized.normalized_connection_string);
+
+    const warnings = [...normalized.warnings];
+    const recommendations = [...normalized.recommendations];
+
+    if (isMySqlProvider(normalized.provider)) {
+      const pool = createMySqlPool(normalized.normalized_connection_string, tlsCaPem, 2);
+      try {
+        await pool.query("select 1 as ok");
+
+        const metadata = await readMySqlConnectionMetadata(pool);
+        const relations = await listMySqlRelationHealth(pool, metadata.current_database);
+        const recommendedAllowlist = selectRecommendedAllowlist(relations);
+        const permissionsMissing = relations.length === 0 || relations.every((entry) => entry.has_select_privilege === false);
+
+        if (permissionsMissing) {
+          recommendations.push(
+            "Permissions missing for table discovery or SELECT access. Ensure this user has SELECT on the target schema/database."
+          );
+        }
+
+        const setupScript =
+          permissionsMissing || relations.some((entry) => entry.status !== "OK")
+            ? this.generateMySqlFixScriptInternal({
+                allowlisted_relations:
+                  recommendedAllowlist.length > 0
+                    ? recommendedAllowlist
+                    : relations.map((entry) => entry.qualified_name)
+              }, metadata.current_database)
+            : null;
+
+        const result: ConnectionTestResult = {
+          ok: true,
+          provider: normalized.provider,
+          metadata,
+          relations,
+          recommended_allowlist: recommendedAllowlist,
+          warnings,
+          recommendations,
+          permissions_missing: permissionsMissing,
+          setup_script: setupScript
+        };
+
+        this.lastTest = {
+          provider: normalized.provider,
+          tested_at: new Date().toISOString(),
+          metadata,
+          relations,
+          recommended_allowlist: recommendedAllowlist,
+          warnings,
+          recommendations,
+          permissions_missing: permissionsMissing
+        };
+
+        return result;
+      } catch (error) {
+        throw new Error(formatConnectionError(error, parsed, normalized.provider));
+      } finally {
+        await pool.end();
+      }
+    }
+
+    const ssl = buildPostgresSslOptions(normalized.normalized_connection_string, tlsCaPem);
     const pool = new Pool({
       connectionString: normalized.normalized_connection_string,
       max: 2,
       ssl
     });
-
-    const warnings = [...normalized.warnings];
-    const recommendations = [...normalized.recommendations];
 
     try {
       await pool.query("select 1 as ok");
@@ -317,6 +378,7 @@ export class RuntimeConnectionManager {
       };
 
       this.lastTest = {
+        provider: normalized.provider,
         tested_at: new Date().toISOString(),
         metadata,
         relations,
@@ -328,7 +390,7 @@ export class RuntimeConnectionManager {
 
       return result;
     } catch (error) {
-      throw new Error(formatConnectionError(error, parsed));
+      throw new Error(formatConnectionError(error, parsed, normalized.provider));
     } finally {
       await pool.end();
     }
@@ -336,18 +398,27 @@ export class RuntimeConnectionManager {
 
   async connect(input: ConnectInput, source: "runtime" | "env" = "runtime"): Promise<ConnectionContext> {
     const normalized = normalizeConnectionString(input.connection_string, input.provider);
-    const parsed = safeParsePgUrl(normalized.normalized_connection_string);
-    const ssl = buildSslOptions(normalized.normalized_connection_string, input.tls_ca_pem);
-    const pool = new Pool({
-      connectionString: normalized.normalized_connection_string,
-      max: 5,
-      ssl
-    });
+    const parsed = safeParseDbUrl(normalized.normalized_connection_string);
+    const pool = isMySqlProvider(normalized.provider)
+      ? createMySqlPool(normalized.normalized_connection_string, input.tls_ca_pem, 5)
+      : new Pool({
+          connectionString: normalized.normalized_connection_string,
+          max: 5,
+          ssl: buildPostgresSslOptions(normalized.normalized_connection_string, input.tls_ca_pem)
+        });
 
     try {
-      await pool.query("select 1 as ok");
-      const metadata = await readConnectionMetadata(pool);
-      const relations = await listRelationHealth(pool);
+      if (isMySqlProvider(normalized.provider)) {
+        await (pool as MySqlPool).query("select 1 as ok");
+      } else {
+        await (pool as Pool).query("select 1 as ok");
+      }
+      const metadata = isMySqlProvider(normalized.provider)
+        ? await readMySqlConnectionMetadata(pool as MySqlPool)
+        : await readConnectionMetadata(pool as Pool);
+      const relations = isMySqlProvider(normalized.provider)
+        ? await listMySqlRelationHealth(pool as MySqlPool, metadata.current_database)
+        : await listRelationHealth(pool as Pool);
       const availableRelations = relations.map((entry) => entry.qualified_name);
       const recommendedAllowlist = selectRecommendedAllowlist(relations);
 
@@ -376,7 +447,7 @@ export class RuntimeConnectionManager {
         encrypted_connection_string: encrypted.payload,
         encrypted_iv: encrypted.iv,
         encrypted_tag: encrypted.tag,
-        pool,
+        pool: pool as Pool | MySqlPool,
         connected_at: new Date().toISOString(),
         allowed_relations: allowed,
         relations_health: relations,
@@ -386,28 +457,36 @@ export class RuntimeConnectionManager {
 
       // Auto-catalog: sample rows and column info for allowed tables
       try {
-        const catalog = await buildDataCatalog(
-          pool,
-          businessId,
-          allowed,
-          relations,
-          input.business_context ?? ""
-        );
+        const catalog = isMySqlProvider(normalized.provider)
+          ? await buildDataCatalogMySql(
+              pool as MySqlPool,
+              businessId,
+              allowed,
+              relations,
+              input.business_context ?? ""
+            )
+          : await buildDataCatalog(
+              pool as Pool,
+              businessId,
+              allowed,
+              relations,
+              input.business_context ?? ""
+            );
         this.active.catalog = catalog;
       } catch {
         // Catalog failure should not block connection
       }
 
       if (previous) {
-        await previous.pool.end();
+        await closeProviderPool(previous.provider, previous.pool);
       }
 
       await this.persistActiveConnectionState();
 
       return this.getContext();
     } catch (error) {
-      await pool.end();
-      throw new Error(formatConnectionError(error, parsed));
+      await closeProviderPool(normalized.provider, pool as Pool | MySqlPool);
+      throw new Error(formatConnectionError(error, parsed, normalized.provider));
     }
   }
 
@@ -416,7 +495,7 @@ export class RuntimeConnectionManager {
       return;
     }
 
-    await this.active.pool.end();
+    await closeProviderPool(this.active.provider, this.active.pool);
     this.active = null;
     await this.persistActiveConnectionState();
   }
@@ -491,13 +570,21 @@ export class RuntimeConnectionManager {
     if (!this.active) {
       throw new Error("No active database connection.");
     }
-    const catalog = await buildDataCatalog(
-      this.active.pool,
-      this.active.business_id,
-      this.active.allowed_relations,
-      this.active.relations_health,
-      this.active.catalog?.business_context ?? ""
-    );
+    const catalog = isMySqlProvider(this.active.provider)
+      ? await buildDataCatalogMySql(
+          this.active.pool as MySqlPool,
+          this.active.business_id,
+          this.active.allowed_relations,
+          this.active.relations_health,
+          this.active.catalog?.business_context ?? ""
+        )
+      : await buildDataCatalog(
+          this.active.pool as Pool,
+          this.active.business_id,
+          this.active.allowed_relations,
+          this.active.relations_health,
+          this.active.catalog?.business_context ?? ""
+        );
     this.active.catalog = catalog;
     await this.persistActiveConnectionState();
     return catalog;
@@ -531,7 +618,11 @@ export class RuntimeConnectionManager {
       throw new Error("No active database connection.");
     }
 
-    const pool = this.active.pool;
+    if (isMySqlProvider(this.active.provider)) {
+      return validateAllowlistAccessMySql(this.active.pool as MySqlPool, this.active.allowed_relations);
+    }
+
+    const pool = this.active.pool as Pool;
     const allowed = this.active.allowed_relations;
     const tables: TableValidation[] = [];
     let tablesOk = 0;
@@ -592,6 +683,12 @@ export class RuntimeConnectionManager {
   }
 
   generateFixScript(input: FixScriptInput): string {
+    const provider = this.active?.provider ?? this.lastTest?.provider ?? "postgres";
+    if (isMySqlProvider(provider)) {
+      const databaseName = this.active?.database ?? this.lastTest?.metadata.current_database ?? "your_database";
+      return this.generateMySqlFixScriptInternal(input, databaseName);
+    }
+
     const metadata = this.active
       ? { current_database: this.active.database }
       : this.lastTest
@@ -620,10 +717,11 @@ export class RuntimeConnectionManager {
       assertAllowlistedRelations(governedSql, allowedRelations);
       assertAllowlistedSchemas(governedSql, allowedSchemas);
 
-      const client = await this.active.pool.connect();
-
+      const pgClient = isMySqlProvider(this.active.provider) ? null : await (this.active.pool as Pool).connect();
       try {
-        const rows = await executeReadOnlyQuery(client, governedSql);
+        const rows = isMySqlProvider(this.active.provider)
+          ? await executeReadOnlyQueryMySql(this.active.pool as MySqlPool, governedSql, this.defaultTimeoutMs)
+          : await executeReadOnlyQuery(pgClient as PoolClient, governedSql);
         const executionMs = Date.now() - started;
         this.appendQueryLog({
           connection_id: this.active.id,
@@ -655,7 +753,7 @@ export class RuntimeConnectionManager {
         });
         throw error;
       } finally {
-        client.release();
+        pgClient?.release();
       }
     }
 
@@ -694,8 +792,17 @@ export class RuntimeConnectionManager {
 
   async rowProvider(sql: string): Promise<Record<string, unknown>[]> {
     if (this.active) {
+      if (isMySqlProvider(this.active.provider)) {
+        return withTimeout(
+          (this.active.pool as MySqlPool)
+            .query(sql)
+            .then(([rows]) => rows as Record<string, unknown>[]),
+          this.defaultTimeoutMs
+        );
+      }
+
       return withTimeout(
-        this.active.pool.query(sql).then((result) => result.rows as Record<string, unknown>[]),
+        (this.active.pool as Pool).query(sql).then((result) => result.rows as Record<string, unknown>[]),
         this.defaultTimeoutMs
       );
     }
@@ -712,7 +819,7 @@ export class RuntimeConnectionManager {
 
   async close(): Promise<void> {
     if (this.active) {
-      await this.active.pool.end();
+      await closeProviderPool(this.active.provider, this.active.pool);
       this.active = null;
     }
   }
@@ -923,6 +1030,34 @@ export class RuntimeConnectionManager {
       `-- Connection string user should be: ${role}`
     ].join("\n");
   }
+
+  private generateMySqlFixScriptInternal(input: FixScriptInput, databaseName: string): string {
+    const allowlisted = dedupeLower(input.allowlisted_relations);
+    const role = sanitizeRoleName(input.reader_role ?? "overload_reader");
+    const password = input.reader_password?.trim().length
+      ? input.reader_password.trim()
+      : generateReaderPassword();
+
+    const grants = allowlisted.length > 0
+      ? allowlisted.map((entry) => {
+          const [schema, table] = entry.includes(".")
+            ? entry.split(".", 2)
+            : [databaseName, entry];
+          return `GRANT SELECT ON ${quoteMySqlIdentifier(schema)}.${quoteMySqlIdentifier(table)} TO ${quoteMySqlLiteral(role)}@'%';`;
+        })
+      : [`GRANT SELECT ON ${quoteMySqlIdentifier(databaseName)}.* TO ${quoteMySqlLiteral(role)}@'%';`];
+
+    return [
+      "-- Project Overload Fix-it Script (MySQL, MVP)",
+      "-- Creates/updates read-only user and grants SELECT on selected allowlist.",
+      "",
+      `CREATE USER IF NOT EXISTS ${quoteMySqlLiteral(role)}@'%' IDENTIFIED BY ${quoteMySqlLiteral(password)};`,
+      ...grants,
+      "FLUSH PRIVILEGES;",
+      "",
+      `-- Connection string user should be: ${role}`
+    ].join("\n");
+  }
 }
 
 function normalizeConnectionString(
@@ -937,7 +1072,9 @@ function normalizeConnectionString(
     );
   }
   if (!POSTGRES_COMPATIBLE_PROVIDERS.has(provider)) {
-    throw new Error(`${formatProviderLabel(provider)} is not supported by the current connection runtime.`);
+    if (!MYSQL_COMPATIBLE_PROVIDERS.has(provider)) {
+      throw new Error(`${formatProviderLabel(provider)} is not supported by the current connection runtime.`);
+    }
   }
 
   const raw = rawConnectionString.trim();
@@ -947,15 +1084,23 @@ function normalizeConnectionString(
 
   let url: URL;
   try {
-    const normalizedInput = raw.startsWith("postgres://") || raw.startsWith("postgresql://")
-      ? raw
-      : `postgresql://${raw}`;
+    const normalizedInput = isMySqlProvider(provider)
+      ? raw.startsWith("mysql://")
+        ? raw
+        : `mysql://${raw}`
+      : raw.startsWith("postgres://") || raw.startsWith("postgresql://")
+        ? raw
+        : `postgresql://${raw}`;
     url = new URL(normalizedInput);
   } catch {
     throw new Error(`Invalid ${formatProviderLabel(provider)} connection string.`);
   }
 
-  if (!["postgres:", "postgresql:"].includes(url.protocol)) {
+  if (isMySqlProvider(provider)) {
+    if (url.protocol !== "mysql:") {
+      throw new Error("Connection string must use mysql://");
+    }
+  } else if (!["postgres:", "postgresql:"].includes(url.protocol)) {
     throw new Error("Connection string must use postgres:// or postgresql://");
   }
 
@@ -963,6 +1108,11 @@ function normalizeConnectionString(
   const recommendations: string[] = [];
 
   if (!url.searchParams.get("sslmode")) {
+    url.searchParams.set("sslmode", "require");
+    warnings.push("sslmode was missing. Added sslmode=require.");
+  }
+
+  if (provider === "mysql" && !url.searchParams.get("sslmode")) {
     url.searchParams.set("sslmode", "require");
     warnings.push("sslmode was missing. Added sslmode=require.");
   }
@@ -975,6 +1125,10 @@ function normalizeConnectionString(
 
   if (provider === "neon") {
     recommendations.push("Neon detected: prefer pooled connection strings and keep sslmode=require.");
+  }
+
+  if (provider === "mysql") {
+    recommendations.push("MySQL detected: use a read-only user and prefer TLS with CA validation.");
   }
 
   if (url.hostname.endsWith(".pooler.supabase.com") && url.port !== "6543") {
@@ -1147,6 +1301,10 @@ function assertStrictSelectQuery(sql: string): void {
     throw new Error("SQL cannot be empty.");
   }
 
+  if (trimmed.includes(";")) {
+    throw new Error("Semicolons are not allowed in safe query mode.");
+  }
+
   if (/--|\/\*/.test(trimmed)) {
     throw new Error("Comments are not allowed in safe query mode.");
   }
@@ -1264,6 +1422,14 @@ function quoteLiteral(value: string): string {
   return `'${value.replace(/'/g, "''")}'`;
 }
 
+function quoteMySqlIdentifier(identifier: string): string {
+  return `\`${identifier.replace(/`/g, "``")}\``;
+}
+
+function quoteMySqlLiteral(value: string): string {
+  return `'${value.replace(/'/g, "''")}'`;
+}
+
 function parseProvider(value: unknown): ConnectionProvider {
   if (typeof value !== "string") {
     return "postgres";
@@ -1282,6 +1448,10 @@ function parseProvider(value: unknown): ConnectionProvider {
   }
 
   return "postgres";
+}
+
+function isMySqlProvider(provider: ConnectionProvider): boolean {
+  return MYSQL_COMPATIBLE_PROVIDERS.has(provider);
 }
 
 function formatProviderLabel(provider: ConnectionProvider): string {
@@ -1323,7 +1493,7 @@ async function withTimeout<T>(promise: Promise<T>, timeoutMs: number): Promise<T
   });
 }
 
-function safeParsePgUrl(connectionString: string): { host?: string; port?: string; hostname?: string } {
+function safeParseDbUrl(connectionString: string): { host?: string; port?: string; hostname?: string } {
   try {
     const url = new URL(connectionString);
     return {
@@ -1338,7 +1508,8 @@ function safeParsePgUrl(connectionString: string): { host?: string; port?: strin
 
 function formatConnectionError(
   error: unknown,
-  parsed: { host?: string; port?: string; hostname?: string }
+  parsed: { host?: string; port?: string; hostname?: string },
+  provider: ConnectionProvider = "postgres"
 ): string {
   const rawHost = parsed.hostname || parsed.host || "unknown-host";
   const formattedHost = rawHost.includes(":") && !rawHost.startsWith("[") ? `[${rawHost}]` : rawHost;
@@ -1349,7 +1520,7 @@ function formatConnectionError(
 
   if (code === "ENOTFOUND" || /ENOTFOUND/i.test(rawMessage)) {
     const maybeSupabaseDirect = Boolean(parsed.hostname && /^db\\./i.test(parsed.hostname) && /\\.supabase\\.co$/i.test(parsed.hostname));
-    const supabaseHint = maybeSupabaseDirect
+    const supabaseHint = provider === "supabase" && maybeSupabaseDirect
       ? "Supabase direct host detected (db.<ref>.supabase.co). This endpoint is often IPv6-only; on IPv4-only networks it can fail to resolve. Use Supabase Connection Pooling -> Transaction mode (host *.pooler.supabase.com) on port 6543 instead."
       : "Check the hostname spelling and your DNS/VPN/network. Try switching DNS to 1.1.1.1 or 8.8.8.8, or try a different network (phone hotspot).";
 
@@ -1357,7 +1528,10 @@ function formatConnectionError(
   }
 
   if (code === "ECONNREFUSED") {
-    return `Connection refused by ${formattedHost}${port}. Check host/port, outbound firewall rules, and that Postgres is reachable. For Supabase: direct is usually 5432; pooler is 6543.`;
+    if (provider === "supabase") {
+      return `Connection refused by ${formattedHost}${port}. Check host/port, outbound firewall rules, and that the DB is reachable. For Supabase: direct is usually 5432; pooler is 6543.`;
+    }
+    return `Connection refused by ${formattedHost}${port}. Check host/port, outbound firewall rules, and that ${formatProviderLabel(provider)} is reachable.`;
   }
 
   if (code === "ETIMEDOUT") {
@@ -1372,9 +1546,10 @@ function formatConnectionError(
     /self-signed certificate/i.test(rawMessage) ||
     /unable to verify/i.test(rawMessage)
   ) {
-    const maybeSupabase =
+    const maybeSupabase = provider === "supabase" && (
       Boolean(parsed.hostname && /\\.supabase\\.co$/i.test(parsed.hostname)) ||
-      Boolean(parsed.hostname && /\\.pooler\\.supabase\\.com$/i.test(parsed.hostname));
+      Boolean(parsed.hostname && /\\.pooler\\.supabase\\.com$/i.test(parsed.hostname))
+    );
     const supabaseHint = maybeSupabase
       ? "For Supabase, prefer Connection Pooling -> Transaction mode (host *.pooler.supabase.com) on port 6543."
       : "";
@@ -1398,17 +1573,248 @@ function formatConnectionError(
   }
 
   if (code === "28P01") {
-    return "Authentication failed (28P01). Verify username/password in your connection string.";
+    return `Authentication failed (28P01). Verify username/password in your ${formatProviderLabel(provider)} connection string.`;
+  }
+
+  if (code === "ER_ACCESS_DENIED_ERROR") {
+    return `Authentication failed (${code}). Verify username/password in your ${formatProviderLabel(provider)} connection string.`;
   }
 
   if (code === "3D000") {
     return "Database does not exist (3D000). Verify the database name in your connection string path.";
   }
 
+  if (code === "ER_BAD_DB_ERROR") {
+    return "Database does not exist (ER_BAD_DB_ERROR). Verify the database name in your connection string path.";
+  }
+
   return rawMessage;
 }
 
-function buildSslOptions(connectionString: string, tlsCaPem?: string): false | tls.ConnectionOptions | undefined {
+async function closeProviderPool(provider: ConnectionProvider, pool: Pool | MySqlPool): Promise<void> {
+  if (isMySqlProvider(provider)) {
+    await (pool as MySqlPool).end();
+    return;
+  }
+  await (pool as Pool).end();
+}
+
+function createMySqlPool(connectionString: string, tlsCaPem?: string, connectionLimit = 5): MySqlPool {
+  const poolUri = removeMySqlUnsupportedUriOptions(connectionString);
+  return mysql.createPool({
+    uri: poolUri,
+    waitForConnections: true,
+    connectionLimit,
+    multipleStatements: false,
+    ssl: buildMySqlSslOptions(connectionString, tlsCaPem)
+  });
+}
+
+function removeMySqlUnsupportedUriOptions(connectionString: string): string {
+  try {
+    const parsed = new URL(connectionString);
+    // mysql2 doesn't understand `sslmode` URI option and logs noisy warnings.
+    parsed.searchParams.delete("sslmode");
+    return parsed.toString();
+  } catch {
+    return connectionString;
+  }
+}
+
+function buildMySqlSslOptions(
+  connectionString: string,
+  tlsCaPem?: string
+): Record<string, unknown> | undefined {
+  let url: URL;
+  try {
+    url = new URL(connectionString);
+  } catch {
+    return undefined;
+  }
+
+  const extraCaPem = sanitizeTlsCaPem(tlsCaPem);
+  const sslmode = (url.searchParams.get("sslmode") ?? "").trim().toLowerCase();
+
+  if (sslmode === "disable") {
+    return undefined;
+  }
+
+  if (sslmode === "no-verify") {
+    return { rejectUnauthorized: false };
+  }
+
+  return {
+    ca: dedupePem([
+      ...safeGetCaCertificates("system"),
+      ...safeGetCaCertificates("bundled"),
+      ...(extraCaPem ? [extraCaPem] : [])
+    ])
+  };
+}
+
+async function readMySqlConnectionMetadata(pool: MySqlPool): Promise<ConnectionMetadata> {
+  const [rowsRaw] = await pool.query(
+    `
+      SELECT
+        CURRENT_USER() AS current_user,
+        DATABASE() AS current_database,
+        VERSION() AS version
+    `
+  );
+
+  const rows = toObjectRows(rowsRaw);
+  const row = rows[0] ?? {};
+  return {
+    current_user: String(row.current_user ?? "unknown"),
+    current_database: String(row.current_database ?? "unknown"),
+    version: String(row.version ?? "unknown")
+  };
+}
+
+async function listMySqlRelationHealth(pool: MySqlPool, currentDatabase: string): Promise<RelationHealth[]> {
+  const [rowsRaw] = await pool.query(
+    `
+      SELECT
+        t.TABLE_SCHEMA AS schema_name,
+        t.TABLE_NAME AS relation_name,
+        t.TABLE_TYPE AS table_type
+      FROM information_schema.TABLES t
+      WHERE t.TABLE_SCHEMA NOT IN ('mysql', 'information_schema', 'performance_schema', 'sys')
+      ORDER BY t.TABLE_SCHEMA, t.TABLE_NAME
+    `
+  );
+
+  const rows = toObjectRows(rowsRaw);
+  const relations = rows.map((row) => {
+    const schemaName = String(row.schema_name ?? currentDatabase);
+    const relationName = String(row.relation_name ?? "");
+    const tableType = String(row.table_type ?? "BASE TABLE").toUpperCase();
+    const relationType: RelationHealth["relation_type"] =
+      tableType.includes("VIEW") ? "VIEW" : "TABLE";
+
+    const status: { code: RelationHealthStatus; label: RelationHealth["status_label"] } = {
+      code: "OK",
+      label: "OK"
+    };
+
+    return {
+      schema_name: schemaName,
+      relation_name: relationName,
+      relation_type: relationType,
+      qualified_name: `${schemaName}.${relationName}`,
+      has_select_privilege: true,
+      has_rls: false,
+      force_rls: false,
+      rls_active_for_me: false,
+      policies_count_for_me: 0,
+      status: status.code,
+      status_label: status.label
+    };
+  });
+
+  return relations.filter((relation) => relation.relation_name.length > 0);
+}
+
+async function executeReadOnlyQueryMySql(
+  pool: MySqlPool,
+  sql: string,
+  timeoutMs: number
+): Promise<Record<string, unknown>[]> {
+  const connection = await pool.getConnection();
+  try {
+    if (timeoutMs > 0) {
+      const bounded = Math.max(1000, Math.trunc(timeoutMs));
+      await connection.query(`SET SESSION MAX_EXECUTION_TIME = ${bounded}`);
+    }
+    await connection.query("START TRANSACTION READ ONLY");
+    const [rows] = await connection.query(sql);
+    await connection.query("COMMIT");
+    if (!Array.isArray(rows)) {
+      return [];
+    }
+    return rows as Record<string, unknown>[];
+  } catch (error) {
+    try {
+      await connection.query("ROLLBACK");
+    } catch {
+      // Ignore rollback errors for failed sessions.
+    }
+    throw error;
+  } finally {
+    connection.release();
+  }
+}
+
+async function validateAllowlistAccessMySql(
+  pool: MySqlPool,
+  allowed: string[]
+): Promise<AllowlistValidationResult> {
+  const tables: TableValidation[] = [];
+  let tablesOk = 0;
+  let totalCols = 0;
+  let colsOk = 0;
+
+  for (const qualifiedName of allowed) {
+    const parts = qualifiedName.split(".");
+    if (parts.length !== 2) {
+      tables.push({ name: qualifiedName, accessible: false, error: "Invalid qualified name", columns: [] });
+      continue;
+    }
+
+    const [schema, table] = parts;
+    const tableVal: TableValidation = { name: qualifiedName, accessible: false, columns: [] };
+
+    try {
+      await pool.query(`SELECT * FROM ${quoteMySqlIdentifier(schema)}.${quoteMySqlIdentifier(table)} LIMIT 0`);
+      tableVal.accessible = true;
+      tablesOk++;
+    } catch (err) {
+      tableVal.error = err instanceof Error ? err.message : "SELECT failed";
+      tables.push(tableVal);
+      continue;
+    }
+
+    try {
+      const [columnsRaw] = await pool.query(
+        `SELECT column_name, data_type
+         FROM information_schema.columns
+         WHERE table_schema = ? AND table_name = ?
+         ORDER BY ordinal_position`,
+        [schema, table]
+      );
+      const columns = toObjectRows(columnsRaw);
+
+      for (const column of columns) {
+        totalCols++;
+        const columnName = String(column.column_name ?? "");
+        const columnType = String(column.data_type ?? "unknown");
+        const colVal: ColumnValidation = { name: columnName, data_type: columnType, accessible: false };
+
+        try {
+          await pool.query(
+            `SELECT ${quoteMySqlIdentifier(columnName)} FROM ${quoteMySqlIdentifier(schema)}.${quoteMySqlIdentifier(table)} LIMIT 1`
+          );
+          colVal.accessible = true;
+          colsOk++;
+        } catch (err) {
+          colVal.error = err instanceof Error ? err.message : "Column SELECT failed";
+        }
+
+        tableVal.columns.push(colVal);
+      }
+    } catch (err) {
+      tableVal.error = `Table accessible but column introspection failed: ${err instanceof Error ? err.message : "unknown"}`;
+    }
+
+    tables.push(tableVal);
+  }
+
+  const ok = tablesOk === allowed.length && colsOk === totalCols;
+  const summary = `${tablesOk}/${allowed.length} tables OK, ${colsOk}/${totalCols} columns accessible`;
+  return { ok, tables, summary };
+}
+
+function buildPostgresSslOptions(connectionString: string, tlsCaPem?: string): false | tls.ConnectionOptions | undefined {
   let url: URL;
   try {
     url = new URL(connectionString);
@@ -1594,6 +2000,106 @@ async function buildDataCatalog(
   };
 }
 
+async function buildDataCatalogMySql(
+  pool: MySqlPool,
+  businessId: string,
+  allowedRelations: string[],
+  relationsHealth: RelationHealth[],
+  businessContext: string
+): Promise<DataCatalog> {
+  const tables: TableCatalogEntry[] = [];
+
+  for (const qualifiedName of allowedRelations.slice(0, 30)) {
+    const health = relationsHealth.find((relation) => relation.qualified_name === qualifiedName);
+    if (!health || !health.has_select_privilege) {
+      continue;
+    }
+
+    const [schema, table] = qualifiedName.includes(".")
+      ? qualifiedName.split(".", 2)
+      : ["", qualifiedName];
+
+    if (!schema || !table) {
+      continue;
+    }
+
+    try {
+      const [columnRowsRaw] = await pool.query(
+        `SELECT COLUMN_NAME AS column_name, DATA_TYPE AS data_type, IS_NULLABLE AS is_nullable
+         FROM information_schema.COLUMNS
+         WHERE TABLE_SCHEMA = ? AND TABLE_NAME = ?
+         ORDER BY ORDINAL_POSITION`,
+        [schema, table]
+      );
+      const columnRows = toObjectRows(columnRowsRaw);
+
+      const columns: TableColumnInfo[] = columnRows.map((row) => ({
+        column_name: String(row.column_name ?? ""),
+        data_type: String(row.data_type ?? "unknown"),
+        is_nullable: String(row.is_nullable ?? "").toUpperCase() === "YES"
+      }));
+
+      let sampleRows: Record<string, unknown>[] = [];
+      try {
+        const [sampleRowsRaw] = await pool.query(
+          `SELECT * FROM ${quoteMySqlIdentifier(schema)}.${quoteMySqlIdentifier(table)} LIMIT 5`
+        );
+        sampleRows = toObjectRows(sampleRowsRaw);
+      } catch {
+        // Some tables may not be queryable for sampling.
+      }
+
+      let rowCountEstimate = 0;
+      try {
+        const [estimateRowsRaw] = await pool.query(
+          `SELECT TABLE_ROWS AS estimate
+           FROM information_schema.TABLES
+           WHERE TABLE_SCHEMA = ? AND TABLE_NAME = ?
+           LIMIT 1`,
+          [schema, table]
+        );
+        const estimateRows = toObjectRows(estimateRowsRaw);
+        rowCountEstimate = Math.max(0, Number.parseInt(String(estimateRows[0]?.estimate ?? "0"), 10));
+      } catch {
+        // Estimate unavailable
+      }
+
+      const lowCardinalityColumns = await readLowCardinalityColumnsMySql(pool, schema, table, columns);
+
+      const tableIndex = catalogAgentIndexTable({
+        business_id: businessId,
+        qualified_name: qualifiedName,
+        columns: columns.map((column) => ({
+          column_name: column.column_name,
+          data_type: column.data_type
+        })),
+        sample_rows: sampleRows,
+        low_cardinality_columns: lowCardinalityColumns
+      });
+
+      tables.push({
+        table_id: tableIndex.table_id,
+        qualified_name: qualifiedName,
+        relation_type: health.relation_type,
+        summary: tableIndex.summary,
+        columns,
+        low_cardinality_columns: lowCardinalityColumns,
+        sample_rows: sampleRows,
+        row_count_estimate: rowCountEstimate
+      });
+    } catch {
+      // Skip tables we can't introspect.
+    }
+  }
+
+  return {
+    business_id: businessId,
+    tables,
+    business_context: businessContext,
+    cataloged_at: new Date().toISOString()
+  };
+}
+
 const LOW_CARDINALITY_LIMIT = 20;
 const MAX_PROFILED_COLUMNS_PER_TABLE = 40;
 
@@ -1644,6 +2150,54 @@ async function readLowCardinalityColumns(
   return profiles;
 }
 
+async function readLowCardinalityColumnsMySql(
+  pool: MySqlPool,
+  schema: string,
+  table: string,
+  columns: TableColumnInfo[]
+): Promise<LowCardinalityColumn[]> {
+  const profiles: LowCardinalityColumn[] = [];
+
+  for (const column of columns.slice(0, MAX_PROFILED_COLUMNS_PER_TABLE)) {
+    if (!isLowCardinalityCandidateType(column.data_type)) {
+      continue;
+    }
+
+    try {
+      const [rowsRaw] = await pool.query(
+        [
+          `SELECT DISTINCT CAST(${quoteMySqlIdentifier(column.column_name)} AS CHAR) AS value`,
+          `FROM ${quoteMySqlIdentifier(schema)}.${quoteMySqlIdentifier(table)}`,
+          `WHERE ${quoteMySqlIdentifier(column.column_name)} IS NOT NULL`,
+          `LIMIT ${LOW_CARDINALITY_LIMIT + 1}`
+        ].join("\n")
+      );
+      const rows = toObjectRows(rowsRaw);
+
+      if (rows.length === 0 || rows.length > LOW_CARDINALITY_LIMIT) {
+        continue;
+      }
+
+      const distinctValues = rows
+        .map((row) => sanitizeDistinctValue(String(row.value ?? "")))
+        .filter((value): value is string => value.length > 0);
+
+      if (distinctValues.length === 0) {
+        continue;
+      }
+
+      profiles.push({
+        column_name: column.column_name,
+        distinct_values: distinctValues
+      });
+    } catch {
+      // Skip columns where distinct profiling fails.
+    }
+  }
+
+  return profiles;
+}
+
 function isLowCardinalityCandidateType(dataType: string): boolean {
   const normalized = dataType.toLowerCase();
   if (
@@ -1670,6 +2224,17 @@ function sanitizeDistinctValue(value: string | null | undefined): string {
   }
 
   return trimmed.length <= 64 ? trimmed : `${trimmed.slice(0, 61)}...`;
+}
+
+function toObjectRows(value: unknown): Record<string, unknown>[] {
+  if (!Array.isArray(value)) {
+    return [];
+  }
+
+  return value.filter(
+    (row): row is Record<string, unknown> =>
+      typeof row === "object" && row !== null && !Array.isArray(row)
+  );
 }
 
 function quoteIdent(identifier: string): string {

@@ -85,8 +85,8 @@ describe("api connection routes", () => {
       method: "POST",
       url: "/connections/test",
       payload: {
-        provider: "mysql",
-        connection_string: "server.local"
+        provider: "snowflake",
+        connection_string: "postgres://reader:password@server.local:5432/postgres"
       }
     });
 
