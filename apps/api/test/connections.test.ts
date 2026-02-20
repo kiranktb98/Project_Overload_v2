@@ -74,4 +74,25 @@ describe("api connection routes", () => {
 
     await app.close();
   });
+
+  it("returns actionable error for unsupported connector providers", async () => {
+    const app = await buildApiApp({
+      store: new InMemoryMetadataStore(),
+      analyst_client: createStubAnalystClient()
+    });
+
+    const testResult = await app.inject({
+      method: "POST",
+      url: "/connections/test",
+      payload: {
+        provider: "mysql",
+        connection_string: "server.local"
+      }
+    });
+
+    expect(testResult.statusCode).toBe(400);
+    expect(testResult.json().message.toLowerCase()).toContain("not enabled");
+
+    await app.close();
+  });
 });

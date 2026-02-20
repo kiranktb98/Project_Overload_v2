@@ -2,14 +2,18 @@ import type { FastifyInstance } from "fastify";
 import { z } from "zod";
 import type { RuntimeConnectionManager } from "../dataplane/connection-manager";
 
+const ProviderSchema = z.enum(["postgres", "supabase", "neon", "mysql", "snowflake", "bigquery"]);
+
 const TestConnectionPayloadSchema = z.object({
   connection_string: z.string().trim().min(1),
-  tls_ca_pem: z.string().trim().min(1).optional()
+  tls_ca_pem: z.string().trim().min(1).optional(),
+  provider: ProviderSchema.default("postgres")
 });
 
 const ConnectPayloadSchema = z.object({
   name: z.string().trim().min(1).optional(),
   connection_string: z.string().trim().min(1),
+  provider: ProviderSchema.default("postgres"),
   tls_ca_pem: z.string().trim().min(1).optional(),
   allowed_relations: z.array(z.string().trim().min(1)).default([]),
   business_context: z.string().trim().max(2000).optional()
@@ -48,7 +52,7 @@ export function registerConnectionRoutes(app: FastifyInstance, manager: RuntimeC
   app.post("/connections/test", async (request, reply) => {
     const payload = TestConnectionPayloadSchema.parse(request.body);
     try {
-      const result = await manager.testConnection(payload.connection_string, payload.tls_ca_pem);
+      const result = await manager.testConnection(payload.connection_string, payload.tls_ca_pem, payload.provider);
       return reply.code(200).send(result);
     } catch (error) {
       return reply.code(400).send({
@@ -64,6 +68,7 @@ export function registerConnectionRoutes(app: FastifyInstance, manager: RuntimeC
       const context = await manager.connect({
         name: payload.name,
         connection_string: payload.connection_string,
+        provider: payload.provider,
         tls_ca_pem: payload.tls_ca_pem,
         allowed_relations: payload.allowed_relations,
         business_context: payload.business_context

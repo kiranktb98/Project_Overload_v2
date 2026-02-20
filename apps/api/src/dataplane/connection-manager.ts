@@ -33,6 +33,11 @@ const EXCLUDED_SCHEMAS = [
   "_analytics"
 ];
 
+export type ConnectionProvider = "postgres" | "supabase" | "neon" | "mysql" | "snowflake" | "bigquery";
+
+const POSTGRES_COMPATIBLE_PROVIDERS = new Set<ConnectionProvider>(["postgres", "supabase", "neon"]);
+const UNSUPPORTED_PROVIDERS = new Set<ConnectionProvider>(["mysql", "snowflake", "bigquery"]);
+
 export type RelationHealthStatus = "OK" | "NO_SELECT_GRANT" | "RLS_NO_POLICY";
 
 export type RelationHealth = {
@@ -57,6 +62,7 @@ export type ConnectionMetadata = {
 
 export type ConnectionTestResult = {
   ok: boolean;
+  provider: ConnectionProvider;
   metadata: ConnectionMetadata;
   relations: RelationHealth[];
   recommended_allowlist: string[];
@@ -69,6 +75,7 @@ export type ConnectionTestResult = {
 export type ConnectionContext = {
   connected: boolean;
   connection_id: string | null;
+  provider: ConnectionProvider | null;
   name: string | null;
   database: string | null;
   connected_at: string | null;
@@ -111,6 +118,7 @@ export type FixScriptInput = {
 
 export type ConnectInput = {
   connection_string: string;
+  provider?: ConnectionProvider;
   tls_ca_pem?: string;
   name?: string;
   allowed_relations?: string[];
@@ -173,6 +181,7 @@ export type AllowlistValidationResult = {
 
 type ActiveConnection = {
   id: string;
+  provider: ConnectionProvider;
   business_id: string;
   name: string;
   database: string;
@@ -200,6 +209,7 @@ type LastTestSnapshot = {
 };
 
 type NormalizedConnection = {
+  provider: ConnectionProvider;
   normalized_connection_string: string;
   warnings: string[];
   recommendations: string[];
@@ -245,6 +255,7 @@ export class RuntimeConnectionManager {
 
     try {
       await this.connect({
+        provider: "postgres",
         connection_string: connectionString,
         name: "env-postgres",
         allowed_relations: []
@@ -254,8 +265,12 @@ export class RuntimeConnectionManager {
     }
   }
 
-  async testConnection(rawConnectionString: string, tlsCaPem?: string): Promise<ConnectionTestResult> {
-    const normalized = normalizeConnectionString(rawConnectionString);
+  async testConnection(
+    rawConnectionString: string,
+    tlsCaPem?: string,
+    provider: ConnectionProvider = "postgres"
+  ): Promise<ConnectionTestResult> {
+    const normalized = normalizeConnectionString(rawConnectionString, provider);
     const parsed = safeParsePgUrl(normalized.normalized_connection_string);
     const ssl = buildSslOptions(normalized.normalized_connection_string, tlsCaPem);
     const pool = new Pool({
@@ -291,6 +306,7 @@ export class RuntimeConnectionManager {
 
       const result: ConnectionTestResult = {
         ok: true,
+        provider: normalized.provider,
         metadata,
         relations,
         recommended_allowlist: recommendedAllowlist,
@@ -319,7 +335,7 @@ export class RuntimeConnectionManager {
   }
 
   async connect(input: ConnectInput, source: "runtime" | "env" = "runtime"): Promise<ConnectionContext> {
-    const normalized = normalizeConnectionString(input.connection_string);
+    const normalized = normalizeConnectionString(input.connection_string, input.provider);
     const parsed = safeParsePgUrl(normalized.normalized_connection_string);
     const ssl = buildSslOptions(normalized.normalized_connection_string, input.tls_ca_pem);
     const pool = new Pool({
@@ -351,6 +367,7 @@ export class RuntimeConnectionManager {
       const previous = this.active;
       this.active = {
         id: randomUUID(),
+        provider: normalized.provider,
         business_id: businessId,
         name: connectionName,
         database: metadata.current_database,
@@ -409,6 +426,7 @@ export class RuntimeConnectionManager {
       return {
         connected: true,
         connection_id: this.active.id,
+        provider: this.active.provider,
         name: this.active.name,
         database: this.active.database,
         connected_at: this.active.connected_at,
@@ -426,6 +444,7 @@ export class RuntimeConnectionManager {
       return {
         connected: this.fallbackSource === "postgres",
         connection_id: "fallback",
+        provider: null,
         name: null,
         database: null,
         connected_at: null,
@@ -442,6 +461,7 @@ export class RuntimeConnectionManager {
     return {
       connected: false,
       connection_id: null,
+      provider: null,
       name: null,
       database: null,
       connected_at: null,
@@ -732,10 +752,12 @@ export class RuntimeConnectionManager {
         ? state.allowed_relations.filter((value): value is string => typeof value === "string")
         : [];
       const businessContext = typeof state.business_context === "string" ? state.business_context : "";
+      const provider = parseProvider(state.provider);
 
       await this.connect(
         {
           name,
+          provider,
           connection_string: connectionString,
           allowed_relations: allowedRelations,
           business_context: businessContext
@@ -775,6 +797,7 @@ export class RuntimeConnectionManager {
       CONNECTION_STATE_KEY,
       {
         name: this.active.name,
+        provider: this.active.provider,
         database: this.active.database,
         connected_at: this.active.connected_at,
         encrypted_connection_string: this.active.encrypted_connection_string,
@@ -902,7 +925,21 @@ export class RuntimeConnectionManager {
   }
 }
 
-function normalizeConnectionString(rawConnectionString: string): NormalizedConnection {
+function normalizeConnectionString(
+  rawConnectionString: string,
+  providerInput: ConnectionProvider | undefined
+): NormalizedConnection {
+  const provider = parseProvider(providerInput);
+  if (UNSUPPORTED_PROVIDERS.has(provider)) {
+    throw new Error(
+      `${formatProviderLabel(provider)} connector is not enabled in this runtime yet. ` +
+        "Use Postgres, Supabase, or Neon for now."
+    );
+  }
+  if (!POSTGRES_COMPATIBLE_PROVIDERS.has(provider)) {
+    throw new Error(`${formatProviderLabel(provider)} is not supported by the current connection runtime.`);
+  }
+
   const raw = rawConnectionString.trim();
   if (!raw) {
     throw new Error("Connection string is required.");
@@ -915,7 +952,7 @@ function normalizeConnectionString(rawConnectionString: string): NormalizedConne
       : `postgresql://${raw}`;
     url = new URL(normalizedInput);
   } catch {
-    throw new Error("Invalid Postgres connection string.");
+    throw new Error(`Invalid ${formatProviderLabel(provider)} connection string.`);
   }
 
   if (!["postgres:", "postgresql:"].includes(url.protocol)) {
@@ -930,6 +967,16 @@ function normalizeConnectionString(rawConnectionString: string): NormalizedConne
     warnings.push("sslmode was missing. Added sslmode=require.");
   }
 
+  if (provider === "supabase") {
+    recommendations.push(
+      "Supabase detected: prefer Connection Pooling -> Transaction mode (host *.pooler.supabase.com) on port 6543."
+    );
+  }
+
+  if (provider === "neon") {
+    recommendations.push("Neon detected: prefer pooled connection strings and keep sslmode=require.");
+  }
+
   if (url.hostname.endsWith(".pooler.supabase.com") && url.port !== "6543") {
     recommendations.push(
       "Supabase detected: prefer transaction pooler mode on port 6543 for this workflow."
@@ -937,6 +984,7 @@ function normalizeConnectionString(rawConnectionString: string): NormalizedConne
   }
 
   return {
+    provider,
     normalized_connection_string: url.toString(),
     warnings,
     recommendations
@@ -1214,6 +1262,43 @@ function quoteIdentifier(identifier: string): string {
 
 function quoteLiteral(value: string): string {
   return `'${value.replace(/'/g, "''")}'`;
+}
+
+function parseProvider(value: unknown): ConnectionProvider {
+  if (typeof value !== "string") {
+    return "postgres";
+  }
+
+  const normalized = value.trim().toLowerCase();
+  if (
+    normalized === "postgres" ||
+    normalized === "supabase" ||
+    normalized === "neon" ||
+    normalized === "mysql" ||
+    normalized === "snowflake" ||
+    normalized === "bigquery"
+  ) {
+    return normalized;
+  }
+
+  return "postgres";
+}
+
+function formatProviderLabel(provider: ConnectionProvider): string {
+  switch (provider) {
+    case "bigquery":
+      return "BigQuery";
+    case "snowflake":
+      return "Snowflake";
+    case "mysql":
+      return "MySQL";
+    case "supabase":
+      return "Supabase";
+    case "neon":
+      return "Neon";
+    default:
+      return "Postgres";
+  }
 }
 
 async function withTimeout<T>(promise: Promise<T>, timeoutMs: number): Promise<T> {

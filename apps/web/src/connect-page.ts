@@ -421,8 +421,21 @@ export function renderConnectionPage(): string {
           </div>
         </div>
 
+        <div style="margin-top: 10px;">
+          <label for="connection-provider">Data Source</label>
+          <select id="connection-provider">
+            <option value="postgres">Postgres</option>
+            <option value="supabase">Supabase (Postgres)</option>
+            <option value="neon">Neon (Postgres)</option>
+            <option value="mysql">MySQL (coming soon)</option>
+            <option value="snowflake">Snowflake (coming soon)</option>
+            <option value="bigquery">BigQuery (coming soon)</option>
+          </select>
+          <p class="muted">Postgres-compatible sources (Postgres/Supabase/Neon) are enabled in this runtime.</p>
+        </div>
+
         <div>
-          <label for="connection-string">Postgres Connection String</label>
+          <label for="connection-string">Connection String</label>
           <input id="connection-string" type="password" placeholder="postgresql://user:pass@host:5432/db?sslmode=require" />
           <p class="muted">Credentials never run in the browser. This string is sent to the server, stored encrypted, and used for governed SELECT-only execution.</p>
         </div>
@@ -437,7 +450,7 @@ export function renderConnectionPage(): string {
         </details>
 
         <div style="margin-top: 10px;">
-          <label for="business-context">Business Context (optional)</label>
+          <label for="business-context">Business Context (required)</label>
           <textarea id="business-context" style="min-height: 80px;" placeholder="E.g. We're a B2B SaaS company selling project management tools. Our main revenue comes from monthly subscriptions. We track sales by region, plan tier, and customer segment."></textarea>
           <p class="muted">Describe what your business does so the chat assistant can suggest relevant reports and understand your data better.</p>
         </div>
@@ -522,6 +535,7 @@ export function renderConnectionPage(): string {
         const elements = {
           status: document.getElementById("connection-status"),
           name: document.getElementById("connection-name"),
+          provider: document.getElementById("connection-provider"),
           connectionString: document.getElementById("connection-string"),
           tlsCaPem: document.getElementById("tls-ca-pem"),
           queryLimit: document.getElementById("query-limit"),
@@ -795,6 +809,7 @@ export function renderConnectionPage(): string {
           }
 
           const source = typeof context.source === "string" ? context.source : "runtime";
+          const provider = typeof context.provider === "string" ? context.provider : "postgres";
           const db = context.database || context.name || "unknown";
           const tableCount = Array.isArray(context.allowed_relations) ? context.allowed_relations.length : 0;
           const businessId =
@@ -807,6 +822,8 @@ export function renderConnectionPage(): string {
           elements.status.textContent =
             "Connected: " +
             db +
+            " | provider: " +
+            provider +
             " | source: " +
             source +
             " | allowlisted: " +
@@ -867,6 +884,9 @@ export function renderConnectionPage(): string {
           const relations = tables && Array.isArray(tables.relations) ? tables.relations : [];
           state.relations = relations;
           state.selected = new Set(Array.isArray(context.allowed_relations) ? context.allowed_relations.map((v) => String(v).toLowerCase()) : []);
+          if (context && typeof context.provider === "string") {
+            elements.provider.value = context.provider;
+          }
 
           renderSchemaFilter();
           renderRelations();
@@ -899,10 +919,12 @@ export function renderConnectionPage(): string {
             if (!connectionString) {
               throw new Error("Connection string is required.");
             }
+            const provider = String(elements.provider.value || "postgres").trim().toLowerCase();
 
             const tlsCaPem = String(elements.tlsCaPem.value || "").trim();
             const body = {
-              connection_string: connectionString
+              connection_string: connectionString,
+              provider
             };
             if (tlsCaPem) {
               body.tls_ca_pem = tlsCaPem;
@@ -943,19 +965,22 @@ export function renderConnectionPage(): string {
             if (state.selected.size === 0) {
               throw new Error("Select at least one table/view for your allowlist.");
             }
+            const provider = String(elements.provider.value || "postgres").trim().toLowerCase();
 
             const tlsCaPem = String(elements.tlsCaPem.value || "").trim();
             const businessContext = String(elements.businessContext.value || "").trim();
+            if (!businessContext || businessContext.length < 5) {
+              throw new Error("Business context is required (minimum 5 characters).");
+            }
             const body = {
               name: String(elements.name.value || "").trim() || undefined,
               connection_string: connectionString,
-              allowed_relations: Array.from(state.selected)
+              provider,
+              allowed_relations: Array.from(state.selected),
+              business_context: businessContext
             };
             if (tlsCaPem) {
               body.tls_ca_pem = tlsCaPem;
-            }
-            if (businessContext) {
-              body.business_context = businessContext;
             }
 
             const context = await request("/api/db/connect", "POST", body);
@@ -1137,11 +1162,13 @@ export function renderConnectionPage(): string {
             if (!connectionString) {
               throw new Error("Re-enter the connection string (we don't store it in the browser).");
             }
+            const provider = String(elements.provider.value || "postgres").trim().toLowerCase();
 
             const tlsCaPem = String(elements.tlsCaPem.value || "").trim();
             elements.fixStatus.textContent = "Re-testing...";
             const body = {
-              connection_string: connectionString
+              connection_string: connectionString,
+              provider
             };
             if (tlsCaPem) {
               body.tls_ca_pem = tlsCaPem;
