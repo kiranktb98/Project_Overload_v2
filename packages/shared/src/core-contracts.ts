@@ -46,7 +46,7 @@ export const ContractDraftGuardrailsSchema = z.object({
   evidence_row_cap: z.number().int().min(1).max(EVIDENCE_ROW_CAP).default(EVIDENCE_ROW_CAP),
   max_batches: z.number().int().min(1).max(MAX_BATCHES).default(MAX_BATCHES),
   deny_write: z.literal(true).default(true),
-  timeout_ms: z.number().int().min(100).max(120000).default(15000),
+  timeout_ms: z.number().int().min(100).max(900000).default(900000),
   allowed_sources: z.array(NonEmptyStringSchema).default([])
 });
 

@@ -10,6 +10,7 @@ import {
   type PlannerExploration,
   type PlannerInput,
   type PlannerOutput,
+  type SqlDialect,
   type QueryStrategyInput,
   type QueryStrategyOutput
 } from "@project-overload/shared";
@@ -35,6 +36,16 @@ export interface AnalystClient {
 export interface QueryStrategistClient {
   provider: LlmProvider;
   planQueries(input: QueryStrategyInput): Promise<QueryStrategyOutput>;
+  compileSql?(
+    input: {
+      sql: string;
+      dialect: SqlDialect;
+      allowed_relations: string[];
+      allowed_schemas: string[];
+      catalog_summary?: string;
+      question?: string;
+    }
+  ): Promise<{ sql: string; rationale: string }>;
   drainUsageEvents?(): TokenUsageEvent[];
 }
 
@@ -42,6 +53,13 @@ export type ReportComposerInput = {
   title: string;
   audience: string;
   insight_mode: "business" | "data";
+  metric_definitions?: Array<{
+    metric_key: string;
+    display_name: string;
+    definition: string;
+    source_type?: "column" | "derived";
+    source_columns?: string[];
+  }>;
   analyses: Array<{
     question: string;
     highlights: string[];
@@ -92,7 +110,7 @@ type UsageEventBuffer = {
   drain(): TokenUsageEvent[];
 };
 
-const DEFAULT_TIMEOUT_MS = 15000;
+const DEFAULT_TIMEOUT_MS = 900_000;
 const DEFAULT_OPENAI_MODEL = "gpt-4.1-mini";
 const DEFAULT_OPENROUTER_MODEL = "anthropic/claude-sonnet-4.6";
 const DEFAULT_OPENROUTER_BASE_URL = "https://openrouter.ai/api/v1";
@@ -334,6 +352,12 @@ export function createStubQueryStrategistClient(): QueryStrategistClient {
 
       return { queries };
     },
+    async compileSql(input): Promise<{ sql: string; rationale: string }> {
+      return {
+        sql: normalizeSingleSelectStatement(input.sql),
+        rationale: `Stub compiler passthrough for ${input.dialect} dialect.`
+      };
+    },
     drainUsageEvents() {
       return [];
     }
@@ -406,6 +430,51 @@ export function createQueryStrategistClient(options: CreateAnalystClientOptions)
       const parsed = parseJsonObjectFromText(text);
       return QueryStrategyOutputSchema.parse(parsed);
     },
+    async compileSql(input): Promise<{ sql: string; rationale: string }> {
+      const request = buildOpenRouterGenericRequest(
+        dialectCompilerSystemPrompt(input.dialect),
+        dialectCompilerUserPrompt(input),
+        options
+      );
+
+      const response = await fetchWithTimeout(fetcher, request.endpoint, {
+        method: "POST",
+        headers: request.headers,
+        body: JSON.stringify(request.payload)
+      }, timeoutMs);
+
+      if (!response.ok) {
+        const text = await response.text();
+        throw new Error(`Dialect compiler failed (${response.status}): ${text}`);
+      }
+
+      const payload = (await response.json()) as unknown;
+      recordUsageEventFromPayload(
+        usageBuffer,
+        payload,
+        "openrouter",
+        pickModelFromRequest(request),
+        "sql_dialect_compiler"
+      );
+      const text = extractTextPayload(payload);
+      if (!text) {
+        throw new Error("Unable to parse dialect compiler response.");
+      }
+
+      try {
+        const parsed = parseJsonObjectFromText(text);
+        return parseDialectCompileOutput(parsed);
+      } catch {
+        const sql = normalizeSingleSelectStatement(text);
+        if (!/^\s*(select|with)\b/i.test(sql)) {
+          throw new Error("Dialect compiler response did not contain valid SQL.");
+        }
+        return {
+          sql,
+          rationale: `Compiled SQL for ${input.dialect} dialect.`
+        };
+      }
+    },
     drainUsageEvents() {
       return usageBuffer.drain();
     }
@@ -427,6 +496,29 @@ function wrapStrategistWithFallback(
         return fallback.planQueries(input);
       }
     },
+    async compileSql(input): Promise<{ sql: string; rationale: string }> {
+      if (!remote.compileSql) {
+        return fallback.compileSql
+          ? fallback.compileSql(input)
+          : {
+              sql: normalizeSingleSelectStatement(input.sql),
+              rationale: "Dialect compiler unavailable; using original SQL."
+            };
+      }
+
+      try {
+        return await remote.compileSql(input);
+      } catch {
+        if (fallback.compileSql) {
+          return fallback.compileSql(input);
+        }
+
+        return {
+          sql: normalizeSingleSelectStatement(input.sql),
+          rationale: "Dialect compiler fallback passthrough."
+        };
+      }
+    },
     drainUsageEvents() {
       const remoteEvents = remote.drainUsageEvents ? remote.drainUsageEvents() : [];
       const fallbackEvents = fallback.drainUsageEvents ? fallback.drainUsageEvents() : [];
@@ -436,12 +528,14 @@ function wrapStrategistWithFallback(
 }
 
 function queryStrategistSystemPrompt(input: QueryStrategyInput): string {
+  const dialect = normalizeSqlDialect(input.sql_dialect);
+  const dialectUpper = dialect.toUpperCase();
   const mode = input.insight_mode === "data"
     ? "DATA QUALITY mode: Write queries to assess data completeness, null rates, duplicate rates, value distributions, outliers, and anomalies."
     : "BUSINESS INSIGHTS mode: Write queries that produce aggregated, summarized data for business analysis. Use GROUP BY, SUM, COUNT, AVG, JOINs across tables. Focus on trends, comparisons, breakdowns, and actionable patterns.";
 
   return [
-    "You are a SQL query strategist for a PostgreSQL database.",
+    `You are a SQL query strategist for a ${dialectUpper} database.`,
     "Your job is to generate 2-4 focused SQL queries that answer the user's report goal.",
     "",
     `MODE: ${mode}`,
@@ -463,12 +557,12 @@ function queryStrategistSystemPrompt(input: QueryStrategyInput): string {
     "    - order_date : date",
     "    - total_amount : numeric",
     "",
-    "CORRECT: SELECT date_trunc('month', order_date) AS month, SUM(total_amount) FROM public.orders GROUP BY 1",
-    "WRONG:   SELECT date_trunc('month', o.created_at) AS month, SUM(o.revenue) FROM orders o GROUP BY 1",
+    "CORRECT: SELECT order_date, SUM(total_amount) FROM public.orders GROUP BY order_date",
+    "WRONG:   SELECT o.created_at, SUM(o.revenue) FROM orders o GROUP BY o.created_at",
     "  (wrong because: 'created_at' and 'revenue' don't exist, 'orders' is not fully qualified)",
     "",
     "═══ QUERY RULES ═══",
-    "- Each query MUST be exactly ONE valid PostgreSQL SELECT statement.",
+    `- Each query MUST be exactly ONE valid ${dialectUpper} SELECT statement.`,
     "- NO semicolons, NO multiple statements.",
     "- Include LIMIT only when needed; prefer aggregated queries over raw row dumps.",
     "- Write SUMMARIZED data (aggregates, top-N, distributions), not raw row dumps.",
@@ -492,6 +586,7 @@ function queryStrategistSystemPrompt(input: QueryStrategyInput): string {
 
 function queryStrategistUserPrompt(input: QueryStrategyInput): string {
   const parts: string[] = [];
+  const dialect = normalizeSqlDialect(input.sql_dialect);
 
   // Catalog FIRST — most important context
   parts.push("═══ DATABASE CATALOG (use ONLY these tables and columns) ═══");
@@ -518,6 +613,7 @@ function queryStrategistUserPrompt(input: QueryStrategyInput): string {
   parts.push(`Goal: ${input.report_goal}`);
   parts.push(`Audience: ${input.audience}`);
   parts.push(`Insight mode: ${input.insight_mode}`);
+  parts.push(`SQL dialect: ${dialect}`);
 
   if (input.metric_ids.length > 0) {
     parts.push(`Key metrics to focus on: ${input.metric_ids.join(", ")}`);
@@ -530,6 +626,50 @@ function queryStrategistUserPrompt(input: QueryStrategyInput): string {
   parts.push("Generate 2-4 SQL queries using ONLY the tables and columns listed above. Return JSON only.");
 
   return parts.join("\n");
+}
+
+function dialectCompilerSystemPrompt(dialect: SqlDialect): string {
+  return [
+    `You are a strict SQL dialect compiler for ${dialect.toUpperCase()}.`,
+    "Convert or repair the source SQL to the target dialect while preserving business intent.",
+    "",
+    "Hard constraints:",
+    "- Exactly one SELECT statement (or WITH ... SELECT).",
+    "- No semicolons.",
+    "- No comments.",
+    "- No write operations.",
+    "- No DDL or COPY.",
+    "- Use only provided allowlisted schemas/tables.",
+    "",
+    "Return strict JSON only:",
+    '{"sql":"SELECT ...","rationale":"short compilation note"}'
+  ].join("\n");
+}
+
+function dialectCompilerUserPrompt(input: {
+  sql: string;
+  dialect: SqlDialect;
+  allowed_relations: string[];
+  allowed_schemas: string[];
+  catalog_summary?: string;
+  question?: string;
+}): string {
+  return [
+    `TARGET_DIALECT: ${normalizeSqlDialect(input.dialect)}`,
+    input.question ? `QUESTION: ${input.question}` : "",
+    `ALLOWED_RELATIONS: ${input.allowed_relations.join(", ") || "(none)"}`,
+    `ALLOWED_SCHEMAS: ${input.allowed_schemas.join(", ") || "(none)"}`,
+    "",
+    "CATALOG_SUMMARY:",
+    input.catalog_summary && input.catalog_summary.trim().length > 0
+      ? input.catalog_summary
+      : "(none)",
+    "",
+    "SOURCE_SQL:",
+    input.sql
+  ]
+    .filter((line) => line.length > 0)
+    .join("\n");
 }
 
 // ---------------------------------------------------------------------------
@@ -918,6 +1058,7 @@ function reportComposerSystemPrompt(input: ReportComposerInput): string {
     "- Each analysis section should have a clear heading, key finding callout, and supporting data.",
     "- Include a summary section at the top with the most important 2-3 takeaways.",
     "- End with a clear 'Recommended Actions' section.",
+    "- Add a 'Metric Definitions' section when metric_definitions are provided.",
     "- Use the Sora or system font stack for clean rendering.",
     "- The report must be printable and look good as a PDF.",
     "- Do NOT mention confidence scores, confidence thresholds, or confidence percentages in customer-facing content.",
@@ -927,6 +1068,16 @@ function reportComposerSystemPrompt(input: ReportComposerInput): string {
 }
 
 function reportComposerUserPrompt(input: ReportComposerInput): string {
+  const metricDefinitions = (input.metric_definitions ?? [])
+    .map(
+      (metric, index) =>
+        `${index + 1}. ${metric.display_name} (${metric.metric_key}): ${metric.definition}` +
+        ((metric.source_columns ?? []).length > 0
+          ? ` [columns: ${(metric.source_columns ?? []).join(", ")}]`
+          : "")
+    )
+    .join("\n");
+
   const sections = input.analyses.map((a, i) => [
     `--- Analysis ${i + 1}: ${a.question} ---`,
     `Key findings: ${a.highlights.join("; ") || "None"}`,
@@ -940,6 +1091,9 @@ function reportComposerUserPrompt(input: ReportComposerInput): string {
     `Audience: ${input.audience}`,
     `Report type: ${input.insight_mode === "data" ? "Data Quality Assessment" : "Business Insights Report"}`,
     "",
+    "METRIC DEFINITIONS:",
+    metricDefinitions.length > 0 ? metricDefinitions : "(none provided)",
+    "",
     "ANALYSIS RESULTS:",
     sections,
     "",
@@ -948,6 +1102,15 @@ function reportComposerUserPrompt(input: ReportComposerInput): string {
 }
 
 function renderStubReportHtml(input: ReportComposerInput): string {
+  const metricDefinitions = (input.metric_definitions ?? [])
+    .map((metric) => {
+      const sourceColumns = (metric.source_columns ?? []).length > 0
+        ? `<span class="metric-source">source: ${(metric.source_columns ?? []).map((column) => escapeHtml(column)).join(", ")}</span>`
+        : `<span class="metric-source">source: derived</span>`;
+      return `<li><strong>${escapeHtml(metric.display_name)}</strong>: ${escapeHtml(metric.definition)} ${sourceColumns}</li>`;
+    })
+    .join("");
+
   const analysisHtml = input.analyses.map((a) => {
     const highlights = a.highlights.map((h) => `<li>${escapeHtml(h)}</li>`).join("");
     const risks = a.risks.map((r) => `<li>${escapeHtml(r)}</li>`).join("");
@@ -977,11 +1140,16 @@ function renderStubReportHtml(input: ReportComposerInput): string {
   .analysis-card ul{padding-left:18px;margin:4px 0}
   .analysis-card li{margin-bottom:4px;font-size:0.88rem;line-height:1.5}
   .data-note{font-size:0.8rem;color:#64748b;margin-top:12px;padding:8px;background:#f1f5f9;border-radius:6px}
+  .metric-definitions{background:#fff;border:1px solid #dbeafe;border-radius:10px;padding:18px;margin-bottom:16px}
+  .metric-definitions h2{margin:0 0 10px;font-size:1rem;color:#1e3a8a}
+  .metric-definitions li{margin-bottom:6px;line-height:1.45}
+  .metric-source{color:#64748b;font-size:0.8rem}
 </style></head><body>
   <div class="header">
     <h1>${escapeHtml(input.title)}</h1>
     <p>${escapeHtml(typeLabel)} | ${escapeHtml(input.audience)} audience</p>
   </div>
+  ${metricDefinitions.length > 0 ? `<section class="metric-definitions"><h2>Metric Definitions</h2><ul>${metricDefinitions}</ul></section>` : ""}
   ${analysisHtml}
 </body></html>`;
 }
@@ -1305,6 +1473,24 @@ function parseJsonObjectFromText(text: string): Record<string, unknown> {
   }
 }
 
+function parseDialectCompileOutput(value: unknown): { sql: string; rationale: string } {
+  if (!isRecord(value)) {
+    throw new Error("Dialect compiler output must be an object.");
+  }
+
+  const sql = typeof value.sql === "string" ? value.sql.trim() : "";
+  if (sql.length === 0) {
+    throw new Error("Dialect compiler output missing sql.");
+  }
+
+  const rationale =
+    typeof value.rationale === "string" && value.rationale.trim().length > 0
+      ? value.rationale.trim()
+      : "Dialect compiler normalized SQL for execution.";
+
+  return { sql, rationale };
+}
+
 function extractFirstJsonObject(text: string): string | null {
   const start = text.indexOf("{");
   if (start < 0) {
@@ -1348,6 +1534,36 @@ function extractFirstJsonObject(text: string): string | null {
   }
 
   return null;
+}
+
+function normalizeSqlDialect(value: SqlDialect | string | undefined): SqlDialect {
+  if (!value) {
+    return "postgres";
+  }
+
+  const normalized = String(value).trim().toLowerCase();
+  if (normalized === "mysql") {
+    return "mysql";
+  }
+  if (normalized === "snowflake") {
+    return "snowflake";
+  }
+  if (normalized === "bigquery") {
+    return "bigquery";
+  }
+  return "postgres";
+}
+
+function normalizeSingleSelectStatement(sql: string): string {
+  const fenced = sql.match(/```(?:sql)?\s*\n?([\s\S]*?)```/i);
+  const extracted = fenced ? fenced[1] : sql;
+  const firstStatement = extracted
+    .split(";")
+    .map((segment) => segment.trim())
+    .filter((segment) => segment.length > 0)[0];
+
+  const normalized = (firstStatement ?? extracted).trim();
+  return normalized.replace(/;+\s*$/g, "");
 }
 
 function parseProvider(rawProvider: string | LlmProvider | undefined): LlmProvider {

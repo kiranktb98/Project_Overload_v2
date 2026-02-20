@@ -6,7 +6,7 @@ export const ReportGuardrailsSchema = z.object({
   max_batches: z.number().int().min(1).max(MAX_BATCHES).default(MAX_BATCHES),
   allowed_relations: z.array(z.string().min(1)).default([]),
   allowed_schemas: z.array(z.string().min(1)).default([]),
-  timeout_ms: z.number().int().min(100).max(120000).default(15000),
+  timeout_ms: z.number().int().min(100).max(900000).default(900000),
   deny_write: z.literal(true).default(true)
 });
 
@@ -30,6 +30,17 @@ export const ReportContractSchema = z.object({
   schedule_cron: z.string().min(1).nullable(),
   sql_template: z.string().min(1),
   metric_ids: z.array(z.string().min(1)).default([]),
+  metric_definitions: z
+    .array(
+      z.object({
+        metric_key: z.string().min(1),
+        display_name: z.string().min(1),
+        definition: z.string().min(1),
+        source_type: z.enum(["column", "derived"]).default("derived"),
+        source_columns: z.array(z.string().min(1)).default([])
+      })
+    )
+    .optional(),
   dimension_ids: z.array(z.string().min(1)).default([]),
   insight_mode: InsightModeSchema,
   delivery: ReportContractDeliverySchema.optional(),

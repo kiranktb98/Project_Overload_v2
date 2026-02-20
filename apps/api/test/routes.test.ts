@@ -157,6 +157,76 @@ describe("api semantic and run flow", () => {
     await app.close();
   }, 20000);
 
+  it("falls back to HTML download when PDF rendering is unavailable", async () => {
+    const previousChromePath = process.env.CHROME_PATH;
+    process.env.CHROME_PATH = "Z:\\missing\\chrome.exe";
+
+    const store = new InMemoryMetadataStore();
+    const dataPlane = new LocalStubDataPlane({
+      row_provider: () =>
+        Array.from({ length: 300 }, (_, index) => ({
+          customer_id: `c_${(index % 10) + 1}`,
+          customer_email: `c_${(index % 10) + 1}@example.com`,
+          amount: (index % 35) + 1,
+          region: ["NA", "EU", "APAC"][index % 3],
+          order_id: `o_${index + 1}`
+        }))
+    });
+
+    const app = await buildApiApp({
+      store,
+      data_plane: dataPlane,
+      analyst_client: createStubAnalystClient(),
+      query_strategist: createStubQueryStrategistClient(),
+      report_composer: createStubReportComposerClient(),
+      planner_client: createStubPlannerClient()
+    });
+
+    try {
+      const contractCreate = await app.inject({
+        method: "POST",
+        url: "/report-contracts",
+        payload: {
+          id: "contract_pdf_html_fallback",
+          name: "PDF fallback report",
+          audience: "CEO",
+          timezone: "UTC",
+          schedule_cron: null,
+          sql_template: "SELECT * FROM analytics.sales",
+          guardrails: {
+            evidence_row_cap: 200,
+            max_batches: 5,
+            allowed_relations: ["analytics.sales"],
+            allowed_schemas: ["analytics"],
+            timeout_ms: 10000,
+            deny_write: true
+          }
+        }
+      });
+      expect(contractCreate.statusCode).toBe(201);
+
+      const runContract = await app.inject({
+        method: "POST",
+        url: "/report-contracts/contract_pdf_html_fallback/run"
+      });
+      expect(runContract.statusCode).toBe(200);
+      const body = runContract.json();
+
+      const runPdf = await app.inject({
+        method: "GET",
+        url: `/report-runs/${body.run_id}/pdf`
+      });
+
+      expect(runPdf.statusCode).toBe(200);
+      expect(runPdf.headers["content-type"]).toContain("text/html");
+      expect(runPdf.headers["x-report-fallback"]).toBe("html");
+      expect(runPdf.body.toLowerCase()).toContain("<html");
+    } finally {
+      process.env.CHROME_PATH = previousChromePath;
+      await app.close();
+    }
+  });
+
   it("accepts manual run request with empty JSON body", async () => {
     const store = new InMemoryMetadataStore();
     const dataPlane = new LocalStubDataPlane({

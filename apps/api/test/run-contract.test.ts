@@ -6,7 +6,7 @@ import {
   createStubPlannerClient,
   createStubReportComposerClient
 } from "@project-overload/llm-client";
-import type { AnalystClient, QueryStrategistClient } from "@project-overload/llm-client";
+import type { AnalystClient, QueryStrategistClient, ReportComposerClient } from "@project-overload/llm-client";
 import type { QueryStrategyOutput, ReportContract } from "@project-overload/shared";
 import { InMemoryMetadataStore } from "../src/store/create-store";
 import {
@@ -306,6 +306,47 @@ describe("run pipeline", () => {
     expect(result.token_usage.total_tokens).toBeGreaterThanOrEqual(0);
   });
 
+  it("falls back to deterministic HTML when composer is temporarily unavailable", async () => {
+    const strategist = fixedStrategist([
+      { question: "Q1", sql: "SELECT * FROM public.sales", purpose: "Test" }
+    ]);
+    const flakyComposer: ReportComposerClient = {
+      provider: "openrouter",
+      async composeReport() {
+        throw new Error("fetch failed");
+      },
+      drainUsageEvents() {
+        return [];
+      }
+    };
+
+    const result = await runReportContractPipeline({
+      contract: makeContract({
+        metric_definitions: [
+          {
+            metric_key: "refund_rate",
+            display_name: "Refund Rate",
+            definition: "refunded_orders / total_orders",
+            source_type: "derived",
+            source_columns: ["status", "order_id"]
+          }
+        ]
+      }),
+      store: new InMemoryMetadataStore(),
+      data_plane: new LocalStubDataPlane({ row_provider: () => makeRows(60) }),
+      analyst_client: createStubAnalystClient(),
+      query_strategist: strategist,
+      report_composer: flakyComposer,
+      planner_client: createStubPlannerClient(),
+      catalog_summary: "public.sales"
+    });
+
+    expect(result.run.status).toBe("succeeded");
+    expect(result.html.toLowerCase()).toContain("<html");
+    expect(result.html).toContain("Metric Definitions");
+    expect(result.html).toContain("Refund Rate");
+  });
+
   it("computes deltas against previous run", async () => {
     const strategist = fixedStrategist([
       { question: "Q1", sql: "SELECT * FROM public.sales", purpose: "Test" }
@@ -364,6 +405,49 @@ describe("data preparation", () => {
     expect(result.prepared_payloads[1].question_number).toBe(2);
     expect(result.prepared_payloads[0].validation).toBeDefined();
     expect(result.planner_summary.length).toBeGreaterThan(0);
+  });
+
+  it("applies LLM dialect compiler before executing prepared SQL", async () => {
+    const compileCalls: Array<{ dialect: string; sql: string }> = [];
+    const strategist: QueryStrategistClient = {
+      provider: "stub",
+      async planQueries() {
+        return {
+          queries: [
+            {
+              question: "Last 30 days sales",
+              sql: "SELECT * FROM public.sales WHERE event_time >= CURRENT_DATE - INTERVAL '30 days'",
+              purpose: "Windowed sales pull"
+            }
+          ]
+        };
+      },
+      async compileSql(input) {
+        compileCalls.push({
+          dialect: input.dialect,
+          sql: input.sql
+        });
+        return {
+          sql: "SELECT id, amount, region, event_time FROM public.sales LIMIT 80",
+          rationale: "Converted to mysql-compatible window strategy."
+        };
+      }
+    };
+
+    const result = await prepareReportContractData({
+      contract: makeContract(),
+      store: new InMemoryMetadataStore(),
+      data_plane: new LocalStubDataPlane({ row_provider: () => makeRows(120) }),
+      query_strategist: strategist,
+      planner_client: createStubPlannerClient(),
+      catalog_summary: "public.sales",
+      sql_dialect: "mysql"
+    });
+
+    expect(compileCalls.length).toBeGreaterThan(0);
+    expect(compileCalls[0].dialect).toBe("mysql");
+    expect(result.query_details).toHaveLength(1);
+    expect(result.query_details[0].sql).toContain("LIMIT 80");
   });
 
   it("auto-repairs off-allowlist strategist SQL to a safe allowlisted fallback", async () => {

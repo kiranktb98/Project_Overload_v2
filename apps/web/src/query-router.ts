@@ -5,6 +5,7 @@ export type QueryRouterProvider = "stub" | "openai" | "openrouter";
 export type QueryRoutingInput = {
   message: string;
   now_iso: string;
+  sql_dialect?: SqlDialect;
   business_context?: string;
   catalog_summary: string;
   allowed_relations: string[];
@@ -30,6 +31,22 @@ export type QueryRoutingDecision = {
   confidence: number;
 };
 
+export type SqlDialect = "postgres" | "mysql" | "snowflake" | "bigquery";
+
+export type DialectCompileInput = {
+  sql: string;
+  dialect: SqlDialect;
+  user_message: string;
+  allowed_relations: string[];
+  allowed_schemas: string[];
+  catalog_summary: string;
+};
+
+export type DialectCompileOutput = {
+  sql: string;
+  rationale: string;
+};
+
 export type SingleQueryNarrationInput = {
   user_message: string;
   query_id: string;
@@ -44,11 +61,89 @@ export type SingleQueryNarrationInput = {
   rows_preview: Array<Record<string, unknown>>;
 };
 
+export type ScopeClarificationInput = {
+  user_message: string;
+  mode: "single_query" | "deep_analysis";
+  now_iso: string;
+  business_context?: string;
+  catalog_summary: string;
+  allowed_relations: string[];
+  allowed_schemas: string[];
+  draft_metrics: string[];
+  draft_dimensions: string[];
+  conversation_history: Array<{
+    role: "user" | "assistant";
+    content: string;
+  }>;
+};
+
+export type ScopeClarificationOutput = {
+  questions: Array<{
+    question_number: number;
+    question: string;
+    clarification: string;
+  }>;
+};
+
+export type ScopeAnswerResolutionInput = {
+  user_message: string;
+  now_iso: string;
+  scope_questions: Array<{
+    question_number: number;
+    question: string;
+    clarification: string;
+    answer?: string | null;
+  }>;
+  conversation_history: Array<{
+    role: "user" | "assistant";
+    content: string;
+  }>;
+};
+
+export type ScopeAnswerResolutionOutput = {
+  assignments: Array<{
+    question_number: number;
+    answer: string;
+  }>;
+  unresolved_question_numbers: number[];
+};
+
+export type MetricDefinitionInput = {
+  user_message: string;
+  mode: "single_query" | "deep_analysis";
+  now_iso: string;
+  sql?: string;
+  business_context?: string;
+  catalog_summary: string;
+  allowed_relations: string[];
+  allowed_schemas: string[];
+  conversation_history: Array<{
+    role: "user" | "assistant";
+    content: string;
+  }>;
+};
+
+export type MetricDefinitionOutput = {
+  metrics: Array<{
+    metric_key: string;
+    display_name: string;
+    definition: string;
+    source_type: "column" | "derived";
+    source_columns: string[];
+    requires_confirmation: boolean;
+    confirmation_question?: string;
+  }>;
+};
+
 export interface QueryRouterClient {
   provider: QueryRouterProvider;
   mode: "provider" | "deterministic";
   decide(input: QueryRoutingInput): Promise<QueryRoutingDecision>;
+  compile_sql?(input: DialectCompileInput): Promise<DialectCompileOutput>;
   narrate_single_query?(input: SingleQueryNarrationInput): Promise<string>;
+  scope_clarifications?(input: ScopeClarificationInput): Promise<ScopeClarificationOutput>;
+  resolve_scope_answers?(input: ScopeAnswerResolutionInput): Promise<ScopeAnswerResolutionOutput>;
+  propose_metrics?(input: MetricDefinitionInput): Promise<MetricDefinitionOutput>;
 }
 
 type CreateQueryRouterClientOptions = {
@@ -63,7 +158,7 @@ type CreateQueryRouterClientOptions = {
   fetch_impl?: typeof fetch;
 };
 
-const DEFAULT_TIMEOUT_MS = 15000;
+const DEFAULT_TIMEOUT_MS = 900_000;
 const DEFAULT_OPENROUTER_MODEL = "anthropic/claude-sonnet-4.6";
 const DEFAULT_OPENROUTER_BASE_URL = "https://openrouter.ai/api/v1";
 
@@ -84,6 +179,54 @@ const QueryRoutingDecisionSchema = z
       }
     }
   });
+
+const DialectCompileOutputSchema = z.object({
+  sql: z.string().min(1),
+  rationale: z.string().min(1).default("Dialect compiler normalized SQL.")
+});
+
+const ScopeClarificationOutputSchema = z.object({
+  questions: z
+    .array(
+      z.object({
+        question_number: z.number().int().min(1),
+        question: z.string().min(1),
+        clarification: z.string().min(1)
+      })
+    )
+    .max(8)
+    .default([])
+});
+
+const MetricDefinitionOutputSchema = z.object({
+  metrics: z
+    .array(
+      z.object({
+        metric_key: z.string().min(1),
+        display_name: z.string().min(1),
+        definition: z.string().min(1),
+        source_type: z.enum(["column", "derived"]).default("derived"),
+        source_columns: z.array(z.string().min(1)).default([]),
+        requires_confirmation: z.boolean().default(false),
+        confirmation_question: z.string().optional()
+      })
+    )
+    .max(8)
+    .default([])
+});
+
+const ScopeAnswerResolutionOutputSchema = z.object({
+  assignments: z
+    .array(
+      z.object({
+        question_number: z.number().int().min(1),
+        answer: z.string().min(1)
+      })
+    )
+    .max(12)
+    .default([]),
+  unresolved_question_numbers: z.array(z.number().int().min(1)).max(12).default([])
+});
 
 export function createNoopQueryRouterClient(): QueryRouterClient {
   return {
@@ -107,6 +250,13 @@ export function createQueryRouterClientFromEnv(
     typeof overrides.enabled === "boolean"
       ? overrides.enabled
       : parseBoolean(process.env.WEB_CHAT_LLM_QUERY_ROUTER ?? "true");
+  const timeoutFromEnv = Number.parseInt(
+    process.env.WEB_QUERY_ROUTER_TIMEOUT_MS ??
+      process.env.LLM_TIMEOUT_MS ??
+      process.env.DEFAULT_QUERY_TIMEOUT_MS ??
+      "",
+    10
+  );
 
   const options: CreateQueryRouterClientOptions = {
     provider,
@@ -120,7 +270,7 @@ export function createQueryRouterClientFromEnv(
       process.env.SINGLE_QUERY_MODEL ??
       process.env.MODEL_GPT ??
       DEFAULT_OPENROUTER_MODEL,
-    timeout_ms: overrides.timeout_ms,
+    timeout_ms: overrides.timeout_ms ?? (Number.isNaN(timeoutFromEnv) ? undefined : timeoutFromEnv),
     fetch_impl: overrides.fetch_impl
   };
 
@@ -189,6 +339,55 @@ export function createQueryRouterClient(options: CreateQueryRouterClientOptions)
         };
       }
     },
+    async compile_sql(input: DialectCompileInput): Promise<DialectCompileOutput> {
+      const response = await fetchWithTimeout(
+        fetcher,
+        `${baseUrl}/chat/completions`,
+        {
+          method: "POST",
+          headers: {
+            "content-type": "application/json",
+            Authorization: `Bearer ${options.openrouter_api_key}`,
+            ...(options.openrouter_app_name ? { "X-Title": options.openrouter_app_name } : {}),
+            ...(options.openrouter_app_url ? { "HTTP-Referer": options.openrouter_app_url } : {})
+          },
+          body: JSON.stringify({
+            model,
+            temperature: 0,
+            messages: [
+              { role: "system", content: dialectCompilerSystemPrompt(input.dialect) },
+              { role: "user", content: dialectCompilerUserPrompt(input) }
+            ]
+          })
+        },
+        timeoutMs
+      );
+
+      if (!response.ok) {
+        const body = await response.text();
+        throw new Error(`dialect compiler failed (${response.status}): ${body}`);
+      }
+
+      const payload = (await response.json()) as unknown;
+      const text = extractTextPayload(payload);
+      if (!text) {
+        throw new Error("unable to parse dialect compiler response text");
+      }
+
+      try {
+        const parsed = parseJsonObjectFromText(text);
+        return DialectCompileOutputSchema.parse(parsed);
+      } catch {
+        const sql = normalizeSingleSelectSql(text);
+        if (!/^\s*(select|with)\b/i.test(sql)) {
+          throw new Error("dialect compiler response did not include a valid SELECT statement");
+        }
+        return {
+          sql,
+          rationale: `Compiled SQL for ${input.dialect} dialect.`
+        };
+      }
+    },
     async narrate_single_query(input: SingleQueryNarrationInput): Promise<string> {
       const response = await fetchWithTimeout(
         fetcher,
@@ -225,13 +424,128 @@ export function createQueryRouterClient(options: CreateQueryRouterClientOptions)
       }
 
       return text.trim();
+    },
+    async scope_clarifications(input: ScopeClarificationInput): Promise<ScopeClarificationOutput> {
+      const response = await fetchWithTimeout(
+        fetcher,
+        `${baseUrl}/chat/completions`,
+        {
+          method: "POST",
+          headers: {
+            "content-type": "application/json",
+            Authorization: `Bearer ${options.openrouter_api_key}`,
+            ...(options.openrouter_app_name ? { "X-Title": options.openrouter_app_name } : {}),
+            ...(options.openrouter_app_url ? { "HTTP-Referer": options.openrouter_app_url } : {})
+          },
+          body: JSON.stringify({
+            model,
+            temperature: 0.15,
+            messages: [
+              { role: "system", content: scopeClarificationSystemPrompt(input.mode) },
+              { role: "user", content: scopeClarificationUserPrompt(input) }
+            ]
+          })
+        },
+        timeoutMs
+      );
+
+      if (!response.ok) {
+        const body = await response.text();
+        throw new Error(`scope clarification failed (${response.status}): ${body}`);
+      }
+
+      const payload = (await response.json()) as unknown;
+      const text = extractTextPayload(payload);
+      if (!text) {
+        throw new Error("scope clarification returned empty response");
+      }
+
+      const parsed = parseJsonObjectFromText(text);
+      return ScopeClarificationOutputSchema.parse(parsed);
+    },
+    async resolve_scope_answers(input: ScopeAnswerResolutionInput): Promise<ScopeAnswerResolutionOutput> {
+      const response = await fetchWithTimeout(
+        fetcher,
+        `${baseUrl}/chat/completions`,
+        {
+          method: "POST",
+          headers: {
+            "content-type": "application/json",
+            Authorization: `Bearer ${options.openrouter_api_key}`,
+            ...(options.openrouter_app_name ? { "X-Title": options.openrouter_app_name } : {}),
+            ...(options.openrouter_app_url ? { "HTTP-Referer": options.openrouter_app_url } : {})
+          },
+          body: JSON.stringify({
+            model,
+            temperature: 0.05,
+            messages: [
+              { role: "system", content: scopeAnswerResolutionSystemPrompt() },
+              { role: "user", content: scopeAnswerResolutionUserPrompt(input) }
+            ]
+          })
+        },
+        timeoutMs
+      );
+
+      if (!response.ok) {
+        const body = await response.text();
+        throw new Error(`scope answer resolution failed (${response.status}): ${body}`);
+      }
+
+      const payload = (await response.json()) as unknown;
+      const text = extractTextPayload(payload);
+      if (!text) {
+        throw new Error("scope answer resolution returned empty response");
+      }
+
+      const parsed = parseJsonObjectFromText(text);
+      return ScopeAnswerResolutionOutputSchema.parse(parsed);
+    },
+    async propose_metrics(input: MetricDefinitionInput): Promise<MetricDefinitionOutput> {
+      const response = await fetchWithTimeout(
+        fetcher,
+        `${baseUrl}/chat/completions`,
+        {
+          method: "POST",
+          headers: {
+            "content-type": "application/json",
+            Authorization: `Bearer ${options.openrouter_api_key}`,
+            ...(options.openrouter_app_name ? { "X-Title": options.openrouter_app_name } : {}),
+            ...(options.openrouter_app_url ? { "HTTP-Referer": options.openrouter_app_url } : {})
+          },
+          body: JSON.stringify({
+            model,
+            temperature: 0.1,
+            messages: [
+              { role: "system", content: metricDefinitionSystemPrompt(input.mode) },
+              { role: "user", content: metricDefinitionUserPrompt(input) }
+            ]
+          })
+        },
+        timeoutMs
+      );
+
+      if (!response.ok) {
+        const body = await response.text();
+        throw new Error(`metric definition failed (${response.status}): ${body}`);
+      }
+
+      const payload = (await response.json()) as unknown;
+      const text = extractTextPayload(payload);
+      if (!text) {
+        throw new Error("metric definition returned empty response");
+      }
+
+      const parsed = parseJsonObjectFromText(text);
+      return MetricDefinitionOutputSchema.parse(parsed);
     }
   };
 }
 
 function queryRouterSystemPrompt(): string {
   return [
-    "You are a routing and SQL drafting agent for a PostgreSQL analytics assistant.",
+    "You are a routing and SQL drafting agent for a SQL analytics assistant.",
+    "Use the SQL_DIALECT value provided in user context when drafting SQL.",
     "Decide if the user message should be handled as:",
     "1) single_query: answerable with ONE safe SELECT query",
     "2) deep_analysis: requires multiple questions, comparisons, diagnostics, or multiple queries",
@@ -263,6 +577,7 @@ function queryRouterUserPrompt(input: QueryRoutingInput): string {
 
   return [
     `CURRENT_UTC: ${input.now_iso}`,
+    `SQL_DIALECT: ${input.sql_dialect ?? "postgres"}`,
     `USER_MESSAGE: ${input.message}`,
     "",
     "DRAFT_CONTEXT:",
@@ -279,6 +594,38 @@ function queryRouterUserPrompt(input: QueryRoutingInput): string {
     "",
     "RECENT_CONVERSATION:",
     history.length > 0 ? history : "(empty)"
+  ].join("\n");
+}
+
+function dialectCompilerSystemPrompt(dialect: SqlDialect): string {
+  return [
+    `You are a strict SQL dialect compiler for ${dialect.toUpperCase()}.`,
+    "Convert or repair source SQL to target dialect while preserving intent.",
+    "",
+    "Hard constraints:",
+    "- Exactly one SELECT statement (or WITH ... SELECT).",
+    "- No semicolons.",
+    "- No comments.",
+    "- No write operations or DDL.",
+    "- Use only provided allowlisted schemas/tables.",
+    "",
+    "Return strict JSON only:",
+    '{"sql":"SELECT ...","rationale":"short compilation note"}'
+  ].join("\n");
+}
+
+function dialectCompilerUserPrompt(input: DialectCompileInput): string {
+  return [
+    `TARGET_DIALECT: ${input.dialect}`,
+    `USER_MESSAGE: ${input.user_message}`,
+    `ALLOWED_RELATIONS: ${input.allowed_relations.join(", ") || "(none)"}`,
+    `ALLOWED_SCHEMAS: ${input.allowed_schemas.join(", ") || "(none)"}`,
+    "",
+    "CATALOG_SUMMARY:",
+    input.catalog_summary && input.catalog_summary.trim().length > 0 ? input.catalog_summary : "(none)",
+    "",
+    "SOURCE_SQL:",
+    input.sql
   ].join("\n");
 }
 
@@ -306,6 +653,130 @@ function singleQueryNarratorUserPrompt(input: SingleQueryNarrationInput): string
     "",
     "INPUT_JSON:",
     JSON.stringify(input)
+  ].join("\n");
+}
+
+function scopeClarificationSystemPrompt(mode: ScopeClarificationInput["mode"]): string {
+  return [
+    "You are a senior analytics scoping assistant.",
+    `Mode: ${mode}.`,
+    "Write natural, thoughtful clarifying questions a strong analyst would ask before execution.",
+    "The questions must sound conversational, not like a template.",
+    "For each scoped question include one precise clarification request that reduces ambiguity.",
+    "If the request is already unambiguous for execution, return an empty questions array.",
+    "When timeframe/comparison/filter details are already explicit, avoid re-asking them.",
+    "Return strict JSON only:",
+    '{"questions":[{"question_number":1,"question":"...","clarification":"..."}]}',
+    "No markdown and no extra keys."
+  ].join("\n");
+}
+
+function scopeClarificationUserPrompt(input: ScopeClarificationInput): string {
+  const history = input.conversation_history
+    .slice(-8)
+    .map((turn) => `${turn.role}: ${turn.content}`)
+    .join("\n");
+
+  return [
+    `CURRENT_UTC: ${input.now_iso}`,
+    `MODE: ${input.mode}`,
+    `USER_MESSAGE: ${input.user_message}`,
+    `DRAFT_METRICS: ${input.draft_metrics.join(", ") || "(none)"}`,
+    `DRAFT_DIMENSIONS: ${input.draft_dimensions.join(", ") || "(none)"}`,
+    `ALLOWED_RELATIONS: ${input.allowed_relations.join(", ") || "(none)"}`,
+    `ALLOWED_SCHEMAS: ${input.allowed_schemas.join(", ") || "(none)"}`,
+    "",
+    "BUSINESS_CONTEXT:",
+    input.business_context && input.business_context.trim().length > 0 ? input.business_context : "(none)",
+    "",
+    "CATALOG_SUMMARY:",
+    input.catalog_summary,
+    "",
+    "RECENT_CONVERSATION:",
+    history.length > 0 ? history : "(empty)"
+  ].join("\n");
+}
+
+function scopeAnswerResolutionSystemPrompt(): string {
+  return [
+    "You are a scope-answer reconciliation assistant.",
+    "Map the latest user reply to the pending scoped questions.",
+    "The user can answer one, many, or all questions in one message.",
+    "Use explicit references (Q1/Q2) and implicit intent.",
+    "Do not invent answers. Only assign when the reply gives enough detail.",
+    "Keep extracted answers concise and execution-ready.",
+    "Return strict JSON only:",
+    '{"assignments":[{"question_number":1,"answer":"..."}],"unresolved_question_numbers":[2,3]}',
+    "No markdown and no extra keys."
+  ].join("\n");
+}
+
+function scopeAnswerResolutionUserPrompt(input: ScopeAnswerResolutionInput): string {
+  const history = input.conversation_history
+    .slice(-10)
+    .map((turn) => `${turn.role}: ${turn.content}`)
+    .join("\n");
+  const questions = input.scope_questions
+    .map((entry) => ({
+      question_number: entry.question_number,
+      question: entry.question,
+      clarification: entry.clarification,
+      existing_answer: entry.answer ?? null
+    }))
+    .map((entry) => JSON.stringify(entry))
+    .join("\n");
+
+  return [
+    `CURRENT_UTC: ${input.now_iso}`,
+    "PENDING_SCOPE_QUESTIONS_JSONL:",
+    questions.length > 0 ? questions : "(none)",
+    "",
+    `USER_REPLY: ${input.user_message}`,
+    "",
+    "RECENT_CONVERSATION:",
+    history.length > 0 ? history : "(empty)"
+  ].join("\n");
+}
+
+function metricDefinitionSystemPrompt(mode: MetricDefinitionInput["mode"]): string {
+  return [
+    "You are a metric-definition guardrail agent for a governed analytics product.",
+    `Mode: ${mode}.`,
+    "Return ONLY metrics that are truly ambiguous and need explicit business confirmation before execution.",
+    "Do not create metric variants (M1/M2/M3) for timeline windows, trend slices, or comparison periods.",
+    "If the request can be satisfied with straightforward aggregates on known columns, return metrics: [].",
+    "Mark requires_confirmation=true only when the metric definition is materially ambiguous (for example denominator, status inclusion, or formula intent).",
+    "If metric can map directly to one clear column aggregate (e.g., SUM(order_amount)), requires_confirmation must be false.",
+    "Return at most 2 metrics.",
+    "For requires_confirmation=true, include confirmation_question written in natural language.",
+    "Return strict JSON only:",
+    '{"metrics":[{"metric_key":"...","display_name":"...","definition":"...","source_type":"column|derived","source_columns":["..."],"requires_confirmation":true,"confirmation_question":"..."}]}',
+    "No markdown and no extra keys."
+  ].join("\n");
+}
+
+function metricDefinitionUserPrompt(input: MetricDefinitionInput): string {
+  const history = input.conversation_history
+    .slice(-8)
+    .map((turn) => `${turn.role}: ${turn.content}`)
+    .join("\n");
+
+  return [
+    `CURRENT_UTC: ${input.now_iso}`,
+    `MODE: ${input.mode}`,
+    `USER_MESSAGE: ${input.user_message}`,
+    `SQL_DRAFT: ${input.sql ?? "(none)"}`,
+    `ALLOWED_RELATIONS: ${input.allowed_relations.join(", ") || "(none)"}`,
+    `ALLOWED_SCHEMAS: ${input.allowed_schemas.join(", ") || "(none)"}`,
+    "",
+    "BUSINESS_CONTEXT:",
+    input.business_context && input.business_context.trim().length > 0 ? input.business_context : "(none)",
+    "",
+    "CATALOG_SUMMARY:",
+    input.catalog_summary,
+    "",
+    "RECENT_CONVERSATION:",
+    history.length > 0 ? history : "(empty)"
   ].join("\n");
 }
 
@@ -401,6 +872,16 @@ function parseJsonObjectFromText(text: string): unknown {
   }
 
   return JSON.parse(trimmed.slice(open, close + 1));
+}
+
+function normalizeSingleSelectSql(text: string): string {
+  const fenced = text.match(/```(?:sql)?\s*\n?([\s\S]*?)```/i);
+  const extracted = fenced ? fenced[1] : text;
+  const firstStatement = extracted
+    .split(";")
+    .map((segment) => segment.trim())
+    .filter((segment) => segment.length > 0)[0];
+  return (firstStatement ?? extracted).trim().replace(/;+\s*$/g, "");
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {

@@ -7,6 +7,7 @@ import {
   type ReportContract,
   type ReportRun
 } from "@project-overload/shared";
+import { renderExecBriefHtml } from "@project-overload/report-render";
 import type { DataPlane } from "@project-overload/dataplane";
 import type {
   AnalystClient,
@@ -17,7 +18,7 @@ import type {
   TokenUsageEvent
 } from "@project-overload/llm-client";
 import { extractReferencedRelations } from "@project-overload/sql-guard";
-import type { BatchAnalysis, PlannerOutput, QueryStrategyOutput } from "@project-overload/shared";
+import type { BatchAnalysis, PlannerOutput, QueryStrategyOutput, SqlDialect } from "@project-overload/shared";
 import type { MetadataStore } from "../store";
 
 const PREPARATION_ROW_CAP = 10_000;
@@ -27,6 +28,7 @@ const PREPARATION_SAMPLE_ROW_CAP = 5;
 const MAX_SQL_REPAIR_ATTEMPTS = 3;
 const MIN_QUERY_QUALITY_SCORE = 45;
 const MIN_ANALYSIS_GROUNDING_SCORE = 0.45;
+const DEFAULT_SQL_DIALECT: SqlDialect = "postgres";
 
 type CatalogModel = {
   table_columns: Map<string, Set<string>>;
@@ -207,6 +209,24 @@ function resolveCatalogColumnsForRelation(catalogModel: CatalogModel, relation: 
   return null;
 }
 
+function normalizeSqlDialect(value: SqlDialect | string | undefined): SqlDialect {
+  if (!value) {
+    return DEFAULT_SQL_DIALECT;
+  }
+
+  const normalized = String(value).trim().toLowerCase();
+  if (normalized === "mysql") {
+    return "mysql";
+  }
+  if (normalized === "snowflake") {
+    return "snowflake";
+  }
+  if (normalized === "bigquery") {
+    return "bigquery";
+  }
+  return "postgres";
+}
+
 export async function prepareReportContractData(input: {
   contract: ReportContract;
   tenant_id?: string;
@@ -215,17 +235,20 @@ export async function prepareReportContractData(input: {
   query_strategist: QueryStrategistClient;
   planner_client: PlannerClient;
   catalog_summary: string;
+  sql_dialect?: SqlDialect;
 }): Promise<DataPreparationResult> {
   const tenantId = input.tenant_id ?? input.contract.tenant_id ?? "default";
   const tokenUsage = createTokenUsageAccumulator();
   const insightMode = input.contract.insight_mode ?? "business";
+  const sqlDialect = normalizeSqlDialect(input.sql_dialect);
   const catalogModel = parseCatalogSummary(input.catalog_summary);
 
   const storeContext = { tenant_id: tenantId };
   const { plannerContext, plannerSummary } = await runPlannerPhase(
     {
       ...input,
-      tenant_id: tenantId
+      tenant_id: tenantId,
+      sql_dialect: sqlDialect
     },
     insightMode
   );
@@ -244,7 +267,8 @@ export async function prepareReportContractData(input: {
     metric_ids: input.contract.metric_ids,
     dimension_ids: input.contract.dimension_ids,
     allowed_relations: input.contract.guardrails.allowed_relations,
-    planner_context: plannerContext
+    planner_context: plannerContext,
+    sql_dialect: sqlDialect
   });
   collectClientUsage(input.query_strategist, tokenUsage);
 
@@ -275,7 +299,10 @@ export async function prepareReportContractData(input: {
       store: input.store,
       planned_queries: grouped.queries,
       group_id: grouped.group_id,
-      catalog_model: catalogModel
+      catalog_model: catalogModel,
+      query_strategist: input.query_strategist,
+      sql_dialect: sqlDialect,
+      catalog_summary: input.catalog_summary
     });
     preparedPayloads.push(prepared.payload);
     queryDetails.push(...prepared.query_details);
@@ -303,6 +330,7 @@ export async function runReportContractPipeline(input: {
   report_composer: ReportComposerClient;
   planner_client: PlannerClient;
   catalog_summary: string;
+  sql_dialect?: SqlDialect;
 }): Promise<RunReportContractResult> {
   const tenantId = input.tenant_id ?? input.contract.tenant_id ?? "default";
   const startedAt = new Date().toISOString();
@@ -317,7 +345,8 @@ export async function runReportContractPipeline(input: {
     data_plane: input.data_plane,
     query_strategist: input.query_strategist,
     planner_client: input.planner_client,
-    catalog_summary: input.catalog_summary
+    catalog_summary: input.catalog_summary,
+    sql_dialect: normalizeSqlDialect(input.sql_dialect)
   });
   tokenUsage.addReport(preparation.token_usage);
 
@@ -401,18 +430,24 @@ export async function runReportContractPipeline(input: {
       }];
 
   const conciseSummary = buildConciseSummary(input.contract.name, analyses);
-
-  const html = await input.report_composer.composeReport({
-    title: input.contract.name,
-    audience: input.contract.audience,
-    insight_mode: insightMode,
-    analyses,
-    catalog_summary: input.catalog_summary || ""
-  });
-  collectClientUsage(input.report_composer, tokenUsage);
-
+  const metricDefinitions = buildRunMetricDefinitions(input.contract);
   const previousRun = await input.store.getLatestReportRun(input.contract.id, storeContext);
   const execBrief = buildExecBrief(analyses, input.contract.name, startedAt, previousRun);
+
+  const html = await composeReportHtmlWithFallback({
+    report_composer: input.report_composer,
+    compose_input: {
+      title: input.contract.name,
+      audience: input.contract.audience,
+      insight_mode: insightMode,
+      metric_definitions: metricDefinitions,
+      analyses,
+      catalog_summary: input.catalog_summary || ""
+    },
+    fallback_exec_brief: execBrief,
+    metric_definitions: metricDefinitions
+  });
+  collectClientUsage(input.report_composer, tokenUsage);
   const analysisPayloads: AnalysisPayload[] = scoredAnalyses.map((item) => ({
     question_id: item.question_id,
     question: item.entry.question,
@@ -436,6 +471,7 @@ export async function runReportContractPipeline(input: {
       strategy_queries: preparation.query_details,
       insight_mode: insightMode,
       previous_run_id: previousRun?.id ?? null,
+      metric_definitions: metricDefinitions,
       prepared_payloads: preparation.prepared_payloads.map(toPreparedPayloadPublic),
       analysis_payloads: analysisPayloads
     },
@@ -584,6 +620,9 @@ async function runDataPreparationAgent(input: {
   planned_queries: PlannedStrategyQuery[];
   group_id?: string;
   catalog_model: CatalogModel;
+  query_strategist: QueryStrategistClient;
+  sql_dialect: SqlDialect;
+  catalog_summary: string;
 }): Promise<{
   payload: PreparedQuestionPayload;
   query_details: DataPreparationResult["query_details"];
@@ -622,7 +661,10 @@ async function runDataPreparationAgent(input: {
       question: planned.question,
       source_sql: planned.sql,
       row_cap: PREPARATION_ROW_CAP,
-      catalog_model: input.catalog_model
+      catalog_model: input.catalog_model,
+      query_strategist: input.query_strategist,
+      sql_dialect: input.sql_dialect,
+      catalog_summary: input.catalog_summary
     });
 
     preparationSqls.push(result.sql);
@@ -793,6 +835,9 @@ async function runPreparedQueryWithHardening(input: {
   source_sql: string;
   row_cap: number;
   catalog_model: CatalogModel;
+  query_strategist: QueryStrategistClient;
+  sql_dialect: SqlDialect;
+  catalog_summary: string;
 }): Promise<PreparedQueryExecutionResult> {
   const candidates = buildQueryCandidates(input.source_sql, input.contract, input.row_cap);
   if (candidates.length === 0) {
@@ -818,8 +863,31 @@ async function runPreparedQueryWithHardening(input: {
 
   for (const [index, candidateSql] of candidates.slice(0, MAX_SQL_REPAIR_ATTEMPTS).entries()) {
     attempts += 1;
-    const quality = scoreQueryQuality({
+    const compiledCandidate = await compileSqlForDialect({
+      query_strategist: input.query_strategist,
       sql: candidateSql,
+      dialect: input.sql_dialect,
+      question: input.question,
+      contract: input.contract,
+      catalog_summary: input.catalog_summary
+    });
+
+    let executableCandidateSql: string;
+    try {
+      executableCandidateSql = sanitizeLlmSql(compiledCandidate.sql, input.row_cap);
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "Dialect compiler output was not executable.";
+      warnings.push(`Candidate ${index + 1} compiler output rejected: ${message}`);
+      lastError = message;
+      continue;
+    }
+
+    if (compiledCandidate.compiled && executableCandidateSql !== candidateSql) {
+      warnings.push(`Candidate ${index + 1} compiled for ${input.sql_dialect} dialect.`);
+    }
+
+    const quality = scoreQueryQuality({
+      sql: executableCandidateSql,
       question: input.question,
       contract: input.contract,
       catalog_model: input.catalog_model
@@ -840,7 +908,7 @@ async function runPreparedQueryWithHardening(input: {
       data_plane: input.data_plane,
       store: input.store,
       question: input.question,
-      sql: candidateSql
+      sql: executableCandidateSql
     });
     if (preflight.error) {
       warnings.push(`Candidate ${index + 1} preflight failed: ${preflight.error}`);
@@ -854,7 +922,7 @@ async function runPreparedQueryWithHardening(input: {
       data_plane: input.data_plane,
       store: input.store,
       question: input.question,
-      sql: candidateSql,
+      sql: executableCandidateSql,
       row_cap: input.row_cap
     });
 
@@ -863,7 +931,7 @@ async function runPreparedQueryWithHardening(input: {
         warnings.push(`Auto-repaired SQL using fallback candidate ${index + 1}.`);
       }
       return {
-        sql: candidateSql,
+        sql: executableCandidateSql,
         rows: execution.rows,
         error: null,
         warnings,
@@ -884,6 +952,38 @@ async function runPreparedQueryWithHardening(input: {
     quality: lastQuality,
     attempts
   };
+}
+
+async function compileSqlForDialect(input: {
+  query_strategist: QueryStrategistClient;
+  sql: string;
+  dialect: SqlDialect;
+  question: string;
+  contract: ReportContract;
+  catalog_summary: string;
+}): Promise<{ sql: string; compiled: boolean }> {
+  const normalizedSql = input.sql.trim();
+  if (!input.query_strategist.compileSql) {
+    return { sql: normalizedSql, compiled: false };
+  }
+
+  try {
+    const compiled = await input.query_strategist.compileSql({
+      sql: normalizedSql,
+      dialect: normalizeSqlDialect(input.dialect),
+      question: input.question,
+      allowed_relations: [...input.contract.guardrails.allowed_relations],
+      allowed_schemas: [...input.contract.guardrails.allowed_schemas],
+      catalog_summary: input.catalog_summary
+    });
+
+    return {
+      sql: compiled.sql,
+      compiled: compiled.sql.trim() !== normalizedSql
+    };
+  } catch {
+    return { sql: normalizedSql, compiled: false };
+  }
 }
 
 function buildQueryCandidates(sourceSql: string, contract: ReportContract, rowCap: number): string[] {
@@ -2011,7 +2111,9 @@ async function runPlannerPhase(
     store: MetadataStore;
     data_plane: DataPlane;
     planner_client: PlannerClient;
+    query_strategist: QueryStrategistClient;
     catalog_summary: string;
+    sql_dialect: SqlDialect;
   },
   insightMode: "business" | "data"
 ): Promise<{ plannerContext: string; plannerSummary: string }> {
@@ -2040,7 +2142,15 @@ async function runPlannerPhase(
   const explorationResults: string[] = [];
   for (const eq of exploration.queries) {
     try {
-      const safeSql = sanitizeLlmSql(eq.sql, 50);
+      const compiled = await compileSqlForDialect({
+        query_strategist: input.query_strategist,
+        sql: eq.sql,
+        dialect: input.sql_dialect,
+        question: `${eq.purpose} (${eq.query_type})`,
+        contract: input.contract,
+        catalog_summary: input.catalog_summary
+      });
+      const safeSql = sanitizeLlmSql(compiled.sql, 50);
       const result = await input.data_plane.execute({
         request_id: `${input.contract.id}_explore_${randomUUID().slice(0, 8)}`,
         sql: safeSql,
@@ -2055,7 +2165,7 @@ async function runPlannerPhase(
 
       const preview = result.rows.slice(0, 20).map((row) => JSON.stringify(row)).join("\n");
       explorationResults.push(
-        `--- ${eq.purpose} (${eq.query_type}) ---\n${eq.sql}\nRows returned: ${result.row_count}\n${preview}`
+        `--- ${eq.purpose} (${eq.query_type}) ---\n${safeSql}\nRows returned: ${result.row_count}\n${preview}`
       );
     } catch (error) {
       const message = error instanceof Error ? error.message : "query failed";
@@ -2140,6 +2250,160 @@ function sanitizeLlmSql(rawSql: string, fallbackLimit: number): string {
   }
 
   return sql;
+}
+
+function buildRunMetricDefinitions(contract: ReportContract): Array<{
+  metric_key: string;
+  display_name: string;
+  definition: string;
+  source_type: "column" | "derived";
+  source_columns: string[];
+}> {
+  const fromContract = Array.isArray(contract.metric_definitions)
+    ? contract.metric_definitions
+    : [];
+
+  const normalized = fromContract
+    .map((metric) => {
+      const sourceType: "column" | "derived" =
+        metric.source_type === "column" ? "column" : "derived";
+      return {
+        metric_key: String(metric.metric_key ?? "").trim(),
+        display_name: String(metric.display_name ?? "").trim(),
+        definition: String(metric.definition ?? "").trim(),
+        source_type: sourceType,
+        source_columns: Array.isArray(metric.source_columns)
+          ? metric.source_columns
+              .map((column) => String(column).trim())
+              .filter((column) => column.length > 0)
+          : []
+      };
+    })
+    .filter(
+      (metric) =>
+        metric.metric_key.length > 0 &&
+        metric.display_name.length > 0 &&
+        metric.definition.length > 0
+    );
+
+  if (normalized.length > 0) {
+    return normalized;
+  }
+
+  return contract.metric_ids.slice(0, 6).map((metricId) => {
+    const display = metricId
+      .replace(/^metric_/i, "")
+      .replace(/_/g, " ")
+      .replace(/\b\w/g, (c) => c.toUpperCase());
+    return {
+      metric_key: metricId,
+      display_name: display,
+      definition: `Metric derived from ${metricId}. Definition was not explicitly confirmed in this run.`,
+      source_type: "derived",
+      source_columns: []
+    };
+  });
+}
+
+async function composeReportHtmlWithFallback(input: {
+  report_composer: ReportComposerClient;
+  compose_input: ReportComposerInput;
+  fallback_exec_brief: ExecBrief;
+  metric_definitions: Array<{
+    metric_key: string;
+    display_name: string;
+    definition: string;
+    source_type: "column" | "derived";
+    source_columns: string[];
+  }>;
+}): Promise<string> {
+  let lastError: unknown;
+
+  for (let attempt = 1; attempt <= 3; attempt += 1) {
+    try {
+      const html = await input.report_composer.composeReport(input.compose_input);
+      if (looksLikeHtmlDocument(html)) {
+        return html;
+      }
+      throw new Error("Report composer returned non-HTML output.");
+    } catch (error) {
+      lastError = error;
+      if (attempt < 3) {
+        await delay(250 * attempt);
+      }
+    }
+  }
+
+  const fallbackHtml = renderExecBriefHtml(input.fallback_exec_brief);
+  return injectMetricDefinitionsIntoHtml(fallbackHtml, input.metric_definitions, lastError);
+}
+
+function looksLikeHtmlDocument(value: string): boolean {
+  const normalized = value.trim().toLowerCase();
+  return normalized.startsWith("<!doctype html") || normalized.startsWith("<html") || normalized.includes("<body");
+}
+
+async function delay(ms: number): Promise<void> {
+  await new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+function injectMetricDefinitionsIntoHtml(
+  html: string,
+  definitions: Array<{
+    metric_key: string;
+    display_name: string;
+    definition: string;
+    source_type: "column" | "derived";
+    source_columns: string[];
+  }>,
+  lastError: unknown
+): string {
+  if (definitions.length === 0) {
+    return html;
+  }
+
+  const hasSection = /metric definitions/i.test(html);
+  const items = definitions
+    .slice(0, 8)
+    .map((definition) => {
+      const sourceLine =
+        definition.source_columns.length > 0
+          ? ` (source: ${definition.source_columns.join(", ")})`
+          : definition.source_type === "column"
+            ? " (source: column metric)"
+            : " (source: derived metric)";
+      return `<li><strong>${escapeHtml(definition.display_name)}</strong>: ${escapeHtml(definition.definition)}${escapeHtml(sourceLine)}</li>`;
+    })
+    .join("");
+
+  const fallbackNote = lastError instanceof Error
+    ? `<p style="margin:0 0 8px 0;color:#6b7280;font-size:12px;">Report renderer fallback used for reliability.</p>`
+    : "";
+  const section = [
+    '<section style="border:1px solid #dbeafe;border-radius:10px;padding:14px;margin:16px 0;background:#f8fbff;">',
+    '<h2 style="margin:0 0 8px 0;font-size:16px;color:#1e3a8a;">Metric Definitions</h2>',
+    fallbackNote,
+    `<ul style="margin:0;padding-left:18px;line-height:1.45;">${items}</ul>`,
+    "</section>"
+  ].join("");
+
+  if (hasSection) {
+    return html;
+  }
+
+  if (/<\/body>/i.test(html)) {
+    return html.replace(/<\/body>/i, `${section}</body>`);
+  }
+  return `${html}\n${section}`;
+}
+
+function escapeHtml(value: string): string {
+  return value
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;")
+    .replace(/'/g, "&#39;");
 }
 
 function buildExecBrief(

@@ -79,8 +79,18 @@ export function buildWebApp(options: WebAppDependencies = {}) {
         query_router: queryRouter
       });
 
-      if (shouldBypassConversationForAction(response.assistant_message, response.state)) {
-        const nextState = appendConversationTurn(response.state, parsed.data.message, response.assistant_message);
+      const bypassForCriticalAction =
+        shouldBypassConversationForAction(response.assistant_message, response.state) &&
+        (isUiControlMessage(parsed.data.message) ||
+          isExecutionOutcomeContext(response.assistant_message) ||
+          isDecisionPendingContext(response.assistant_message));
+      const allowDeterministicBypass = conversationClient.mode !== "provider" || bypassForCriticalAction;
+      if (
+        allowDeterministicBypass &&
+        shouldBypassConversationForAction(response.assistant_message, response.state)
+      ) {
+        const normalizedState = normalizeWorkflowDecisionState(response.state);
+        const nextState = appendConversationTurn(normalizedState, parsed.data.message, response.assistant_message);
         return reply.code(200).send({
           ...response,
           state: nextState,
@@ -105,9 +115,32 @@ export function buildWebApp(options: WebAppDependencies = {}) {
             err: conversationError,
             path: "/api/chat"
           },
-          "Conversation provider failed; returning deterministic action context."
+          "Conversation provider failed."
         );
-        const nextState = appendConversationTurn(response.state, parsed.data.message, response.assistant_message);
+        if (conversationClient.mode === "provider") {
+          let providerFallbackMessage =
+            "I hit a temporary AI connectivity issue while drafting that response. Please retry in a few seconds.";
+          const runMatch = response.assistant_message.match(/Report executed\. Run ID:\s*([a-zA-Z0-9_-]+)/i);
+          if (runMatch?.[1]) {
+            providerFallbackMessage =
+              `Report run completed (Run ID: ${runMatch[1]}), but I hit a temporary AI connectivity issue while drafting the narrative. Please retry in a few seconds.`;
+          } else {
+            const queryMatch = response.assistant_message.match(/Query (?:completed|failed)\. Query ID:\s*([a-zA-Z0-9_-]+)/i);
+            if (queryMatch?.[1]) {
+              providerFallbackMessage =
+                `Query finished (Query ID: ${queryMatch[1]}), but I hit a temporary AI connectivity issue while drafting the explanation. Please retry in a few seconds.`;
+            }
+          }
+          const normalizedState = normalizeWorkflowDecisionState(response.state);
+          const nextState = appendConversationTurn(normalizedState, parsed.data.message, providerFallbackMessage);
+          return reply.code(200).send({
+            ...response,
+            state: nextState,
+            assistant_message: providerFallbackMessage
+          });
+        }
+        const normalizedState = normalizeWorkflowDecisionState(response.state);
+        const nextState = appendConversationTurn(normalizedState, parsed.data.message, response.assistant_message);
         return reply.code(200).send({
           ...response,
           state: nextState,
@@ -121,9 +154,12 @@ export function buildWebApp(options: WebAppDependencies = {}) {
       );
       let stateAfterLlm = response.state;
       if (conversationResponse.draft_updates) {
-        stateAfterLlm = applyLlmDraftUpdates(response.state, conversationResponse.draft_updates);
+        stateAfterLlm = applyLlmDraftUpdates(response.state, conversationResponse.draft_updates, {
+          preserve_prepared_state: hasPendingWorkflowDecision(response.state)
+        });
       }
       stateAfterLlm = syncDecisionStateFromAssistantMessage(stateAfterLlm, aiMessage);
+      stateAfterLlm = normalizeWorkflowDecisionState(stateAfterLlm);
       const nextState = appendConversationTurn(stateAfterLlm, parsed.data.message, aiMessage);
 
       return reply.code(200).send({
@@ -139,9 +175,18 @@ export function buildWebApp(options: WebAppDependencies = {}) {
         });
       }
 
-      return reply.code(400).send({
-        message: error instanceof Error ? error.message : "Chat command failed",
-        state
+      const safeMessage = buildSafeChatFailureMessage(error);
+      app.log.error(
+        {
+          err: error,
+          path: "/api/chat"
+        },
+        "Chat route failed; returning safe fallback message."
+      );
+      const nextState = appendConversationTurn(state, parsed.data.message, safeMessage);
+      return reply.code(200).send({
+        assistant_message: safeMessage,
+        state: nextState
       });
     }
   });
@@ -319,6 +364,32 @@ export function buildWebApp(options: WebAppDependencies = {}) {
   return app;
 }
 
+function isUiControlMessage(message: string): boolean {
+  return /^__ui_[a-z0-9_]+__$/i.test(message.trim());
+}
+
+function isExecutionOutcomeContext(actionContext: string): boolean {
+  return (
+    /^Query completed\. Query ID:/i.test(actionContext) ||
+    /^Query failed\. Query ID:/i.test(actionContext) ||
+    /^Report executed\. Run ID:/i.test(actionContext) ||
+    /^Run execution did not complete\./i.test(actionContext) ||
+    /^Run could not start\./i.test(actionContext) ||
+    /^Data preparation completed/i.test(actionContext) ||
+    /^Data preparation did not complete\./i.test(actionContext) ||
+    /^Preparation could not start yet\./i.test(actionContext)
+  );
+}
+
+function isDecisionPendingContext(actionContext: string): boolean {
+  return (
+    /^Analysis is staged and waiting on the current workflow decision\./i.test(actionContext) ||
+    /^Data preparation decision pending/i.test(actionContext) ||
+    /^Analysis decision pending/i.test(actionContext) ||
+    /^SQL decision pending/i.test(actionContext)
+  );
+}
+
 function enforceExecutionTruth(modelMessage: string, actionContext: string): string {
   const queryExecuted =
     /\bQuery ID:\s*[a-z0-9_-]+\b/i.test(actionContext) ||
@@ -357,10 +428,16 @@ function shouldBypassConversationForAction(actionContext: string, state: unknown
   if (parsedState.pending_single_query_request) {
     return true;
   }
+  if (parsedState.pending_metric_confirmations.length > 0) {
+    return true;
+  }
 
   if (
     parsedState.prep_pending ||
     parsedState.scope_pending ||
+    parsedState.scope_clarification_pending ||
+    parsedState.awaiting_post_run_refinement ||
+    parsedState.refinement_active ||
     parsedState.awaiting_pdf_confirmation ||
     parsedState.awaiting_save_confirmation ||
     parsedState.awaiting_schedule_confirmation ||
@@ -376,6 +453,8 @@ function shouldBypassConversationForAction(actionContext: string, state: unknown
     /^Report executed\. Run ID:/i.test(actionContext) ||
     /^Data preparation completed/i.test(actionContext) ||
     /^Ready to prepare data for:/i.test(actionContext) ||
+    /^Before execution, (please confirm the metric definition|i need one quick metric-definition confirmation)/i.test(actionContext) ||
+    /^Before data preparation, I need one clarification/i.test(actionContext) ||
     /^Prepared payloads:/i.test(actionContext) ||
     /^Before I run that query, I need one clarification:/i.test(actionContext) ||
     /^Contract saved\. ID:/i.test(actionContext)
@@ -392,8 +471,12 @@ function syncDecisionStateFromAssistantMessage(state: unknown, assistantMessage:
   if (
     nextState.pending_query_sql ||
     nextState.pending_single_query_request ||
+    nextState.pending_metric_confirmations.length > 0 ||
     nextState.prep_pending ||
     nextState.scope_pending ||
+    nextState.scope_clarification_pending ||
+    nextState.awaiting_post_run_refinement ||
+    nextState.refinement_active ||
     nextState.awaiting_pdf_confirmation ||
     nextState.awaiting_save_confirmation ||
     nextState.awaiting_schedule_confirmation ||
@@ -423,9 +506,77 @@ function syncDecisionStateFromAssistantMessage(state: unknown, assistantMessage:
   if (analysisSignal && nextState.prep_complete) {
     nextState.scope_pending = true;
     nextState.prep_pending = false;
+    return nextState;
+  }
+
+  const runReportSignal = /\b(run report|execute report|generate report)\b/.test(lower);
+  const scopeLockedSignal = /\bscope is locked\b/.test(lower) || /\bdraft is ready\b/.test(lower);
+  if (runReportSignal || scopeLockedSignal) {
+    if (nextState.prep_complete) {
+      nextState.scope_pending = true;
+      nextState.prep_pending = false;
+    } else {
+      nextState.prep_pending = true;
+      nextState.scope_pending = false;
+    }
   }
 
   return nextState;
+}
+
+function hasPendingWorkflowDecision(state: unknown): boolean {
+  const parsed = parseChatState(state);
+  return Boolean(
+    parsed.pending_query_sql ||
+      parsed.pending_single_query_request ||
+      parsed.pending_metric_confirmations.length > 0 ||
+      parsed.prep_pending ||
+      parsed.scope_pending ||
+      parsed.scope_clarification_pending ||
+      parsed.awaiting_post_run_refinement ||
+      parsed.refinement_active ||
+      parsed.awaiting_pdf_confirmation ||
+      parsed.awaiting_save_confirmation ||
+      parsed.awaiting_schedule_confirmation ||
+      parsed.awaiting_schedule_mode_selection ||
+      parsed.awaiting_custom_day_input
+  );
+}
+
+function normalizeWorkflowDecisionState(state: unknown) {
+  const parsed = parseChatState(state);
+
+  const hasAnsweredScopeItems =
+    parsed.scope_questions.length > 0 &&
+    parsed.scope_questions.every((entry) => Boolean(entry.answer && entry.answer.trim().length > 0));
+
+  if (
+    hasAnsweredScopeItems &&
+    !parsed.scope_clarification_pending &&
+    !parsed.prep_complete &&
+    !parsed.prep_pending &&
+    !parsed.scope_pending
+  ) {
+    parsed.prep_pending = true;
+  }
+
+  if (
+    parsed.prep_complete &&
+    parsed.prepared_payloads.length > 0 &&
+    !parsed.scope_pending &&
+    !parsed.prep_pending &&
+    !parsed.awaiting_post_run_refinement &&
+    !parsed.refinement_active &&
+    !parsed.awaiting_pdf_confirmation &&
+    !parsed.awaiting_save_confirmation &&
+    !parsed.awaiting_schedule_confirmation &&
+    !parsed.awaiting_schedule_mode_selection &&
+    !parsed.awaiting_custom_day_input
+  ) {
+    parsed.scope_pending = true;
+  }
+
+  return parsed;
 }
 
 function extractPendingSqlFromAssistantMessage(message: string): string | null {
@@ -514,6 +665,22 @@ function looksLikeReportExecutionClaim(message: string): boolean {
     /\b(report|run)\s+is\s+running\b/i.test(message) ||
     /\b(report)\s+(executed|completed)\b/i.test(message)
   );
+}
+
+function buildSafeChatFailureMessage(error: unknown): string {
+  const rawMessage = error instanceof Error ? error.message : "Chat command failed";
+  if (
+    /fetch failed|network|socket|timed out|econn|enotfound|temporarily unavailable/i.test(
+      rawMessage
+    )
+  ) {
+    return [
+      "That step did not return a completion signal yet.",
+      "No data was changed. Please retry the same action once."
+    ].join("\n");
+  }
+
+  return `I could not complete that action safely. ${rawMessage}`;
 }
 
 async function proxyToApi(input: {

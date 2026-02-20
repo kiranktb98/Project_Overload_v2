@@ -236,7 +236,7 @@ export class RuntimeConnectionManager {
   constructor(private readonly options: ConnectionManagerOptions = {}) {
     this.fallbackRowProvider = options.fallback_row_provider;
     this.fallbackSource = options.fallback_source ?? null;
-    this.defaultTimeoutMs = options.default_timeout_ms ?? 5000;
+    this.defaultTimeoutMs = options.default_timeout_ms ?? 900000;
     this.defaultLimit = options.default_limit ?? 200;
     this.encryptionKey = deriveEncryptionKey(options.app_encryption_key ?? process.env.APP_ENCRYPTION_KEY);
     this.stateStore = options.state_store ?? null;
@@ -721,7 +721,7 @@ export class RuntimeConnectionManager {
       try {
         const rows = isMySqlProvider(this.active.provider)
           ? await executeReadOnlyQueryMySql(this.active.pool as MySqlPool, governedSql, this.defaultTimeoutMs)
-          : await executeReadOnlyQuery(pgClient as PoolClient, governedSql);
+          : await executeReadOnlyQuery(pgClient as PoolClient, governedSql, this.defaultTimeoutMs);
         const executionMs = Date.now() - started;
         this.appendQueryLog({
           connection_id: this.active.id,
@@ -1278,12 +1278,19 @@ function selectRecommendedAllowlist(relations: RelationHealth[]): string[] {
   return okRelations.slice(0, 20).map((entry) => entry.qualified_name);
 }
 
-async function executeReadOnlyQuery(client: PoolClient, sql: string): Promise<Record<string, unknown>[]> {
+async function executeReadOnlyQuery(
+  client: PoolClient,
+  sql: string,
+  timeoutMs: number
+): Promise<Record<string, unknown>[]> {
+  const boundedTimeoutMs = Math.max(1000, Math.trunc(timeoutMs));
+  const idleTimeoutMs = Math.max(boundedTimeoutMs + 5000, 10_000);
+
   await client.query("BEGIN");
 
   try {
-    await client.query("SET LOCAL statement_timeout = '5s'");
-    await client.query("SET LOCAL idle_in_transaction_session_timeout = '10s'");
+    await client.query(`SET LOCAL statement_timeout = '${boundedTimeoutMs}ms'`);
+    await client.query(`SET LOCAL idle_in_transaction_session_timeout = '${idleTimeoutMs}ms'`);
     await client.query("SET TRANSACTION READ ONLY");
 
     const result = await client.query(sql);
