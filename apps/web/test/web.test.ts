@@ -2208,7 +2208,8 @@ describe("web chat interface", () => {
     await app.close();
   });
 
-  it("executes simple direct query even when scope confirmation is pending", async () => {
+  it("keeps analysis decision locked and does not execute simple query text when scope confirmation is pending", async () => {
+    let queryCalls = 0;
     const fetchImpl: typeof fetch = async (input, init) => {
       const url = typeof input === "string" ? input : input instanceof URL ? input.toString() : input.url;
       const method = init?.method?.toUpperCase() ?? "GET";
@@ -2244,6 +2245,7 @@ describe("web chat interface", () => {
       }
 
       if (url.endsWith("/connections/query") && method === "POST") {
+        queryCalls += 1;
         return new Response(
           JSON.stringify({
             rows: [
@@ -2301,9 +2303,9 @@ describe("web chat interface", () => {
     });
 
     expect(response.statusCode).toBe(200);
-    expect(response.json().assistant_message).toContain("Query completed. Query ID:");
-    expect(response.json().assistant_message).not.toContain("Please choose one option first");
+    expect(response.json().assistant_message).toContain("Analysis decision pending");
     expect(response.json().state.scope_pending).toBe(true);
+    expect(queryCalls).toBe(0);
 
     await app.close();
   });
@@ -3144,6 +3146,332 @@ describe("web chat interface", () => {
     expect(response.json().state.scope_pending).toBe(true);
     expect(response.json().assistant_message).toContain("Data preparation completed");
     expect(requests.some((entry) => entry.endsWith("POST http://api.local/report-contracts/contract_prep/prepare"))).toBe(true);
+
+    await app.close();
+  });
+
+  it("does not mark preparation complete when no payloads are returned", async () => {
+    const requests: string[] = [];
+    const fetchImpl: typeof fetch = async (input, init) => {
+      const url = typeof input === "string" ? input : input instanceof URL ? input.toString() : input.url;
+      const method = init?.method?.toUpperCase() ?? "GET";
+      requests.push(`${method} ${url}`);
+
+      if (url.endsWith("/report-contracts/contract_empty_prep/prepare") && method === "POST") {
+        return new Response(
+          JSON.stringify({
+            contract_id: "contract_empty_prep",
+            planner_summary: "No executable payloads were generated.",
+            prepared_payloads: []
+          }),
+          {
+            status: 200,
+            headers: { "content-type": "application/json" }
+          }
+        );
+      }
+
+      if (url.endsWith("/connections/catalog") && method === "GET") {
+        return new Response(JSON.stringify({ tables: [], business_context: "", cataloged_at: null }), {
+          status: 200,
+          headers: { "content-type": "application/json" }
+        });
+      }
+
+      return new Response(JSON.stringify({ message: `Unhandled request: ${method} ${url}` }), {
+        status: 404,
+        headers: { "content-type": "application/json" }
+      });
+    };
+
+    const app = buildWebApp({
+      api_base_url: "http://api.local",
+      fetch_impl: fetchImpl,
+      conversation_client: createPassthroughConversationClient()
+    });
+
+    const initial = await app.inject({
+      method: "POST",
+      url: "/api/chat",
+      payload: { message: "set name: Empty Prep Report" }
+    });
+    expect(initial.statusCode).toBe(200);
+
+    const response = await app.inject({
+      method: "POST",
+      url: "/api/chat",
+      payload: {
+        message: "__ui_run_data_preparation__",
+        state: {
+          ...initial.json().state,
+          contract_id: "contract_empty_prep",
+          prep_pending: true,
+          prep_complete: false,
+          scope_pending: false
+        }
+      }
+    });
+
+    expect(response.statusCode).toBe(200);
+    expect(response.json().state.prep_complete).toBe(false);
+    expect(response.json().state.prep_pending).toBe(true);
+    expect(response.json().state.scope_pending).toBe(false);
+    expect(response.json().assistant_message).toContain("did not produce validated payloads");
+    expect(response.json().assistant_message).not.toContain("Data preparation completed");
+    expect(requests.some((entry) => entry.endsWith("POST http://api.local/report-contracts/contract_empty_prep/prepare"))).toBe(true);
+
+    await app.close();
+  });
+
+  it("keeps prep decision pending and does not execute ad-hoc query text while prep is pending", async () => {
+    let queryCalls = 0;
+    const fetchImpl: typeof fetch = async (input, init) => {
+      const url = typeof input === "string" ? input : input instanceof URL ? input.toString() : input.url;
+      const method = init?.method?.toUpperCase() ?? "GET";
+
+      if (url.endsWith("/connections/query") && method === "POST") {
+        queryCalls += 1;
+        return new Response(
+          JSON.stringify({
+            rows: [],
+            row_count: 0,
+            governed_sql: "SELECT 1",
+            warnings: []
+          }),
+          { status: 200, headers: { "content-type": "application/json" } }
+        );
+      }
+
+      return new Response(JSON.stringify({ message: `Unhandled request: ${method} ${url}` }), {
+        status: 404,
+        headers: { "content-type": "application/json" }
+      });
+    };
+
+    const app = buildWebApp({
+      api_base_url: "http://api.local",
+      fetch_impl: fetchImpl,
+      conversation_client: createPassthroughConversationClient()
+    });
+
+    const initial = await app.inject({
+      method: "POST",
+      url: "/api/chat",
+      payload: { message: "set name: Prep Pending Report" }
+    });
+    expect(initial.statusCode).toBe(200);
+
+    const response = await app.inject({
+      method: "POST",
+      url: "/api/chat",
+      payload: {
+        message: "Use refund value and delta as both value and percentage",
+        state: {
+          ...initial.json().state,
+          prep_pending: true,
+          prep_complete: false,
+          scope_pending: false
+        }
+      }
+    });
+
+    expect(response.statusCode).toBe(200);
+    expect(response.json().assistant_message).toContain("Data preparation decision pending");
+    expect(response.json().state.prep_pending).toBe(true);
+    expect(queryCalls).toBe(0);
+
+    await app.close();
+  });
+
+  it("keeps analysis decision pending and does not execute ad-hoc query text while analysis is pending", async () => {
+    let queryCalls = 0;
+    const fetchImpl: typeof fetch = async (input, init) => {
+      const url = typeof input === "string" ? input : input instanceof URL ? input.toString() : input.url;
+      const method = init?.method?.toUpperCase() ?? "GET";
+
+      if (url.endsWith("/connections/query") && method === "POST") {
+        queryCalls += 1;
+        return new Response(
+          JSON.stringify({
+            rows: [],
+            row_count: 0,
+            governed_sql: "SELECT 1",
+            warnings: []
+          }),
+          { status: 200, headers: { "content-type": "application/json" } }
+        );
+      }
+
+      return new Response(JSON.stringify({ message: `Unhandled request: ${method} ${url}` }), {
+        status: 404,
+        headers: { "content-type": "application/json" }
+      });
+    };
+
+    const app = buildWebApp({
+      api_base_url: "http://api.local",
+      fetch_impl: fetchImpl,
+      conversation_client: createPassthroughConversationClient()
+    });
+
+    const initial = await app.inject({
+      method: "POST",
+      url: "/api/chat",
+      payload: { message: "set name: Analysis Pending Report" }
+    });
+    expect(initial.statusCode).toBe(200);
+
+    const response = await app.inject({
+      method: "POST",
+      url: "/api/chat",
+      payload: {
+        message: "Use refund value only and keep city ranking to top 5",
+        state: {
+          ...initial.json().state,
+          scope_pending: true,
+          prep_complete: true,
+          prepared_payloads: [
+            {
+              question_id: "q1",
+              question_number: 1,
+              question: "Refund trend",
+              purpose: "Trend analysis",
+              row_count_before_reduction: 320,
+              prepared_row_count: 120,
+              preparation_notes: [],
+              warnings: []
+            }
+          ]
+        }
+      }
+    });
+
+    expect(response.statusCode).toBe(200);
+    expect(response.json().assistant_message).toContain("Analysis decision pending");
+    expect(response.json().state.scope_pending).toBe(true);
+    expect(queryCalls).toBe(0);
+
+    await app.close();
+  });
+
+  it("keeps prep-decision messaging authoritative when LLM tries to suggest run report", async () => {
+    const fetchImpl: typeof fetch = async (input, init) => {
+      const url = typeof input === "string" ? input : input instanceof URL ? input.toString() : input.url;
+      const method = init?.method?.toUpperCase() ?? "GET";
+
+      if (url.endsWith("/connections/catalog") && method === "GET") {
+        return new Response(
+          JSON.stringify({
+            business_id: "biz_test",
+            business_context: "",
+            cataloged_at: "2026-02-01T00:00:00.000Z",
+            tables: [
+              {
+                table_id: "tbl_sales",
+                qualified_name: "analytics.sales",
+                relation_type: "TABLE",
+                summary: "Sales rows",
+                columns: [
+                  { column_name: "order_date", data_type: "timestamp with time zone", is_nullable: false },
+                  { column_name: "status", data_type: "text", is_nullable: false },
+                  { column_name: "refund_amount", data_type: "numeric", is_nullable: true }
+                ],
+                low_cardinality_columns: [],
+                sample_rows: [],
+                row_count_estimate: 1000
+              }
+            ]
+          }),
+          {
+            status: 200,
+            headers: { "content-type": "application/json" }
+          }
+        );
+      }
+
+      if (url.endsWith("/connections/tables") && method === "GET") {
+        return new Response(
+          JSON.stringify({
+            relations: [
+              {
+                qualified_name: "analytics.sales",
+                relation_type: "TABLE",
+                status: "OK",
+                has_rls: false,
+                force_rls: false,
+                rls_active_for_me: false,
+                policies_count_for_me: 0
+              }
+            ]
+          }),
+          {
+            status: 200,
+            headers: { "content-type": "application/json" }
+          }
+        );
+      }
+
+      if (url.endsWith("/connections/query") && method === "POST") {
+        return new Response(
+          JSON.stringify({
+            rows: [{ row_count: 1000 }],
+            row_count: 1,
+            governed_sql: "SELECT COUNT(*) AS row_count FROM analytics.sales",
+            warnings: []
+          }),
+          {
+            status: 200,
+            headers: { "content-type": "application/json" }
+          }
+        );
+      }
+
+      return new Response(JSON.stringify({ message: `Unhandled request: ${method} ${url}` }), {
+        status: 404,
+        headers: { "content-type": "application/json" }
+      });
+    };
+
+    const app = buildWebApp({
+      api_base_url: "http://api.local",
+      fetch_impl: fetchImpl,
+      conversation_client: {
+        provider: "openrouter",
+        mode: "provider",
+        async respond() {
+          return {
+            message: "Great, everything is ready. Click Run Report now."
+          };
+        }
+      }
+    });
+
+    const response = await app.inject({
+      method: "POST",
+      url: "/api/chat",
+      payload: {
+        message: "run",
+        state: {
+          draft: {
+            name: "Scope Ready Report",
+            audience: "Executive",
+            timezone: "UTC",
+            schedule_cron: null,
+            sql_template: "SELECT * FROM analytics.sales",
+            metric_ids: ["metric_refunds"],
+            dimension_ids: ["city"],
+            allowed_relations: ["analytics.sales"],
+            allowed_schemas: ["analytics"],
+            insight_mode: "business"
+          }
+        }
+      }
+    });
+
+    expect(response.statusCode).toBe(200);
+    expect(response.json().state.prep_pending).toBe(true);
+    expect(response.json().assistant_message).toContain("Ready to prepare data for:");
+    expect(response.json().assistant_message).not.toContain("Run Report");
 
     await app.close();
   });

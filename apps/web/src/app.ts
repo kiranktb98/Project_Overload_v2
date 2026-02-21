@@ -558,6 +558,10 @@ function isExecutionOutcomeContext(actionContext: string): boolean {
 function isDecisionPendingContext(actionContext: string): boolean {
   return (
     /^Analysis is staged and waiting on the current workflow decision\./i.test(actionContext) ||
+    /^Ready to prepare data for:/i.test(actionContext) ||
+    /^Scope clarifications captured for all questions\./i.test(actionContext) ||
+    /^Need clarification for \d+ scope item/i.test(actionContext) ||
+    /^Before data preparation,/i.test(actionContext) ||
     /^Data preparation decision pending/i.test(actionContext) ||
     /^Analysis decision pending/i.test(actionContext) ||
     /^SQL decision pending/i.test(actionContext)
@@ -569,6 +573,7 @@ function enforceExecutionTruth(modelMessage: string, actionContext: string): str
     /\bQuery ID:\s*[a-z0-9_-]+\b/i.test(actionContext) ||
     /\bQuery returned\s+\d+/i.test(actionContext);
   const reportExecuted = /\bReport executed\b/i.test(actionContext);
+  const preparationExecuted = /^Data preparation completed/i.test(actionContext);
 
   if (!queryExecuted && looksLikeQueryExecutionClaim(modelMessage)) {
     if (
@@ -589,6 +594,10 @@ function enforceExecutionTruth(modelMessage: string, actionContext: string): str
       "I haven't executed a report run yet.",
       "The workflow is paused at a pending execution decision."
     ].join("\n");
+  }
+
+  if (!preparationExecuted && looksLikePreparationExecutionClaim(modelMessage)) {
+    return actionContext;
   }
 
   return modelMessage;
@@ -838,6 +847,13 @@ function looksLikeReportExecutionClaim(message: string): boolean {
     /\b(i['’]?m|i am|we['’]?re|we are)\s+(running|executing)\s+(the\s+)?report\b/i.test(message) ||
     /\b(report|run)\s+is\s+running\b/i.test(message) ||
     /\b(report)\s+(executed|completed)\b/i.test(message)
+  );
+}
+
+function looksLikePreparationExecutionClaim(message: string): boolean {
+  return (
+    /\bdata preparation\b/i.test(message) &&
+    /\b(completed|finished|done|prepared)\b/i.test(message)
   );
 }
 
