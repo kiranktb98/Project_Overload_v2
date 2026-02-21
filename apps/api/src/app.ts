@@ -18,6 +18,7 @@ import { registerSemanticRoutes } from "./routes/semantic";
 import { registerContractRoutes } from "./routes/contracts";
 import { createLocalRowProviderFromEnv } from "./dataplane/local-row-provider";
 import { registerConnectionRoutes } from "./routes/connections";
+import { registerUiRoutes } from "./routes/ui";
 import { RuntimeConnectionManager } from "./dataplane/connection-manager";
 import { validateApiAuth } from "./security/request-context";
 
@@ -117,6 +118,7 @@ export async function buildApiApp(options: Partial<ApiDependencies> = {}) {
   registerSemanticRoutes(app, store);
   registerContractRoutes(app, store, dataPlane, analystClient, queryStrategist, reportComposer, plannerClient, connectionManager);
   registerConnectionRoutes(app, connectionManager);
+  registerUiRoutes(app, store);
 
   app.setErrorHandler((error: unknown, _request, reply) => {
     if (error instanceof ZodError) {

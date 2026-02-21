@@ -73,6 +73,54 @@ CREATE TABLE IF NOT EXISTS system_state (
   PRIMARY KEY (state_key, tenant_id)
 );
 
+CREATE TABLE IF NOT EXISTS platform_users (
+  id TEXT PRIMARY KEY,
+  tenant_id TEXT NOT NULL DEFAULT 'default',
+  username TEXT NOT NULL,
+  password_salt TEXT NOT NULL,
+  password_hash TEXT NOT NULL,
+  is_active BOOLEAN NOT NULL DEFAULT TRUE,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  last_login_at TIMESTAMPTZ NULL,
+  UNIQUE (tenant_id, username)
+);
+
+CREATE TABLE IF NOT EXISTS chat_sessions (
+  id TEXT PRIMARY KEY,
+  tenant_id TEXT NOT NULL DEFAULT 'default',
+  user_id TEXT NOT NULL REFERENCES platform_users(id) ON DELETE CASCADE,
+  title TEXT NOT NULL,
+  title_auto BOOLEAN NOT NULL DEFAULT TRUE,
+  naming_in_progress BOOLEAN NOT NULL DEFAULT FALSE,
+  state JSONB NULL,
+  user_messages JSONB NOT NULL DEFAULT '[]'::jsonb,
+  db_bootstrapped BOOLEAN NOT NULL DEFAULT FALSE,
+  messages JSONB NOT NULL DEFAULT '[]'::jsonb,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+CREATE INDEX IF NOT EXISTS chat_sessions_user_updated_idx
+  ON chat_sessions(tenant_id, user_id, updated_at DESC);
+
+INSERT INTO platform_users (
+  id,
+  tenant_id,
+  username,
+  password_salt,
+  password_hash,
+  is_active
+)
+VALUES (
+  'user_test123',
+  'default',
+  'test123',
+  '99abe147221b66a4b3323aa942e6d2f4',
+  '09ba67974ef96ca0ff5d6bde095bf986d9e1030fb5cffff66ee2cbc9c5aae603077464b8f8994b583b2f0f01b0d29b48db23345cc04d6ccf0e413d66b965237d',
+  TRUE
+)
+ON CONFLICT (tenant_id, username) DO NOTHING;
+
 -- Local analytics fixture dataset for deterministic report testing.
 CREATE SCHEMA IF NOT EXISTS analytics;
 

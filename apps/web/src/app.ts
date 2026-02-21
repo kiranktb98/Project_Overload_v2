@@ -37,8 +37,9 @@ export function buildWebApp(options: WebAppDependencies = {}) {
       level: process.env.LOG_LEVEL ?? "info"
     }
   });
-  const apiBaseUrl =
-    options.api_base_url ?? process.env.WEB_API_BASE_URL ?? process.env.NEXT_PUBLIC_API_URL ?? "http://127.0.0.1:4000";
+  const apiBaseUrl = normalizeApiBaseUrl(
+    options.api_base_url ?? process.env.WEB_API_BASE_URL ?? process.env.NEXT_PUBLIC_API_URL ?? "http://127.0.0.1:4000"
+  );
   const apiClient = createWebApiClient({
     base_url: apiBaseUrl,
     fetch_impl: options.fetch_impl
@@ -96,13 +97,36 @@ export function buildWebApp(options: WebAppDependencies = {}) {
       });
     }
 
-    if (parsed.data.username !== "test123" || parsed.data.password !== "test123") {
+    const username = parsed.data.username.trim();
+    const password = parsed.data.password;
+
+    let loginResponse: Response;
+    try {
+      loginResponse = await (options.fetch_impl ?? fetch)(`${apiBaseUrl}/ui/auth/login`, {
+        method: "POST",
+        headers: {
+          "content-type": "application/json",
+          ...buildApiAuthHeader()
+        },
+        body: JSON.stringify({ username, password })
+      });
+    } catch {
+      return reply.code(502).send({
+        message: `Cannot reach API server at ${apiBaseUrl}.`
+      });
+    }
+
+    if (!loginResponse.ok) {
       return reply.code(401).send({
         message: "Invalid credentials"
       });
     }
 
-    reply.header("set-cookie", "po_demo_auth=1; Path=/; HttpOnly; SameSite=Lax; Max-Age=604800");
+    const encodedUser = encodeURIComponent(username);
+    reply.header("set-cookie", [
+      "po_demo_auth=1; Path=/; HttpOnly; SameSite=Lax; Max-Age=604800",
+      `po_user=${encodedUser}; Path=/; HttpOnly; SameSite=Lax; Max-Age=604800`
+    ]);
     return reply.code(200).send({ ok: true });
   });
 
@@ -110,7 +134,10 @@ export function buildWebApp(options: WebAppDependencies = {}) {
     if (authEnabled) {
       reply.header(
         "set-cookie",
-        "po_demo_auth=; Path=/; HttpOnly; SameSite=Lax; Expires=Thu, 01 Jan 1970 00:00:00 GMT"
+        [
+          "po_demo_auth=; Path=/; HttpOnly; SameSite=Lax; Expires=Thu, 01 Jan 1970 00:00:00 GMT",
+          "po_user=; Path=/; HttpOnly; SameSite=Lax; Expires=Thu, 01 Jan 1970 00:00:00 GMT"
+        ]
       );
     }
     return reply.redirect("/login");
@@ -302,6 +329,40 @@ export function buildWebApp(options: WebAppDependencies = {}) {
         state: nextState
       });
     }
+  });
+
+  app.get("/api/chat/sessions", async (request, reply) => {
+    const username = getAuthenticatedUsername(request.headers.cookie);
+    if (!username) {
+      return reply.code(401).send({ message: "Unauthorized" });
+    }
+
+    return proxyToApi({
+      fetch_impl: options.fetch_impl,
+      api_base_url: apiBaseUrl,
+      method: "GET",
+      path: "/ui/chat-sessions",
+      additional_headers: { "x-ui-user": username },
+      reply
+    });
+  });
+
+  app.put("/api/chat/sessions/:id", async (request, reply) => {
+    const username = getAuthenticatedUsername(request.headers.cookie);
+    if (!username) {
+      return reply.code(401).send({ message: "Unauthorized" });
+    }
+
+    const { id } = request.params as { id: string };
+    return proxyToApi({
+      fetch_impl: options.fetch_impl,
+      api_base_url: apiBaseUrl,
+      method: "PUT",
+      path: `/ui/chat-sessions/${encodeURIComponent(id)}`,
+      body: request.body,
+      additional_headers: { "x-ui-user": username },
+      reply
+    });
   });
 
   app.get("/api/runs/:runId/pdf", async (request, reply) => {
@@ -806,38 +867,32 @@ function isUiAuthEnabled(): boolean {
 }
 
 function isAuthenticatedRequest(cookieHeader: string | undefined): boolean {
-  if (!cookieHeader || cookieHeader.length === 0) {
-    return false;
-  }
-
-  const parts = cookieHeader.split(";");
-  for (const part of parts) {
-    const [key, ...valueParts] = part.trim().split("=");
-    if (key === "po_demo_auth" && valueParts.join("=").trim() === "1") {
-      return true;
-    }
-  }
-
-  return false;
+  return getCookieValue(cookieHeader, "po_demo_auth") === "1" && getAuthenticatedUsername(cookieHeader) !== null;
 }
 
 async function proxyToApi(input: {
   fetch_impl?: typeof fetch;
   api_base_url: string;
-  method: "GET" | "POST";
+  method: "GET" | "POST" | "PUT";
   path: string;
   reply: { code: (statusCode: number) => { send: (payload: unknown) => unknown } };
+  additional_headers?: Record<string, string>;
   body?: unknown;
 }) {
   const fetcher = input.fetch_impl ?? fetch;
+  const requestHeaders: Record<string, string> = {
+    ...buildApiAuthHeader(),
+    ...(input.additional_headers ?? {})
+  };
+  if (input.body !== undefined) {
+    requestHeaders["content-type"] = "application/json";
+  }
 
   let response: Response;
   try {
     response = await fetcher(`${input.api_base_url}${input.path}`, {
       method: input.method,
-      headers: {
-        "content-type": "application/json"
-      },
+      headers: requestHeaders,
       body: input.body === undefined ? undefined : JSON.stringify(input.body)
     });
   } catch {
@@ -849,4 +904,50 @@ async function proxyToApi(input: {
   const text = await response.text();
   const payload = text.length > 0 ? JSON.parse(text) : {};
   return input.reply.code(response.status).send(payload);
+}
+
+function normalizeApiBaseUrl(value: string): string {
+  const trimmed = value.trim();
+  if (trimmed.length === 0) {
+    return "http://127.0.0.1:4000";
+  }
+  return trimmed.replace(/\/+$/, "");
+}
+
+function buildApiAuthHeader(): Record<string, string> {
+  const token = (process.env.WEB_INTERNAL_API_KEY ?? "").trim();
+  if (!token) {
+    return {};
+  }
+  return { "x-api-key": token };
+}
+
+function getAuthenticatedUsername(cookieHeader: string | undefined): string | null {
+  const raw = getCookieValue(cookieHeader, "po_user");
+  if (!raw) {
+    return null;
+  }
+  try {
+    const decoded = decodeURIComponent(raw).trim();
+    return decoded.length > 0 ? decoded : null;
+  } catch {
+    return null;
+  }
+}
+
+function getCookieValue(cookieHeader: string | undefined, key: string): string | null {
+  if (!cookieHeader || cookieHeader.length === 0) {
+    return null;
+  }
+
+  const parts = cookieHeader.split(";");
+  for (const part of parts) {
+    const [cookieKey, ...valueParts] = part.trim().split("=");
+    if (cookieKey === key) {
+      const joined = valueParts.join("=").trim();
+      return joined.length > 0 ? joined : null;
+    }
+  }
+
+  return null;
 }

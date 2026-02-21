@@ -9,7 +9,9 @@ import type {
   SemanticRelationship
 } from "@project-overload/shared";
 import type {
+  ChatSessionRecord,
   MetadataStore,
+  PlatformUserRecord,
   ReportContractVersionRecord,
   SemanticCollectionName,
   SemanticCollections,
@@ -26,6 +28,11 @@ const semanticTableByCollection: Record<SemanticCollectionName, string> = {
 };
 
 const DEFAULT_TENANT_ID = "default";
+const DEMO_USER_ID = "user_test123";
+const DEMO_USERNAME = "test123";
+const DEMO_PASSWORD_SALT = "99abe147221b66a4b3323aa942e6d2f4";
+const DEMO_PASSWORD_HASH =
+  "09ba67974ef96ca0ff5d6bde095bf986d9e1030fb5cffff66ee2cbc9c5aae603077464b8f8994b583b2f0f01b0d29b48db23345cc04d6ccf0e413d66b965237d";
 
 export class PostgresMetadataStore implements MetadataStore {
   constructor(private readonly pool: Pool) {}
@@ -295,6 +302,242 @@ export class PostgresMetadataStore implements MetadataStore {
     return result.rows.length > 0 ? result.rows[0].payload : null;
   }
 
+  async upsertPlatformUser(
+    payload: Omit<PlatformUserRecord, "created_at" | "last_login_at">,
+    context?: StoreRequestContext
+  ): Promise<PlatformUserRecord> {
+    const tenantId = resolveTenantId(context, payload.tenant_id);
+    const result = await this.pool.query<{
+      id: string;
+      tenant_id: string;
+      username: string;
+      password_salt: string;
+      password_hash: string;
+      is_active: boolean;
+      created_at: string;
+      last_login_at: string | null;
+    }>(
+      `
+      INSERT INTO platform_users (id, tenant_id, username, password_salt, password_hash, is_active)
+      VALUES ($1, $2, $3, $4, $5, $6)
+      ON CONFLICT (tenant_id, username) DO UPDATE SET
+        id = EXCLUDED.id,
+        password_salt = EXCLUDED.password_salt,
+        password_hash = EXCLUDED.password_hash,
+        is_active = EXCLUDED.is_active
+      RETURNING id, tenant_id, username, password_salt, password_hash, is_active, created_at::text AS created_at, last_login_at::text AS last_login_at
+      `,
+      [payload.id, tenantId, payload.username, payload.password_salt, payload.password_hash, payload.is_active]
+    );
+
+    const row = result.rows[0];
+    return {
+      id: row.id,
+      tenant_id: row.tenant_id,
+      username: row.username,
+      password_salt: row.password_salt,
+      password_hash: row.password_hash,
+      is_active: row.is_active,
+      created_at: row.created_at,
+      last_login_at: row.last_login_at
+    };
+  }
+
+  async getPlatformUserByUsername(username: string, context?: StoreRequestContext): Promise<PlatformUserRecord | null> {
+    const tenantId = resolveTenantId(context);
+    const result = await this.pool.query<{
+      id: string;
+      tenant_id: string;
+      username: string;
+      password_salt: string;
+      password_hash: string;
+      is_active: boolean;
+      created_at: string;
+      last_login_at: string | null;
+    }>(
+      `
+      SELECT id, tenant_id, username, password_salt, password_hash, is_active, created_at::text AS created_at, last_login_at::text AS last_login_at
+      FROM platform_users
+      WHERE tenant_id = $1
+        AND username = $2
+      LIMIT 1
+      `,
+      [tenantId, username]
+    );
+
+    if (result.rows.length === 0) {
+      return null;
+    }
+
+    const row = result.rows[0];
+    return {
+      id: row.id,
+      tenant_id: row.tenant_id,
+      username: row.username,
+      password_salt: row.password_salt,
+      password_hash: row.password_hash,
+      is_active: row.is_active,
+      created_at: row.created_at,
+      last_login_at: row.last_login_at
+    };
+  }
+
+  async markPlatformUserLogin(userId: string, context?: StoreRequestContext): Promise<void> {
+    const tenantId = resolveTenantId(context);
+    await this.pool.query(
+      `
+      UPDATE platform_users
+      SET last_login_at = NOW()
+      WHERE id = $1
+        AND tenant_id = $2
+      `,
+      [userId, tenantId]
+    );
+  }
+
+  async listChatSessions(userId: string, context?: StoreRequestContext): Promise<ChatSessionRecord[]> {
+    const tenantId = resolveTenantId(context);
+    const result = await this.pool.query<{
+      id: string;
+      tenant_id: string;
+      user_id: string;
+      title: string;
+      title_auto: boolean;
+      naming_in_progress: boolean;
+      state: Record<string, unknown> | null;
+      user_messages: string[];
+      db_bootstrapped: boolean;
+      messages: ChatSessionRecord["messages"];
+      created_at: string;
+      updated_at: string;
+    }>(
+      `
+      SELECT
+        id,
+        tenant_id,
+        user_id,
+        title,
+        title_auto,
+        naming_in_progress,
+        state,
+        user_messages,
+        db_bootstrapped,
+        messages,
+        created_at::text AS created_at,
+        updated_at::text AS updated_at
+      FROM chat_sessions
+      WHERE tenant_id = $1
+        AND user_id = $2
+      ORDER BY updated_at DESC
+      `,
+      [tenantId, userId]
+    );
+
+    return result.rows.map((row) => ({
+      id: row.id,
+      tenant_id: row.tenant_id,
+      user_id: row.user_id,
+      title: row.title,
+      title_auto: row.title_auto,
+      naming_in_progress: row.naming_in_progress,
+      state: row.state,
+      user_messages: Array.isArray(row.user_messages) ? row.user_messages : [],
+      db_bootstrapped: row.db_bootstrapped,
+      messages: Array.isArray(row.messages) ? row.messages : [],
+      created_at: row.created_at,
+      updated_at: row.updated_at
+    }));
+  }
+
+  async upsertChatSession(
+    payload: Omit<ChatSessionRecord, "tenant_id" | "created_at" | "updated_at">,
+    context?: StoreRequestContext
+  ): Promise<ChatSessionRecord> {
+    const tenantId = resolveTenantId(context);
+    const result = await this.pool.query<{
+      id: string;
+      tenant_id: string;
+      user_id: string;
+      title: string;
+      title_auto: boolean;
+      naming_in_progress: boolean;
+      state: Record<string, unknown> | null;
+      user_messages: string[];
+      db_bootstrapped: boolean;
+      messages: ChatSessionRecord["messages"];
+      created_at: string;
+      updated_at: string;
+    }>(
+      `
+      INSERT INTO chat_sessions (
+        id,
+        tenant_id,
+        user_id,
+        title,
+        title_auto,
+        naming_in_progress,
+        state,
+        user_messages,
+        db_bootstrapped,
+        messages
+      )
+      VALUES ($1, $2, $3, $4, $5, $6, $7::jsonb, $8::jsonb, $9, $10::jsonb)
+      ON CONFLICT (id) DO UPDATE SET
+        tenant_id = EXCLUDED.tenant_id,
+        user_id = EXCLUDED.user_id,
+        title = EXCLUDED.title,
+        title_auto = EXCLUDED.title_auto,
+        naming_in_progress = EXCLUDED.naming_in_progress,
+        state = EXCLUDED.state,
+        user_messages = EXCLUDED.user_messages,
+        db_bootstrapped = EXCLUDED.db_bootstrapped,
+        messages = EXCLUDED.messages,
+        updated_at = NOW()
+      RETURNING
+        id,
+        tenant_id,
+        user_id,
+        title,
+        title_auto,
+        naming_in_progress,
+        state,
+        user_messages,
+        db_bootstrapped,
+        messages,
+        created_at::text AS created_at,
+        updated_at::text AS updated_at
+      `,
+      [
+        payload.id,
+        tenantId,
+        payload.user_id,
+        payload.title,
+        payload.title_auto,
+        payload.naming_in_progress,
+        JSON.stringify(payload.state),
+        JSON.stringify(payload.user_messages),
+        payload.db_bootstrapped,
+        JSON.stringify(payload.messages)
+      ]
+    );
+
+    const row = result.rows[0];
+    return {
+      id: row.id,
+      tenant_id: row.tenant_id,
+      user_id: row.user_id,
+      title: row.title,
+      title_auto: row.title_auto,
+      naming_in_progress: row.naming_in_progress,
+      state: row.state,
+      user_messages: Array.isArray(row.user_messages) ? row.user_messages : [],
+      db_bootstrapped: row.db_bootstrapped,
+      messages: Array.isArray(row.messages) ? row.messages : [],
+      created_at: row.created_at,
+      updated_at: row.updated_at
+    };
+  }
+
   async appendAuditLog(eventType: string, payload: Record<string, unknown>, context?: StoreRequestContext): Promise<void> {
     const tenantId = resolveTenantId(context);
     await this.pool.query(
@@ -344,6 +587,47 @@ export class PostgresMetadataStore implements MetadataStore {
         PRIMARY KEY (state_key, tenant_id)
       );
     `);
+    await this.pool.query(`
+      CREATE TABLE IF NOT EXISTS platform_users (
+        id TEXT PRIMARY KEY,
+        tenant_id TEXT NOT NULL DEFAULT '${DEFAULT_TENANT_ID}',
+        username TEXT NOT NULL,
+        password_salt TEXT NOT NULL,
+        password_hash TEXT NOT NULL,
+        is_active BOOLEAN NOT NULL DEFAULT TRUE,
+        created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+        last_login_at TIMESTAMPTZ NULL,
+        UNIQUE (tenant_id, username)
+      );
+    `);
+    await this.pool.query(`
+      CREATE TABLE IF NOT EXISTS chat_sessions (
+        id TEXT PRIMARY KEY,
+        tenant_id TEXT NOT NULL DEFAULT '${DEFAULT_TENANT_ID}',
+        user_id TEXT NOT NULL REFERENCES platform_users(id) ON DELETE CASCADE,
+        title TEXT NOT NULL,
+        title_auto BOOLEAN NOT NULL DEFAULT TRUE,
+        naming_in_progress BOOLEAN NOT NULL DEFAULT FALSE,
+        state JSONB NULL,
+        user_messages JSONB NOT NULL DEFAULT '[]'::jsonb,
+        db_bootstrapped BOOLEAN NOT NULL DEFAULT FALSE,
+        messages JSONB NOT NULL DEFAULT '[]'::jsonb,
+        created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+        updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+      );
+    `);
+    await this.pool.query(`
+      CREATE INDEX IF NOT EXISTS chat_sessions_user_updated_idx
+        ON chat_sessions(tenant_id, user_id, updated_at DESC);
+    `);
+    await this.pool.query(
+      `
+      INSERT INTO platform_users (id, tenant_id, username, password_salt, password_hash, is_active)
+      VALUES ($1, $2, $3, $4, $5, TRUE)
+      ON CONFLICT (tenant_id, username) DO NOTHING
+      `,
+      [DEMO_USER_ID, DEFAULT_TENANT_ID, DEMO_USERNAME, DEMO_PASSWORD_SALT, DEMO_PASSWORD_HASH]
+    );
   }
 
   private async upsertPayload(tableName: string, id: string, payload: unknown): Promise<void> {

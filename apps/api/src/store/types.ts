@@ -22,6 +22,40 @@ export type StoreRequestContext = {
   tenant_id: string;
 };
 
+export type PlatformUserRecord = {
+  id: string;
+  tenant_id: string;
+  username: string;
+  password_salt: string;
+  password_hash: string;
+  is_active: boolean;
+  created_at: string;
+  last_login_at: string | null;
+};
+
+export type ChatSessionMessageRecord = {
+  role: "user" | "assistant";
+  text: string;
+  download_url: string | null;
+  exec_brief_html: string | null;
+  at: string;
+};
+
+export type ChatSessionRecord = {
+  id: string;
+  tenant_id: string;
+  user_id: string;
+  title: string;
+  title_auto: boolean;
+  naming_in_progress: boolean;
+  state: Record<string, unknown> | null;
+  user_messages: string[];
+  db_bootstrapped: boolean;
+  messages: ChatSessionMessageRecord[];
+  created_at: string;
+  updated_at: string;
+};
+
 export type ReportContractVersionRecord = {
   contract_id: string;
   tenant_id: string;
@@ -65,6 +99,16 @@ export interface MetadataStore {
 
   setSystemState(key: string, payload: Record<string, unknown> | null, context?: StoreRequestContext): Promise<void>;
   getSystemState(key: string, context?: StoreRequestContext): Promise<Record<string, unknown> | null>;
+
+  upsertPlatformUser(payload: Omit<PlatformUserRecord, "created_at" | "last_login_at">, context?: StoreRequestContext): Promise<PlatformUserRecord>;
+  getPlatformUserByUsername(username: string, context?: StoreRequestContext): Promise<PlatformUserRecord | null>;
+  markPlatformUserLogin(userId: string, context?: StoreRequestContext): Promise<void>;
+
+  listChatSessions(userId: string, context?: StoreRequestContext): Promise<ChatSessionRecord[]>;
+  upsertChatSession(
+    payload: Omit<ChatSessionRecord, "tenant_id" | "created_at" | "updated_at">,
+    context?: StoreRequestContext
+  ): Promise<ChatSessionRecord>;
 
   appendAuditLog(eventType: string, payload: Record<string, unknown>, context?: StoreRequestContext): Promise<void>;
   close(): Promise<void>;

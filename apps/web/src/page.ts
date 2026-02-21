@@ -907,6 +907,7 @@ export function renderChatPage(): string {
         const runtimeStatusRef = { mode: "checking provider", busy: false };
         const composerStateRef = { busy: false, locked: false };
         const decisionRef = { value: null };
+        const serverSyncRef = { timer: null, inFlight: false, queued: false };
         const defaultInputPlaceholder =
           "Describe the report you want, e.g. weekly refund analysis by product category";
 
@@ -1073,11 +1074,73 @@ export function renderChatPage(): string {
           }
         }
 
-        function saveChatsToStorage() {
+        function saveChatsToStorage(skipServerSync) {
           try {
             localStorage.setItem(CHAT_STORAGE_KEY, JSON.stringify(chatsRef.value.slice(0, MAX_STORED_CHATS)));
           } catch {
             // best effort only
+          }
+          if (skipServerSync !== true) {
+            scheduleServerSync();
+          }
+        }
+
+        async function loadChatsFromServer() {
+          try {
+            const response = await fetch("/api/chat/sessions", { method: "GET" });
+            if (!response.ok) {
+              return [];
+            }
+            const payload = await response.json();
+            const sessions = Array.isArray(payload && payload.sessions) ? payload.sessions : [];
+            return sessions
+              .map((entry) => normalizeStoredChat(entry))
+              .filter((entry) => entry !== null)
+              .slice(0, MAX_STORED_CHATS);
+          } catch {
+            return [];
+          }
+        }
+
+        function scheduleServerSync() {
+          if (serverSyncRef.timer) {
+            clearTimeout(serverSyncRef.timer);
+          }
+          serverSyncRef.timer = setTimeout(() => {
+            serverSyncRef.timer = null;
+            void syncChatsToServer();
+          }, 400);
+        }
+
+        async function syncChatsToServer() {
+          if (serverSyncRef.inFlight) {
+            serverSyncRef.queued = true;
+            return;
+          }
+
+          serverSyncRef.inFlight = true;
+          serverSyncRef.queued = false;
+
+          try {
+            const sessions = chatsRef.value.slice(0, MAX_STORED_CHATS);
+            for (const session of sessions) {
+              const response = await fetch("/api/chat/sessions/" + encodeURIComponent(session.id), {
+                method: "PUT",
+                headers: { "content-type": "application/json" },
+                body: JSON.stringify({ session })
+              });
+              if (!response.ok) {
+                break;
+              }
+            }
+          } catch {
+            // best effort only
+          } finally {
+            serverSyncRef.inFlight = false;
+            if (serverSyncRef.queued) {
+              serverSyncRef.queued = false;
+              void syncChatsToServer();
+            }
           }
         }
 
@@ -1921,6 +1984,21 @@ export function renderChatPage(): string {
           activateChat(activeChatIdRef.value);
         }
 
+        async function hydrateSessionsFromServer() {
+          const remote = await loadChatsFromServer();
+          if (remote.length === 0) {
+            if (chatsRef.value.length > 0) {
+              void syncChatsToServer();
+            }
+            return;
+          }
+
+          chatsRef.value = remote;
+          activeChatIdRef.value = remote[0].id;
+          saveChatsToStorage(true);
+          activateChat(activeChatIdRef.value);
+        }
+
         /* â”€â”€ Init â”€â”€ */
         formEl.addEventListener("submit", (event) => {
           event.preventDefault();
@@ -1946,6 +2024,7 @@ export function renderChatPage(): string {
         });
 
         initializeSessions();
+        void hydrateSessionsFromServer();
         refreshDecisionFromState(stateRef.value);
         renderStatus();
         loadRuntimeStatus();

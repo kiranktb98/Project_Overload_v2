@@ -8,7 +8,9 @@ import type {
   Dimension
 } from "@project-overload/shared";
 import type {
+  ChatSessionRecord,
   MetadataStore,
+  PlatformUserRecord,
   ReportContractVersionRecord,
   SemanticCollectionName,
   SemanticCollections,
@@ -34,6 +36,8 @@ export class InMemoryMetadataStore implements MetadataStore {
   private readonly reportRunsByIdByTenant = new Map<string, Map<string, ReportRun>>();
   private readonly contractVersionsByTenant = new Map<string, Map<string, ReportContractVersionRecord[]>>();
   private readonly systemStateByTenant = new Map<string, Map<string, Record<string, unknown>>>();
+  private readonly usersByTenant = new Map<string, Map<string, PlatformUserRecord>>();
+  private readonly chatSessionsByTenant = new Map<string, Map<string, ChatSessionRecord[]>>();
   private readonly auditLogs: Array<{ tenant_id: string; event_type: string; payload: Record<string, unknown> }> = [];
 
   async createSemantic<K extends SemanticCollectionName>(
@@ -172,6 +176,71 @@ export class InMemoryMetadataStore implements MetadataStore {
     return state.get(key) ?? null;
   }
 
+  async upsertPlatformUser(
+    payload: Omit<PlatformUserRecord, "created_at" | "last_login_at">,
+    context?: StoreRequestContext
+  ): Promise<PlatformUserRecord> {
+    const tenantId = resolveTenantId(context, payload.tenant_id);
+    const users = this.getOrCreateUsers(tenantId);
+    const existing = users.get(payload.username);
+    const nowIso = new Date().toISOString();
+    const user: PlatformUserRecord = {
+      ...payload,
+      tenant_id: tenantId,
+      created_at: existing?.created_at ?? nowIso,
+      last_login_at: existing?.last_login_at ?? null
+    };
+    users.set(payload.username, user);
+    return user;
+  }
+
+  async getPlatformUserByUsername(username: string, context?: StoreRequestContext): Promise<PlatformUserRecord | null> {
+    const tenantId = resolveTenantId(context);
+    const users = this.getOrCreateUsers(tenantId);
+    return users.get(username) ?? null;
+  }
+
+  async markPlatformUserLogin(userId: string, context?: StoreRequestContext): Promise<void> {
+    const tenantId = resolveTenantId(context);
+    const users = this.getOrCreateUsers(tenantId);
+    for (const [username, user] of users) {
+      if (user.id === userId) {
+        users.set(username, {
+          ...user,
+          last_login_at: new Date().toISOString()
+        });
+        return;
+      }
+    }
+  }
+
+  async listChatSessions(userId: string, context?: StoreRequestContext): Promise<ChatSessionRecord[]> {
+    const tenantId = resolveTenantId(context);
+    const sessions = this.getOrCreateChatSessions(tenantId).get(userId) ?? [];
+    return [...sessions].sort((a, b) => Date.parse(b.updated_at) - Date.parse(a.updated_at));
+  }
+
+  async upsertChatSession(
+    payload: Omit<ChatSessionRecord, "tenant_id" | "created_at" | "updated_at">,
+    context?: StoreRequestContext
+  ): Promise<ChatSessionRecord> {
+    const tenantId = resolveTenantId(context);
+    const byUser = this.getOrCreateChatSessions(tenantId);
+    const sessions = byUser.get(payload.user_id) ?? [];
+    const existing = sessions.find((entry) => entry.id === payload.id);
+    const nowIso = new Date().toISOString();
+    const session: ChatSessionRecord = {
+      ...payload,
+      tenant_id: tenantId,
+      created_at: existing?.created_at ?? nowIso,
+      updated_at: nowIso
+    };
+    const next = sessions.filter((entry) => entry.id !== payload.id);
+    next.push(session);
+    byUser.set(payload.user_id, next);
+    return session;
+  }
+
   async appendAuditLog(eventType: string, payload: Record<string, unknown>, context?: StoreRequestContext): Promise<void> {
     this.auditLogs.push({
       tenant_id: resolveTenantId(context),
@@ -187,6 +256,8 @@ export class InMemoryMetadataStore implements MetadataStore {
     this.reportRunsByIdByTenant.clear();
     this.contractVersionsByTenant.clear();
     this.systemStateByTenant.clear();
+    this.usersByTenant.clear();
+    this.chatSessionsByTenant.clear();
     this.auditLogs.length = 0;
   }
 
@@ -256,6 +327,28 @@ export class InMemoryMetadataStore implements MetadataStore {
 
     const created = new Map<string, Record<string, unknown>>();
     this.systemStateByTenant.set(tenantId, created);
+    return created;
+  }
+
+  private getOrCreateUsers(tenantId: string): Map<string, PlatformUserRecord> {
+    const existing = this.usersByTenant.get(tenantId);
+    if (existing) {
+      return existing;
+    }
+
+    const created = new Map<string, PlatformUserRecord>();
+    this.usersByTenant.set(tenantId, created);
+    return created;
+  }
+
+  private getOrCreateChatSessions(tenantId: string): Map<string, ChatSessionRecord[]> {
+    const existing = this.chatSessionsByTenant.get(tenantId);
+    if (existing) {
+      return existing;
+    }
+
+    const created = new Map<string, ChatSessionRecord[]>();
+    this.chatSessionsByTenant.set(tenantId, created);
     return created;
   }
 }
