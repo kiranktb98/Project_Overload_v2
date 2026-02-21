@@ -1433,14 +1433,6 @@ export async function handleChatTurn(input: {
       };
     }
 
-    const prepSimpleQueryAction = await inferNaturalQueryAction(rawMessage, nextState, input.api_client);
-    if (prepSimpleQueryAction) {
-      return executeNaturalSimpleQuery(nextState, input.api_client, prepSimpleQueryAction, {
-        user_message: rawMessage,
-        query_router: input.query_router
-      });
-    }
-
     return {
       assistant_message: "Data preparation decision pending (Run Data Preparation / Continue scoping).",
       state: nextState
@@ -1461,14 +1453,6 @@ export async function handleChatTurn(input: {
         assistant_message: "Sounds good. Continue scoping and tell me what to refine before we run.",
         state: nextState
       };
-    }
-
-    const scopedSimpleQueryAction = await inferNaturalQueryAction(rawMessage, nextState, input.api_client);
-    if (scopedSimpleQueryAction) {
-      return executeNaturalSimpleQuery(nextState, input.api_client, scopedSimpleQueryAction, {
-        user_message: rawMessage,
-        query_router: input.query_router
-      });
     }
 
     return {
@@ -3889,13 +3873,16 @@ function escapeRegExp(value: string): string {
 }
 
 async function maybePrepareOrRun(state: ChatState, apiClient: WebApiClient): Promise<ChatTurnResponse> {
-  if (state.prep_complete) {
-    // Already confirmed scope in a previous turn — run now
+  if (state.prep_complete && state.prepared_payloads.length > 0) {
+    // Already confirmed scope in a previous turn with prepared payloads — run now.
     return buildAnalysisConfirmation(state);
   }
 
-  // Show scope confirmation first
-  return buildPreparationConfirmation(state, apiClient);
+  // Either preparation has not run yet, or payloads were not produced successfully.
+  const normalized = parseChatState(state);
+  normalized.prep_complete = false;
+  normalized.scope_pending = false;
+  return buildPreparationConfirmation(normalized, apiClient);
 }
 
 async function buildPreparationConfirmation(state: ChatState, apiClient: WebApiClient): Promise<ChatTurnResponse> {
@@ -3970,13 +3957,25 @@ async function buildPreparationConfirmation(state: ChatState, apiClient: WebApiC
 
 function buildAnalysisConfirmation(state: ChatState): ChatTurnResponse {
   const nextState = parseChatState(state);
+  const payloadCount = nextState.prepared_payloads.length;
+  if (payloadCount === 0) {
+    nextState.prep_complete = false;
+    nextState.prep_pending = true;
+    nextState.scope_pending = false;
+    return {
+      assistant_message: [
+        "Data preparation has not produced validated payloads yet.",
+        "Run Data Preparation to generate payloads before starting analysis."
+      ].join("\n"),
+      state: nextState
+    };
+  }
+
   nextState.scope_pending = true;
   nextState.prep_pending = false;
-
-  const payloadCount = nextState.prepared_payloads.length;
   const payloadLine = payloadCount > 0
     ? `Prepared payloads: ${payloadCount} question${payloadCount === 1 ? "" : "s"}.`
-    : "Prepared payloads are ready.";
+    : "Prepared payloads are not available yet.";
 
   return {
     assistant_message: [
@@ -4237,6 +4236,22 @@ async function executePreparation(state: ChatState, apiClient: WebApiClient): Pr
   nextState.preparation_summary = prepared.planner_summary ?? null;
   if (prepared.token_usage) {
     nextState.last_token_usage = prepared.token_usage;
+  }
+
+  if (prepared.prepared_payloads.length === 0) {
+    nextState.prep_complete = false;
+    nextState.scope_pending = false;
+    nextState.prep_pending = true;
+    return {
+      assistant_message: [
+        "Data preparation did not produce validated payloads yet.",
+        prepared.planner_summary ? `Preparation note: ${prepared.planner_summary}` : "",
+        "Analysis cannot start until payloads are generated. Please run Data Preparation again."
+      ]
+        .filter((line) => line.length > 0)
+        .join("\n"),
+      state: nextState
+    };
   }
 
   const payloadLines = prepared.prepared_payloads
