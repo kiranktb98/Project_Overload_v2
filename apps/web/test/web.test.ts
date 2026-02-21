@@ -24,6 +24,34 @@ describe("web chat interface", () => {
     await app.close();
   });
 
+  it("names a chat from the first two user messages", async () => {
+    const app = buildWebApp({
+      conversation_client: {
+        provider: "openrouter",
+        mode: "provider",
+        async respond(input) {
+          return { message: input.action_context };
+        },
+        async nameConversation() {
+          return { title: "Monthly Refund Deep Dive" };
+        }
+      }
+    });
+
+    const response = await app.inject({
+      method: "POST",
+      url: "/api/chat/name",
+      payload: {
+        messages: ["show me refunds by city", "compare this month vs prior month"]
+      }
+    });
+
+    expect(response.statusCode).toBe(200);
+    expect(response.json()).toEqual({ title: "Monthly Refund Deep Dive" });
+
+    await app.close();
+  });
+
   it("persists state updates from set commands", async () => {
     const app = buildWebApp({
       conversation_client: createPassthroughConversationClient()

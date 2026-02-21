@@ -68,6 +68,14 @@ describe("conversation client", () => {
     expect(response.message).toBe("Base response");
   });
 
+  it("returns deterministic chat title in passthrough mode", async () => {
+    const client = createPassthroughConversationClient();
+    const response = await client.nameConversation?.({
+      first_user_messages: ["show me monthly refunds", "compare with previous month"]
+    });
+    expect(response?.title).toContain("Show Me Monthly");
+  });
+
   it("uses provider response text when available", async () => {
     const calls: Array<{ input: RequestInfo | URL; init?: RequestInit }> = [];
     const client = createConversationClient({

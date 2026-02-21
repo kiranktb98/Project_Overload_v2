@@ -10,6 +10,7 @@ import {
   parseChatState
 } from "./chat";
 import {
+  buildDeterministicConversationTitle,
   createConversationClientFromEnv,
   type ConversationClient
 } from "./conversation";
@@ -19,6 +20,9 @@ import {
 } from "./query-router";
 import { renderChatPage } from "./page";
 import { renderConnectionPage } from "./connect-page";
+import { renderLoginPage } from "./login-page";
+import { renderUsageMetricsPage } from "./usage-page";
+import { renderGlobalConfigPage } from "./config-page";
 
 export type WebAppDependencies = {
   api_base_url?: string;
@@ -43,6 +47,74 @@ export function buildWebApp(options: WebAppDependencies = {}) {
     options.conversation_client ?? createConversationClientFromEnv({ fetch_impl: options.fetch_impl });
   const queryRouter =
     options.query_router ?? createQueryRouterClientFromEnv({ fetch_impl: options.fetch_impl });
+  const authEnabled = isUiAuthEnabled();
+
+  app.addHook("preHandler", async (request, reply) => {
+    if (!authEnabled) {
+      return;
+    }
+
+    const pathname = request.url.split("?")[0];
+    if (pathname === "/health" || pathname === "/login" || pathname === "/auth/login") {
+      return;
+    }
+
+    if (isAuthenticatedRequest(request.headers.cookie)) {
+      return;
+    }
+
+    if (pathname.startsWith("/api/") || pathname.startsWith("/auth/")) {
+      return reply.code(401).send({
+        message: "Unauthorized"
+      });
+    }
+
+    return reply.redirect("/login");
+  });
+
+  app.get("/login", async (request, reply) => {
+    if (authEnabled && isAuthenticatedRequest(request.headers.cookie)) {
+      return reply.redirect("/");
+    }
+    return reply.type("text/html; charset=utf-8").send(renderLoginPage());
+  });
+
+  const LoginPayloadSchema = z.object({
+    username: z.string(),
+    password: z.string()
+  });
+
+  app.post("/auth/login", async (request, reply) => {
+    if (!authEnabled) {
+      return reply.code(200).send({ ok: true, bypassed: true });
+    }
+
+    const parsed = LoginPayloadSchema.safeParse(request.body ?? {});
+    if (!parsed.success) {
+      return reply.code(400).send({
+        message: "Invalid login payload"
+      });
+    }
+
+    if (parsed.data.username !== "test123" || parsed.data.password !== "test123") {
+      return reply.code(401).send({
+        message: "Invalid credentials"
+      });
+    }
+
+    reply.header("set-cookie", "po_demo_auth=1; Path=/; HttpOnly; SameSite=Lax; Max-Age=604800");
+    return reply.code(200).send({ ok: true });
+  });
+
+  app.post("/auth/logout", async (_request, reply) => {
+    if (authEnabled) {
+      reply.header(
+        "set-cookie",
+        "po_demo_auth=; Path=/; HttpOnly; SameSite=Lax; Expires=Thu, 01 Jan 1970 00:00:00 GMT"
+      );
+    }
+    return reply.redirect("/login");
+  });
 
   app.get("/health", async () => ({ status: "ok", service: "web" }));
   app.get("/api/chat/runtime", async () => ({
@@ -52,12 +124,53 @@ export function buildWebApp(options: WebAppDependencies = {}) {
     query_router_mode: queryRouter.mode
   }));
 
+  const ChatNameRequestSchema = z.object({
+    messages: z.array(z.string().trim().min(1)).min(1).max(2)
+  });
+
+  app.post("/api/chat/name", async (request, reply) => {
+    const parsed = ChatNameRequestSchema.safeParse(request.body ?? {});
+    if (!parsed.success) {
+      return reply.code(400).send({
+        message: "Invalid naming payload",
+        issues: parsed.error.issues
+      });
+    }
+
+    try {
+      const catalogCtx = await fetchCatalogContext(apiClient);
+      const result = conversationClient.nameConversation
+        ? await conversationClient.nameConversation({
+            first_user_messages: parsed.data.messages,
+            catalog_summary: catalogCtx.catalog_summary,
+            business_context: catalogCtx.business_context
+          })
+        : { title: buildDeterministicConversationTitle(parsed.data.messages) };
+
+      return reply.code(200).send({
+        title: result.title
+      });
+    } catch {
+      return reply.code(200).send({
+        title: buildDeterministicConversationTitle(parsed.data.messages)
+      });
+    }
+  });
+
   app.get("/", async (_request, reply) => {
     return reply.type("text/html; charset=utf-8").send(renderChatPage());
   });
 
   app.get("/connect", async (_request, reply) => {
     return reply.type("text/html; charset=utf-8").send(renderConnectionPage());
+  });
+
+  app.get("/usage", async (_request, reply) => {
+    return reply.type("text/html; charset=utf-8").send(renderUsageMetricsPage());
+  });
+
+  app.get("/config", async (_request, reply) => {
+    return reply.type("text/html; charset=utf-8").send(renderGlobalConfigPage());
   });
 
   app.post("/api/chat", async (request, reply) => {
@@ -681,6 +794,31 @@ function buildSafeChatFailureMessage(error: unknown): string {
   }
 
   return `I could not complete that action safely. ${rawMessage}`;
+}
+
+function isUiAuthEnabled(): boolean {
+  if (process.env.NODE_ENV === "test") {
+    return false;
+  }
+
+  const raw = (process.env.WEB_FAKE_AUTH ?? "true").trim().toLowerCase();
+  return raw !== "false" && raw !== "0" && raw !== "off";
+}
+
+function isAuthenticatedRequest(cookieHeader: string | undefined): boolean {
+  if (!cookieHeader || cookieHeader.length === 0) {
+    return false;
+  }
+
+  const parts = cookieHeader.split(";");
+  for (const part of parts) {
+    const [key, ...valueParts] = part.trim().split("=");
+    if (key === "po_demo_auth" && valueParts.join("=").trim() === "1") {
+      return true;
+    }
+  }
+
+  return false;
 }
 
 async function proxyToApi(input: {
