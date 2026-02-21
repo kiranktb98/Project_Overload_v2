@@ -9,17 +9,18 @@ export function renderChatPage(): string {
       @import url("https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap");
 
       :root {
-        --ink: #0d1a33;
-        --ink-soft: #4b5f82;
-        --surface: rgba(255, 255, 255, 0.92);
-        --surface-strong: #ffffff;
-        --line: rgba(16, 42, 84, 0.16);
-        --line-soft: rgba(16, 42, 84, 0.08);
-        --primary: #0f2e6d;
-        --primary-2: #1f4d9c;
-        --primary-3: #3674d8;
-        --glow: rgba(42, 95, 188, 0.26);
-        --shadow: 0 30px 60px rgba(9, 22, 50, 0.18);
+        --ink: #e9f1ff;
+        --ink-soft: #6f86b4;
+        --panel: #050f2d;
+        --panel-2: #07143a;
+        --panel-3: #0a1f50;
+        --line: #14386f;
+        --line-soft: #20509d;
+        --accent: #5444ff;
+        --accent-2: #6958ff;
+        --accent-3: #3b88ff;
+        --glow: rgba(85, 72, 255, 0.45);
+        --shadow: 0 18px 48px rgba(1, 8, 32, 0.44);
       }
 
       * {
@@ -32,10 +33,9 @@ export function renderChatPage(): string {
         font-family: "Space Grotesk", sans-serif;
         color: var(--ink);
         background:
-          radial-gradient(circle at 8% 10%, rgba(31, 77, 156, 0.22), transparent 32%),
-          radial-gradient(circle at 88% -8%, rgba(54, 116, 216, 0.24), transparent 34%),
-          radial-gradient(circle at 56% 120%, rgba(80, 151, 255, 0.22), transparent 36%),
-          linear-gradient(148deg, #edf3ff 0%, #e8f2ff 38%, #f7fafe 100%);
+          radial-gradient(circle at -8% 22%, rgba(80, 110, 255, 0.15), transparent 26%),
+          radial-gradient(circle at 104% -8%, rgba(98, 80, 255, 0.12), transparent 24%),
+          linear-gradient(180deg, #02071b 0%, #030b27 50%, #030d2e 100%);
       }
 
       body::before {
@@ -45,27 +45,329 @@ export function renderChatPage(): string {
         pointer-events: none;
         background-image: linear-gradient(
           to right,
-          rgba(22, 53, 110, 0.035) 1px,
+          rgba(108, 138, 214, 0.05) 1px,
           transparent 1px
         );
-        background-size: 44px 44px;
-        mask-image: radial-gradient(circle at 50% 35%, rgba(0, 0, 0, 0.85), transparent 80%);
+        background-size: 60px 60px;
+        mask-image: radial-gradient(circle at 50% 45%, rgba(0, 0, 0, 0.86), transparent 92%);
       }
 
       .page {
-        width: min(1520px, 100% - 28px);
-        margin: 14px auto;
+        width: 100%;
+        margin: 0;
+      }
+
+      .layout {
+        display: grid;
+        grid-template-columns: 198px 248px 1fr;
+        gap: 0;
+        min-height: 100vh;
+      }
+
+      .platform-panel {
+        border: 1px solid var(--line);
+        border-right: 1px solid #112f62;
+        border-radius: 0;
+        background: linear-gradient(180deg, rgba(6, 17, 47, 0.98), rgba(5, 13, 36, 0.98));
+        box-shadow: var(--shadow);
+        display: flex;
+        flex-direction: column;
+        padding: 14px 14px 12px;
+      }
+
+      .platform-brand {
+        display: flex;
+        align-items: center;
+        gap: 10px;
+        padding: 8px 6px 14px;
+        margin-bottom: 6px;
+        border-bottom: 1px solid #173469;
+      }
+
+      .platform-brand-badge {
+        width: 36px;
+        height: 36px;
+        border-radius: 12px;
+        display: grid;
+        place-items: center;
+        font-weight: 700;
+        color: #f3f8ff;
+        background: linear-gradient(135deg, #4e3eff, #6e56ff);
+        box-shadow: 0 12px 20px rgba(82, 73, 255, 0.36);
+      }
+
+      .platform-brand strong {
+        display: block;
+        font-size: 0.76rem;
+        line-height: 1.1;
+        letter-spacing: 0.06em;
+        text-transform: uppercase;
+      }
+
+      .platform-brand span {
+        display: block;
+        margin-top: 2px;
+        font-family: "JetBrains Mono", monospace;
+        font-size: 0.63rem;
+        letter-spacing: 0.2em;
+        text-transform: uppercase;
+        color: #8199c6;
+      }
+
+      .platform-section {
+        margin: 14px 8px 8px;
+        font-size: 0.62rem;
+        letter-spacing: 0.24em;
+        text-transform: uppercase;
+        color: var(--ink-soft);
+      }
+
+      .platform-nav {
+        display: flex;
+        flex-direction: column;
+        gap: 6px;
+      }
+
+      .platform-link {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        padding: 10px 11px;
+        border-radius: 11px;
+        color: #90a7d8;
+        text-decoration: none;
+        border: 1px solid transparent;
+        font-size: 0.84rem;
+        font-weight: 500;
+      }
+
+      .platform-link .link-icon {
+        width: 14px;
+        text-align: center;
+        color: #6f8ac1;
+      }
+
+      .platform-link:hover {
+        background: rgba(24, 49, 112, 0.45);
+        border-color: #2f4f9e;
+      }
+
+      .platform-link.active {
+        background: linear-gradient(135deg, #4e3dff, #5d4dff 55%, #6d5dff);
+        border-color: rgba(143, 160, 255, 0.48);
+        color: #f3f8ff;
+        box-shadow: 0 10px 22px rgba(82, 74, 255, 0.32);
+      }
+
+      .platform-link.active .link-icon {
+        color: #e8f1ff;
+      }
+
+      .platform-footer {
+        margin-top: auto;
+        display: flex;
+        flex-direction: column;
+        gap: 10px;
+      }
+
+      .platform-user {
+        display: flex;
+        align-items: center;
+        gap: 10px;
+        border: 1px solid #1d366f;
+        border-radius: 12px;
+        padding: 9px 10px;
+        background: rgba(8, 20, 53, 0.92);
+      }
+
+      .platform-user-avatar {
+        width: 28px;
+        height: 28px;
+        border-radius: 9px;
+        display: grid;
+        place-items: center;
+        border: 1px solid #2f4d95;
+        color: #9cb3e3;
+        background: rgba(12, 29, 72, 0.9);
+      }
+
+      .platform-user small {
+        display: block;
+        color: #6e86bd;
+        font-size: 0.63rem;
+        text-transform: uppercase;
+        letter-spacing: 0.12em;
+      }
+
+      .platform-user strong {
+        display: block;
+        margin-top: 2px;
+        font-size: 0.81rem;
+      }
+
+      .platform-support {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 8px;
+        border: 1px solid #1e366f;
+        border-radius: 12px;
+        padding: 8px 10px 8px 11px;
+        background: rgba(7, 17, 46, 0.9);
+      }
+
+      .platform-support span {
+        color: var(--ink-soft);
+        font-size: 0.72rem;
+        letter-spacing: 0.08em;
+        text-transform: uppercase;
+      }
+
+      .platform-support form {
+        margin: 0;
+      }
+
+      .logout-btn {
+        border: 1px solid #2f4e9f;
+        border-radius: 10px;
+        background: rgba(15, 33, 79, 0.92);
+        color: #cfddff;
+        padding: 6px 9px;
+        font-family: "JetBrains Mono", monospace;
+        font-size: 0.64rem;
+        cursor: pointer;
+      }
+
+      .history-panel {
+        border: 1px solid var(--line);
+        border-left: none;
+        border-right: 1px solid #123065;
+        border-radius: 0;
+        background: linear-gradient(180deg, rgba(6, 18, 49, 0.98), rgba(5, 14, 37, 0.98));
+        box-shadow: var(--shadow);
+        backdrop-filter: blur(16px);
+        display: flex;
+        flex-direction: column;
+        gap: 12px;
+        padding: 12px 12px 11px;
+      }
+
+      .history-title {
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        padding: 7px 10px 12px;
+        margin-bottom: 2px;
+        border-radius: 12px;
+        border-bottom: 1px solid #1a3a75;
+      }
+
+      .history-title strong {
+        font-size: 0.92rem;
+        letter-spacing: 0.02em;
+      }
+
+      .new-chat-btn {
+        appearance: none;
+        border: 1px solid #2f4f9d;
+        border-radius: 999px;
+        width: 25px;
+        height: 25px;
+        font-size: 0.92rem;
+        line-height: 1;
+        cursor: pointer;
+        color: #d7e6ff;
+        background: linear-gradient(135deg, #0f2f7f, #1d4aa8);
+      }
+
+      .new-chat-btn:disabled {
+        opacity: 0.6;
+        cursor: wait;
+      }
+
+      .history-list {
+        display: flex;
+        flex-direction: column;
+        gap: 10px;
+        overflow-y: auto;
+        padding-right: 2px;
+      }
+
+      .history-list::-webkit-scrollbar {
+        width: 8px;
+      }
+
+      .history-list::-webkit-scrollbar-thumb {
+        background: #1c3f85;
+        border-radius: 999px;
+      }
+
+      .history-empty {
+        border: 1px dashed #2d4d93;
+        border-radius: 12px;
+        padding: 12px;
+        color: var(--ink-soft);
+        font-size: 0.74rem;
+        background: rgba(10, 23, 57, 0.56);
+      }
+
+      .history-item {
+        width: 100%;
+        text-align: left;
+        padding: 10px 11px;
+        border-radius: 12px;
+        border: 1px solid #1f3b77;
+        background: rgba(9, 22, 57, 0.78);
+        color: inherit;
+        cursor: pointer;
+        transition: border-color 130ms ease, transform 130ms ease, background 130ms ease;
+      }
+
+      .history-item.active {
+        border-color: #4f6cff;
+        background: linear-gradient(135deg, rgba(39, 58, 140, 0.82), rgba(18, 36, 94, 0.94));
+        box-shadow: inset 0 0 0 1px rgba(113, 126, 255, 0.2);
+      }
+
+      .history-item:hover {
+        transform: translateY(-1px);
+        border-color: #3156ab;
+      }
+
+      .history-item-head {
+        display: flex;
+        justify-content: space-between;
+        gap: 8px;
+      }
+
+      .history-item h3 {
+        margin: 0;
+        font-size: 0.8rem;
+        font-weight: 600;
+      }
+
+      .history-item time {
+        font-family: "JetBrains Mono", monospace;
+        color: var(--ink-soft);
+        font-size: 0.65rem;
+      }
+
+      .history-item p {
+        margin: 6px 0 0;
+        color: var(--ink-soft);
+        font-size: 0.71rem;
       }
 
       .chat-shell {
         border: 1px solid var(--line);
-        border-radius: 24px;
-        background: var(--surface);
+        border-left: none;
+        border-radius: 0;
+        background: linear-gradient(180deg, rgba(4, 11, 33, 0.98), rgba(2, 8, 26, 0.99));
         box-shadow: var(--shadow);
         backdrop-filter: blur(16px);
         display: grid;
         grid-template-rows: auto 1fr auto;
-        min-height: 93vh;
+        min-height: 100vh;
         overflow: hidden;
         animation: shell-reveal 360ms ease;
       }
@@ -85,86 +387,118 @@ export function renderChatPage(): string {
         display: flex;
         justify-content: space-between;
         align-items: center;
-        padding: 18px 24px;
-        border-bottom: 1px solid var(--line);
-        background:
-          linear-gradient(140deg, rgba(255, 255, 255, 0.94), rgba(245, 249, 255, 0.84));
+        padding: 11px 18px;
+        border-bottom: 1px solid #173b77;
+        background: linear-gradient(180deg, rgba(8, 19, 48, 0.98), rgba(7, 18, 44, 0.97));
       }
 
-      .chat-head strong {
-        font-size: 1.08rem;
-        letter-spacing: 0.01em;
-      }
-
-      .chat-head-right {
+      .chat-head-left {
         display: flex;
         align-items: center;
         gap: 12px;
       }
 
-      .nav-link {
-        color: #10336e;
-        font-size: 0.76rem;
-        text-decoration: none;
-        font-family: "JetBrains Mono", monospace;
-        padding: 6px 10px;
-        border: 1px solid rgba(16, 51, 110, 0.16);
-        border-radius: 999px;
-        transition: transform 140ms ease, border-color 140ms ease, background 140ms ease;
+      .chat-head-mark {
+        width: 28px;
+        height: 28px;
+        border-radius: 10px;
+        border: 1px solid #3552a9;
+        background: linear-gradient(135deg, #4f3eff, #6557ff);
+        display: grid;
+        place-items: center;
+        font-weight: 700;
+        color: #fff;
+        box-shadow: 0 8px 20px rgba(86, 74, 255, 0.34);
       }
 
-      .nav-link:hover {
-        transform: translateY(-1px);
-        border-color: rgba(16, 51, 110, 0.28);
-        background: rgba(255, 255, 255, 0.76);
+      .chat-head-copy strong {
+        display: block;
+        font-size: 0.96rem;
+        letter-spacing: 0.01em;
+      }
+
+      .chat-subtitle {
+        display: block;
+        margin-top: 1px;
+        font-family: "JetBrains Mono", monospace;
+        font-size: 0.6rem;
+        text-transform: uppercase;
+        letter-spacing: 0.18em;
+        color: #7085b6;
+      }
+
+      .chat-head-right {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+      }
+
+      .head-icon {
+        width: 30px;
+        height: 30px;
+        border-radius: 9px;
+        border: 1px solid #2b4d98;
+        background: rgba(16, 35, 83, 0.88);
+        color: #afc3f3;
+        font-family: "JetBrains Mono", monospace;
+        font-size: 0.72rem;
+        cursor: default;
       }
 
       .status {
         font-family: "JetBrains Mono", monospace;
-        font-size: 0.7rem;
+        font-size: 0.62rem;
         color: var(--ink-soft);
-        padding: 6px 11px;
+        padding: 6px 10px 5px;
         border-radius: 999px;
-        border: 1px solid rgba(16, 42, 84, 0.16);
-        background: rgba(255, 255, 255, 0.8);
+        border: 1px solid #29498e;
+        background: rgba(10, 29, 70, 0.88);
       }
 
       .messages {
-        padding: 24px;
+        padding: 16px 22px 14px;
         overflow-y: auto;
-        max-height: calc(93vh - 148px);
-        background:
-          linear-gradient(180deg, rgba(250, 252, 255, 0.72), rgba(244, 248, 255, 0.35));
+        max-height: calc(100vh - 178px);
+        background: linear-gradient(180deg, rgba(3, 10, 29, 0.98), rgba(2, 8, 24, 0.99));
+      }
+
+      .messages::-webkit-scrollbar {
+        width: 9px;
+      }
+
+      .messages::-webkit-scrollbar-thumb {
+        border-radius: 999px;
+        background: #1c3d7d;
       }
 
       .bubble {
         width: fit-content;
-        max-width: min(88%, 900px);
-        margin-bottom: 14px;
-        padding: 12px 16px;
+        max-width: min(86%, 960px);
+        margin-bottom: 13px;
+        padding: 12px 15px;
         border-radius: 16px;
-        line-height: 1.62;
+        line-height: 1.6;
         word-break: break-word;
-        font-size: 0.92rem;
+        font-size: 0.91rem;
       }
 
       .bubble.user {
         margin-left: auto;
         color: #f7fbff;
-        background: linear-gradient(135deg, #123379 0%, #2056ab 55%, #2b69cc 100%);
-        border: 1px solid rgba(18, 51, 121, 0.35);
-        box-shadow: 0 14px 26px rgba(18, 51, 121, 0.26);
+        background: linear-gradient(135deg, #4e40ff 0%, #5f4eff 55%, #6e5dff 100%);
+        border: 1px solid rgba(133, 120, 255, 0.44);
+        box-shadow: 0 12px 24px rgba(84, 73, 255, 0.34);
         white-space: pre-wrap;
       }
 
       .bubble.assistant {
-        background: var(--surface-strong);
-        border: 1px solid rgba(16, 42, 84, 0.11);
-        box-shadow: 0 10px 24px rgba(13, 26, 51, 0.08);
+        background: linear-gradient(160deg, rgba(8, 22, 56, 0.96), rgba(6, 18, 46, 0.96));
+        border: 1px solid #1f3f82;
+        box-shadow: 0 9px 22px rgba(1, 8, 26, 0.34);
       }
 
       .bubble.assistant a {
-        color: #1848a4;
+        color: #80aefc;
         font-weight: 700;
       }
 
@@ -187,7 +521,7 @@ export function renderChatPage(): string {
       .bubble.assistant code {
         font-family: "JetBrains Mono", monospace;
         font-size: 0.83em;
-        background: rgba(16, 42, 84, 0.08);
+        background: rgba(106, 129, 209, 0.2);
         padding: 1px 6px;
         border-radius: 5px;
       }
@@ -240,7 +574,7 @@ export function renderChatPage(): string {
         width: 6px;
         height: 6px;
         border-radius: 50%;
-        background: var(--primary-2);
+        background: var(--accent-2);
         animation: pulse 1.4s ease-in-out infinite;
       }
 
@@ -259,13 +593,13 @@ export function renderChatPage(): string {
 
       .exec-brief-embed {
         margin-top: 12px;
-        padding: 14px;
-        border: 1px solid rgba(31, 77, 156, 0.21);
-        border-radius: 12px;
-        background: rgba(246, 250, 255, 0.95);
+        padding: 0;
+        border: 1px solid #243d84;
+        border-radius: 22px;
+        background: linear-gradient(180deg, rgba(5, 13, 38, 0.97), rgba(4, 10, 30, 0.97));
         font-size: 0.85rem;
         line-height: 1.55;
-        max-height: 480px;
+        max-height: 620px;
         overflow-y: auto;
       }
 
@@ -293,62 +627,82 @@ export function renderChatPage(): string {
         margin-top: 10px;
         padding: 8px;
         border-radius: 8px;
-        background: rgba(54, 116, 216, 0.1);
-        border: 1px solid rgba(54, 116, 216, 0.18);
+        background: rgba(82, 134, 225, 0.12);
+        border: 1px solid rgba(93, 143, 232, 0.22);
         font-size: 0.8rem;
       }
 
       .composer {
-        border-top: 1px solid var(--line);
-        padding: 16px 20px 20px;
-        background: linear-gradient(180deg, rgba(250, 252, 255, 0.9), rgba(242, 247, 255, 0.8));
+        border-top: 1px solid #173b77;
+        padding: 11px 14px 13px;
+        background: linear-gradient(180deg, rgba(6, 17, 44, 0.99), rgba(5, 14, 36, 0.99));
+      }
+
+      .quick-chips {
+        display: flex;
+        gap: 8px;
+        justify-content: center;
+        flex-wrap: wrap;
+        margin-bottom: 11px;
+      }
+
+      .quick-chip {
+        border: 1px solid #28457f;
+        background: rgba(11, 27, 63, 0.92);
+        color: #94aad8;
+        border-radius: 999px;
+        padding: 6px 13px;
+        font-family: "JetBrains Mono", monospace;
+        font-size: 0.67rem;
+        text-transform: uppercase;
+        letter-spacing: 0.03em;
       }
 
       .composer form {
         display: grid;
         grid-template-columns: 1fr auto;
-        gap: 10px;
+        gap: 9px;
       }
 
       .composer textarea {
         width: 100%;
-        border-radius: 14px;
-        border: 1px solid rgba(16, 42, 84, 0.2);
-        padding: 13px 15px;
-        min-height: 48px;
-        background: rgba(255, 255, 255, 0.96);
+        border-radius: 16px;
+        border: 1px solid #2f4d95;
+        padding: 14px 16px 13px;
+        min-height: 54px;
+        background: rgba(9, 24, 58, 0.94);
         font-family: "JetBrains Mono", monospace;
-        font-size: 0.82rem;
-        color: var(--ink);
-        resize: vertical;
+        font-size: 0.8rem;
+        color: #edf3ff;
+        resize: none;
         line-height: 1.5;
       }
 
       .composer textarea:focus {
         outline: none;
-        border-color: var(--primary-3);
-        box-shadow: 0 0 0 4px rgba(54, 116, 216, 0.14);
+        border-color: #5d7eff;
+        box-shadow: 0 0 0 4px rgba(90, 112, 236, 0.2);
       }
 
       .composer button {
-        border: 1px solid rgba(14, 42, 97, 0.28);
-        border-radius: 14px;
-        padding: 0 20px;
-        min-height: 48px;
+        border: 1px solid rgba(128, 144, 255, 0.48);
+        border-radius: 15px;
+        width: 64px;
+        min-height: 54px;
         cursor: pointer;
         color: #ffffff;
-        background: linear-gradient(135deg, var(--primary), var(--primary-2) 54%, var(--primary-3));
+        background: linear-gradient(135deg, #4f3eff, #5f4dff 56%, #6c5cff);
         font-family: "Space Grotesk", sans-serif;
         font-weight: 700;
-        letter-spacing: 0.01em;
-        box-shadow: 0 14px 24px var(--glow);
+        letter-spacing: 0;
+        box-shadow: 0 10px 22px var(--glow);
         transition: transform 140ms ease, filter 140ms ease, box-shadow 140ms ease;
       }
 
       .composer button:hover {
         transform: translateY(-1px);
         filter: saturate(1.06);
-        box-shadow: 0 18px 28px rgba(29, 80, 173, 0.34);
+        box-shadow: 0 15px 26px rgba(71, 95, 229, 0.38);
       }
 
       .composer button:disabled {
@@ -357,9 +711,9 @@ export function renderChatPage(): string {
       }
 
       .decision-panel {
-        margin-bottom: 12px;
-        border: 1px solid rgba(16, 42, 84, 0.15);
-        background: rgba(255, 255, 255, 0.86);
+        margin-bottom: 10px;
+        border: 1px solid #29498f;
+        background: rgba(8, 23, 58, 0.9);
         border-radius: 14px;
         padding: 11px 12px;
       }
@@ -381,15 +735,15 @@ export function renderChatPage(): string {
       }
 
       .decision-btn {
-        border: 1px solid rgba(14, 42, 97, 0.24);
+        border: 1px solid rgba(127, 143, 255, 0.48);
         border-radius: 999px;
-        background: linear-gradient(135deg, #173f85, #2863c5);
+        background: linear-gradient(135deg, #4c40ff, #5f54ff);
         color: #ffffff;
         font-family: "JetBrains Mono", monospace;
         font-size: 0.73rem;
         padding: 7px 12px;
         cursor: pointer;
-        box-shadow: 0 8px 16px rgba(31, 84, 178, 0.25);
+        box-shadow: 0 8px 18px rgba(84, 73, 255, 0.3);
         transition: transform 120ms ease, filter 120ms ease;
       }
 
@@ -398,20 +752,39 @@ export function renderChatPage(): string {
         filter: saturate(1.06);
       }
 
-      @media (max-width: 900px) {
+      @media (max-width: 1200px) {
         .page {
-          width: calc(100% - 16px);
-          margin: 8px auto;
+          width: 100%;
+          margin: 0;
+        }
+
+        .layout {
+          grid-template-columns: 1fr;
+        }
+
+        .platform-panel {
+          display: none;
+        }
+
+        .history-panel {
+          display: none;
         }
 
         .chat-shell {
-          min-height: 96vh;
-          border-radius: 18px;
+          border-left: 1px solid var(--line);
+          border-radius: 0;
+        }
+      }
+
+      @media (max-width: 900px) {
+        .chat-shell {
+          min-height: 100vh;
+          border-radius: 0;
         }
 
         .messages {
-          padding: 16px;
-          max-height: calc(96vh - 154px);
+          padding: 14px;
+          max-height: calc(100vh - 154px);
         }
 
         .bubble {
@@ -425,46 +798,362 @@ export function renderChatPage(): string {
         .composer form {
           grid-template-columns: 1fr;
         }
+
+        .composer button {
+          width: 100%;
+        }
       }
     </style>
   </head>
   <body>
     <div class="page">
-      <main class="chat-shell">
-        <header class="chat-head">
-          <strong>Project Overload</strong>
-          <div class="chat-head-right">
-            <a class="nav-link" href="/connect">Database</a>
-            <span class="status" id="status">starting</span>
+      <div class="layout">
+        <aside class="platform-panel">
+          <div class="platform-brand">
+            <div class="platform-brand-badge">*</div>
+            <div>
+              <strong>Project Overload</strong>
+              <span>Enterprise</span>
+            </div>
           </div>
-        </header>
-        <section class="messages" id="messages"></section>
-        <section class="composer">
-          <div id="decision-panel" class="decision-panel hidden"></div>
-          <form id="composer-form">
-            <textarea id="composer-input" rows="2" placeholder="Describe the report you want, e.g. weekly refund analysis by product category"></textarea>
-            <button id="composer-send" type="submit">Send</button>
-          </form>
-        </section>
-      </main>
+          <div class="platform-section">Core Platform</div>
+          <nav class="platform-nav">
+            <a class="platform-link active" href="/"><span class="link-icon">[]</span>Chat Explorer</a>
+            <a class="platform-link" href="/usage"><span class="link-icon">=</span>Usage Metrics</a>
+          </nav>
+          <div class="platform-section">Infrastructure</div>
+          <nav class="platform-nav">
+            <a class="platform-link" href="/connect"><span class="link-icon">DB</span>Data Sources</a>
+            <a class="platform-link" href="/config"><span class="link-icon">CFG</span>Global Config</a>
+          </nav>
+          <div class="platform-footer">
+            <div class="platform-user">
+              <div class="platform-user-avatar">@</div>
+              <div>
+                <small>Admin Profile</small>
+                <strong>Project Owner</strong>
+              </div>
+            </div>
+            <div class="platform-support">
+              <span>Support</span>
+              <form method="post" action="/auth/logout">
+                <button type="submit" class="logout-btn">Sign Out</button>
+              </form>
+            </div>
+          </div>
+        </aside>
+        <aside class="history-panel">
+          <div class="history-title">
+            <strong>Chat History</strong>
+            <button id="new-chat-button" class="new-chat-btn" type="button" aria-label="Start new chat">+</button>
+          </div>
+          <div class="history-list" id="history-list">
+            <div class="history-empty">No chats yet. Start a new chat.</div>
+          </div>
+        </aside>
+        <main class="chat-shell">
+          <header class="chat-head">
+            <div class="chat-head-left">
+              <div class="chat-head-mark">*</div>
+              <div class="chat-head-copy">
+                <strong id="chat-session-title">New Chat</strong>
+                <span class="chat-subtitle">Enterprise v2.4</span>
+              </div>
+            </div>
+            <div class="chat-head-right">
+              <button class="head-icon" type="button" tabindex="-1" aria-hidden="true">↓</button>
+              <button class="head-icon" type="button" tabindex="-1" aria-hidden="true">◷</button>
+              <span class="status" id="status">starting</span>
+            </div>
+          </header>
+          <section class="messages" id="messages"></section>
+          <section class="composer">
+            <div id="decision-panel" class="decision-panel hidden"></div>
+            <div class="quick-chips">
+              <span class="quick-chip">Sales</span>
+              <span class="quick-chip">Refunds</span>
+              <span class="quick-chip">Inventory</span>
+              <span class="quick-chip">Summary</span>
+            </div>
+            <form id="composer-form">
+              <textarea id="composer-input" rows="2" placeholder="Describe the report you want, e.g. weekly refund analysis by product category"></textarea>
+              <button id="composer-send" type="submit">Send</button>
+            </form>
+          </section>
+        </main>
+      </div>
     </div>
 
     <script>
       (() => {
+        const CHAT_STORAGE_KEY = "project_overload_chat_sessions_v1";
+        const MAX_STORED_CHATS = 30;
+        const UI_CONTROL_MESSAGE_PATTERN = /^__ui_[a-z0-9_]+__$/i;
+        const INITIAL_ASSISTANT_MESSAGE =
+          "Hey! Tell me what report you'd like to build - **who's the audience** and **what metric matters most**? I'll handle the rest.";
+
         const stateRef = { value: null };
+        const chatsRef = { value: [] };
+        const activeChatIdRef = { value: null };
         const messagesEl = document.getElementById("messages");
         const statusEl = document.getElementById("status");
         const inputEl = document.getElementById("composer-input");
         const sendButtonEl = document.getElementById("composer-send");
         const formEl = document.getElementById("composer-form");
         const decisionPanelEl = document.getElementById("decision-panel");
+        const historyListEl = document.getElementById("history-list");
+        const newChatButtonEl = document.getElementById("new-chat-button");
+        const chatSessionTitleEl = document.getElementById("chat-session-title");
         const runtimeStatusRef = { mode: "checking provider", busy: false };
         const composerStateRef = { busy: false, locked: false };
         const decisionRef = { value: null };
         const defaultInputPlaceholder =
           "Describe the report you want, e.g. weekly refund analysis by product category";
 
-        /* ── Thinking indicator ── */
+        function nowIso() {
+          return new Date().toISOString();
+        }
+
+        function createChatId() {
+          if (typeof crypto !== "undefined" && typeof crypto.randomUUID === "function") {
+            return "chat_" + crypto.randomUUID();
+          }
+          return "chat_" + Date.now().toString(36) + "_" + Math.random().toString(36).slice(2, 8);
+        }
+
+        function cloneJson(value) {
+          if (value === null || value === undefined) {
+            return null;
+          }
+          try {
+            return JSON.parse(JSON.stringify(value));
+          } catch {
+            return null;
+          }
+        }
+
+        function truncate(value, maxLength) {
+          const text = String(value || "").trim();
+          if (text.length <= maxLength) {
+            return text;
+          }
+          return text.slice(0, maxLength - 3).trimEnd() + "...";
+        }
+
+        function sanitizeTitle(value) {
+          const cleaned = String(value || "")
+            .replace(/[\\r\\n]+/g, " ")
+            .replace(/^["'\`]+/, "")
+            .replace(/["'\`]+$/, "")
+            .replace(/\\s+/g, " ")
+            .trim();
+          if (!cleaned) {
+            return "New Chat";
+          }
+          return truncate(cleaned, 64);
+        }
+
+        function formatRelativeTime(iso) {
+          const ts = Date.parse(String(iso || ""));
+          if (!Number.isFinite(ts)) {
+            return "just now";
+          }
+          const diffMs = Date.now() - ts;
+          if (diffMs < 60_000) {
+            return "just now";
+          }
+          if (diffMs < 3_600_000) {
+            return Math.round(diffMs / 60_000) + "m ago";
+          }
+          if (diffMs < 86_400_000) {
+            return Math.round(diffMs / 3_600_000) + "h ago";
+          }
+          return Math.round(diffMs / 86_400_000) + "d ago";
+        }
+
+        function createEmptyChatSession() {
+          const createdAt = nowIso();
+          return {
+            id: createChatId(),
+            title: "New Chat",
+            title_auto: true,
+            naming_in_progress: false,
+            created_at: createdAt,
+            updated_at: createdAt,
+            state: null,
+            user_messages: [],
+            db_bootstrapped: false,
+            messages: [
+              {
+                role: "assistant",
+                text: INITIAL_ASSISTANT_MESSAGE,
+                download_url: null,
+                exec_brief_html: null,
+                at: createdAt
+              }
+            ]
+          };
+        }
+
+        function normalizeStoredMessage(raw) {
+          if (!raw || (raw.role !== "user" && raw.role !== "assistant")) {
+            return null;
+          }
+          const text = typeof raw.text === "string" ? raw.text : typeof raw.content === "string" ? raw.content : "";
+          const trimmed = text.trim();
+          if (!trimmed) {
+            return null;
+          }
+          return {
+            role: raw.role,
+            text: trimmed,
+            download_url: typeof raw.download_url === "string" ? raw.download_url : null,
+            exec_brief_html: typeof raw.exec_brief_html === "string" ? raw.exec_brief_html : null,
+            at: typeof raw.at === "string" ? raw.at : nowIso()
+          };
+        }
+
+        function normalizeStoredChat(raw) {
+          if (!raw || typeof raw !== "object" || typeof raw.id !== "string") {
+            return null;
+          }
+
+          const messagesRaw = Array.isArray(raw.messages) ? raw.messages : [];
+          const messages = messagesRaw
+            .map((entry) => normalizeStoredMessage(entry))
+            .filter((entry) => entry !== null);
+
+          if (messages.length === 0) {
+            messages.push({
+              role: "assistant",
+              text: INITIAL_ASSISTANT_MESSAGE,
+              download_url: null,
+              exec_brief_html: null,
+              at: nowIso()
+            });
+          }
+
+          const userMessages = Array.isArray(raw.user_messages)
+            ? raw.user_messages
+                .map((entry) => String(entry || "").trim())
+                .filter((entry) => entry.length > 0)
+                .slice(0, 12)
+            : [];
+
+          return {
+            id: raw.id,
+            title: sanitizeTitle(raw.title),
+            title_auto: raw.title_auto !== false,
+            naming_in_progress: false,
+            created_at: typeof raw.created_at === "string" ? raw.created_at : nowIso(),
+            updated_at: typeof raw.updated_at === "string" ? raw.updated_at : nowIso(),
+            state: raw.state === undefined ? null : cloneJson(raw.state),
+            user_messages: userMessages,
+            db_bootstrapped: typeof raw.db_bootstrapped === "boolean" ? raw.db_bootstrapped : true,
+            messages
+          };
+        }
+
+        function loadChatsFromStorage() {
+          try {
+            const raw = localStorage.getItem(CHAT_STORAGE_KEY);
+            if (!raw) {
+              return [];
+            }
+            const parsed = JSON.parse(raw);
+            if (!Array.isArray(parsed)) {
+              return [];
+            }
+            return parsed
+              .map((entry) => normalizeStoredChat(entry))
+              .filter((entry) => entry !== null)
+              .slice(0, MAX_STORED_CHATS);
+          } catch {
+            return [];
+          }
+        }
+
+        function saveChatsToStorage() {
+          try {
+            localStorage.setItem(CHAT_STORAGE_KEY, JSON.stringify(chatsRef.value.slice(0, MAX_STORED_CHATS)));
+          } catch {
+            // best effort only
+          }
+        }
+
+        function touchChat(chat) {
+          chat.updated_at = nowIso();
+        }
+
+        function getChatById(chatId) {
+          return chatsRef.value.find((entry) => entry.id === chatId) || null;
+        }
+
+        function getActiveChat() {
+          return getChatById(activeChatIdRef.value);
+        }
+
+        function renderSessionTitle() {
+          const active = getActiveChat();
+          chatSessionTitleEl.textContent = active ? active.title : "Project Overload";
+        }
+
+        function setActiveChatState(nextState) {
+          const active = getActiveChat();
+          if (!active) {
+            return;
+          }
+          active.state = cloneJson(nextState);
+          touchChat(active);
+          saveChatsToStorage();
+          renderHistoryList();
+        }
+
+        function renderHistoryList() {
+          historyListEl.innerHTML = "";
+          if (chatsRef.value.length === 0) {
+            const empty = document.createElement("div");
+            empty.className = "history-empty";
+            empty.textContent = "No chats yet. Start a new chat.";
+            historyListEl.appendChild(empty);
+            return;
+          }
+
+          const sorted = [...chatsRef.value].sort((a, b) => Date.parse(b.updated_at) - Date.parse(a.updated_at));
+          for (const chat of sorted) {
+            const button = document.createElement("button");
+            button.type = "button";
+            button.className = "history-item" + (chat.id === activeChatIdRef.value ? " active" : "");
+            button.disabled = runtimeStatusRef.busy;
+            button.addEventListener("click", () => {
+              if (runtimeStatusRef.busy) {
+                return;
+              }
+              activateChat(chat.id);
+            });
+
+            const titleWrap = document.createElement("div");
+            titleWrap.className = "history-item-head";
+
+            const heading = document.createElement("h3");
+            heading.textContent = chat.title;
+            titleWrap.appendChild(heading);
+
+            const time = document.createElement("time");
+            time.textContent = chat.naming_in_progress ? "naming..." : formatRelativeTime(chat.updated_at);
+            titleWrap.appendChild(time);
+
+            const snippet = document.createElement("p");
+            const lastMessage = chat.messages.length > 0 ? chat.messages[chat.messages.length - 1].text : "";
+            snippet.textContent = truncate(lastMessage, 66) || "New chat";
+
+            button.appendChild(titleWrap);
+            button.appendChild(snippet);
+            historyListEl.appendChild(button);
+          }
+        }
+
+        /* â”€â”€ Thinking indicator â”€â”€ */
         const thinkingMessages = {
           chatting: ["Thinking...", "Pondering your question...", "Mulling it over..."],
           planning: ["Exploring the data...", "Mapping the terrain...", "Scouting the columns...", "Learning the data shapes..."],
@@ -514,7 +1203,7 @@ export function renderChatPage(): string {
           }
         }
 
-        /* ── Markdown renderer ── */
+        /* â”€â”€ Markdown renderer â”€â”€ */
         function renderMarkdown(text) {
           // Escape HTML entities to prevent XSS
           const esc = text
@@ -575,7 +1264,7 @@ export function renderChatPage(): string {
 
             closeList();
 
-            // Blank line → paragraph break
+            // Blank line â†’ paragraph break
             if (line.trim() === "") {
               out.push("<br>");
               continue;
@@ -596,11 +1285,12 @@ export function renderChatPage(): string {
             .replace(/\\*(.+?)\\*/g, "<em>$1</em>");
         }
 
-        /* ── Status ── */
+        /* â”€â”€ Status â”€â”€ */
         function setBusy(isBusy) {
           runtimeStatusRef.busy = isBusy;
           composerStateRef.busy = isBusy;
           syncComposerAvailability();
+          renderHistoryList();
           renderStatus();
         }
 
@@ -812,6 +1502,7 @@ export function renderChatPage(): string {
           const disabled = composerStateRef.busy || composerStateRef.locked;
           sendButtonEl.disabled = disabled;
           inputEl.disabled = disabled;
+          newChatButtonEl.disabled = composerStateRef.busy;
           inputEl.placeholder =
             composerStateRef.locked && decisionRef.value
               ? decisionRef.value.lockPlaceholder
@@ -844,7 +1535,8 @@ export function renderChatPage(): string {
             button.addEventListener("click", () => {
               submitMessage(option.command, {
                 displayMessage: option.label,
-                forceWhenLocked: true
+                forceWhenLocked: true,
+                trackForNaming: false
               });
             });
             actions.appendChild(button);
@@ -872,31 +1564,31 @@ export function renderChatPage(): string {
           renderStatus();
         }
 
-        /* ── Messages ── */
-        function appendMessage(role, text, downloadUrl, execBriefHtml) {
+        /* â”€â”€ Messages â”€â”€ */
+                function renderMessageBubble(entry) {
           hideThinking();
 
           const bubble = document.createElement("div");
-          bubble.className = "bubble " + role;
+          bubble.className = "bubble " + entry.role;
 
           const content = document.createElement("div");
-          if (role === "assistant") {
-            content.innerHTML = renderMarkdown(text);
+          if (entry.role === "assistant") {
+            content.innerHTML = renderMarkdown(entry.text);
           } else {
-            content.textContent = text;
+            content.textContent = entry.text;
           }
           bubble.appendChild(content);
 
-          if (role === "assistant" && typeof execBriefHtml === "string" && execBriefHtml.length > 0) {
+          if (entry.role === "assistant" && typeof entry.exec_brief_html === "string" && entry.exec_brief_html.length > 0) {
             const briefContainer = document.createElement("div");
             briefContainer.className = "exec-brief-embed";
-            briefContainer.innerHTML = execBriefHtml;
+            briefContainer.innerHTML = entry.exec_brief_html;
             bubble.appendChild(briefContainer);
           }
 
-          if (role === "assistant" && typeof downloadUrl === "string" && downloadUrl.length > 0) {
+          if (entry.role === "assistant" && typeof entry.download_url === "string" && entry.download_url.length > 0) {
             const link = document.createElement("a");
-            link.href = downloadUrl;
+            link.href = entry.download_url;
             link.textContent = "Download PDF";
             link.target = "_blank";
             link.rel = "noopener noreferrer";
@@ -908,7 +1600,65 @@ export function renderChatPage(): string {
           messagesEl.scrollTop = messagesEl.scrollHeight;
         }
 
-        /* ── Submit ── */
+        function renderMessagesForActiveChat() {
+          hideThinking();
+          messagesEl.innerHTML = "";
+          const active = getActiveChat();
+          if (!active) {
+            return;
+          }
+          for (const entry of active.messages) {
+            renderMessageBubble(entry);
+          }
+          messagesEl.scrollTop = messagesEl.scrollHeight;
+        }
+
+        function appendMessage(role, text, downloadUrl, execBriefHtml, options) {
+          const opts = options || {};
+          const targetChatId = opts.chatId || activeChatIdRef.value;
+          const target = getChatById(targetChatId);
+          if (!target) {
+            return;
+          }
+
+          const messageEntry = {
+            role,
+            text: String(text || ""),
+            download_url: typeof downloadUrl === "string" && downloadUrl.length > 0 ? downloadUrl : null,
+            exec_brief_html: typeof execBriefHtml === "string" && execBriefHtml.length > 0 ? execBriefHtml : null,
+            at: nowIso()
+          };
+
+          target.messages.push(messageEntry);
+          if (target.messages.length > 160) {
+            target.messages = target.messages.slice(-160);
+          }
+
+          if (
+            role === "user" &&
+            opts.trackForNaming !== false &&
+            !UI_CONTROL_MESSAGE_PATTERN.test(String(opts.rawUserMessage || text || "").trim())
+          ) {
+            const rawUserMessage = String(opts.rawUserMessage || text || "").trim();
+            if (rawUserMessage.length > 0) {
+              target.user_messages.push(rawUserMessage);
+              if (target.user_messages.length > 8) {
+                target.user_messages = target.user_messages.slice(-8);
+              }
+              void maybeNameChat(target.id);
+            }
+          }
+
+          touchChat(target);
+          saveChatsToStorage();
+          renderHistoryList();
+          if (target.id === activeChatIdRef.value) {
+            renderSessionTitle();
+            renderMessageBubble(messageEntry);
+          }
+        }
+
+        /* â”€â”€ Submit â”€â”€ */
         async function submitMessage(message, options) {
           const opts = options || {};
           if (composerStateRef.locked && !opts.forceWhenLocked) {
@@ -925,9 +1675,12 @@ export function renderChatPage(): string {
               ? opts.displayMessage.trim()
               : value;
 
-          appendMessage("user", displayMessage);
+          appendMessage("user", displayMessage, null, null, {
+            trackForNaming: opts.trackForNaming !== false,
+            rawUserMessage: value
+          });
           setBusy(true);
-          const isRunConfirm = /^(confirm|yes|go ahead|proceed|looks good|lgtm|run it|do it|execute|approved|ok|okay|sure|start)\b/i.test(value);
+          const isRunConfirm = /^(confirm|yes|go ahead|proceed|looks good|lgtm|run it|do it|execute|approved|ok|okay|sure|start)\\b/i.test(value);
           showThinking(isRunConfirm ? "planning" : "chatting");
 
           try {
@@ -948,11 +1701,16 @@ export function renderChatPage(): string {
             }
 
             stateRef.value = payload.state;
+            setActiveChatState(payload.state);
             refreshDecisionFromState(stateRef.value);
-            appendMessage("assistant", payload.assistant_message, payload.pdf_download_url, payload.exec_brief_html);
+            appendMessage("assistant", payload.assistant_message, payload.pdf_download_url, payload.exec_brief_html, {
+              trackForNaming: false
+            });
           } catch (error) {
             const errorText = error instanceof Error ? error.message : "Unknown error";
-            appendMessage("assistant", "Network error: " + errorText);
+            appendMessage("assistant", "Network error: " + errorText, null, null, {
+              trackForNaming: false
+            });
           } finally {
             hideThinking();
             setBusy(false);
@@ -982,80 +1740,188 @@ export function renderChatPage(): string {
           renderStatus();
         }
 
-        /* ── DB context bootstrap ── */
-        async function loadDbContextForChat() {
+        /* â”€â”€ DB context bootstrap â”€â”€ */
+        function createStateFromDbContext(payload) {
+          const allowedRelations = Array.isArray(payload.allowed_relations) ? payload.allowed_relations : [];
+          const allowedSchemas = Array.isArray(payload.allowed_schemas) ? payload.allowed_schemas : [];
+          const defaultRelation = allowedRelations.length > 0 ? allowedRelations[0] : null;
+
+          return {
+            draft: {
+              name: "",
+              audience: "Executive",
+              timezone: "UTC",
+              schedule_cron: null,
+              sql_template: defaultRelation ? "SELECT * FROM " + defaultRelation : "SELECT 1",
+              metric_ids: [],
+              dimension_ids: [],
+              allowed_relations: allowedRelations,
+              allowed_schemas: allowedSchemas,
+              insight_mode: "business"
+            },
+            contract_id: null,
+            last_run_id: null,
+            last_query_id: null,
+            last_exec_brief: null,
+            conversation_history: [],
+            prep_pending: false,
+            prep_complete: false,
+            scope_pending: false,
+            metric_definitions: [],
+            pending_metric_confirmations: [],
+            pending_metric_resume_message: null,
+            pending_metric_resume_mode: null,
+            scope_clarification_pending: false,
+            scope_source_prompt: null,
+            scope_questions: [],
+            pending_query_sql: null,
+            pending_query_limit: null,
+            pending_single_query_request: null,
+            last_single_query_snapshot: null,
+            planner_summary: null,
+            preparation_summary: null,
+            prepared_payloads: [],
+            awaiting_pdf_confirmation: false,
+            awaiting_post_run_refinement: false,
+            refinement_active: false,
+            refinement_questions_remaining: 0,
+            awaiting_save_confirmation: false,
+            awaiting_schedule_confirmation: false,
+            awaiting_schedule_mode_selection: false,
+            schedule_mode_pending: null,
+            schedule_day_kind: null,
+            awaiting_custom_day_input: false,
+            last_concise_summary: null,
+            last_token_usage: null
+          };
+        }
+
+        async function bootstrapDbContextForChat(chatId) {
+          const chat = getChatById(chatId);
+          if (!chat || chat.db_bootstrapped) {
+            return;
+          }
+
           try {
             const response = await fetch("/api/db/context", { method: "GET" });
             const payload = await response.json();
-
-            if (!response.ok || !payload || payload.connected !== true) {
-              return;
+            if (response.ok && payload && payload.connected === true) {
+              chat.state = createStateFromDbContext(payload);
+              if (chat.messages.length <= 1) {
+                appendMessage(
+                  "assistant",
+                  "I see you have a database connected with **" + payload.allowed_relations.length + " table" + (payload.allowed_relations.length === 1 ? "" : "s") + "** available. Tell me what you'd like to analyze and I'll get started!",
+                  null,
+                  null,
+                  { chatId: chat.id, trackForNaming: false }
+                );
+              }
             }
-
-            const allowedRelations = Array.isArray(payload.allowed_relations) ? payload.allowed_relations : [];
-            const allowedSchemas = Array.isArray(payload.allowed_schemas) ? payload.allowed_schemas : [];
-            const defaultRelation = allowedRelations.length > 0 ? allowedRelations[0] : null;
-
-            stateRef.value = {
-              draft: {
-                name: "",
-                audience: "Executive",
-                timezone: "UTC",
-                schedule_cron: null,
-                sql_template: defaultRelation ? "SELECT * FROM " + defaultRelation : "SELECT 1",
-                metric_ids: ["metric_revenue"],
-                dimension_ids: ["region"],
-                allowed_relations: allowedRelations,
-                allowed_schemas: allowedSchemas,
-                insight_mode: "business"
-              },
-              contract_id: null,
-              last_run_id: null,
-              last_query_id: null,
-              last_exec_brief: null,
-              conversation_history: [],
-              prep_pending: false,
-              prep_complete: false,
-              scope_pending: false,
-              metric_definitions: [],
-              pending_metric_confirmations: [],
-              pending_metric_resume_message: null,
-              pending_metric_resume_mode: null,
-              scope_clarification_pending: false,
-              scope_source_prompt: null,
-              scope_questions: [],
-              pending_query_sql: null,
-              pending_query_limit: null,
-              pending_single_query_request: null,
-              last_single_query_snapshot: null,
-              planner_summary: null,
-              preparation_summary: null,
-              prepared_payloads: [],
-              awaiting_pdf_confirmation: false,
-              awaiting_post_run_refinement: false,
-              refinement_active: false,
-              refinement_questions_remaining: 0,
-              awaiting_save_confirmation: false,
-              awaiting_schedule_confirmation: false,
-              awaiting_schedule_mode_selection: false,
-              schedule_mode_pending: null,
-              schedule_day_kind: null,
-              awaiting_custom_day_input: false,
-              last_concise_summary: null,
-              last_token_usage: null
-            };
-            refreshDecisionFromState(stateRef.value);
-
-            appendMessage(
-              "assistant",
-              "I see you have a database connected with **" + allowedRelations.length + " table" + (allowedRelations.length === 1 ? "" : "s") + "** available. Tell me what you'd like to analyze and I'll get started!"
-            );
-          } catch (_error) {
+          } catch {
             // Ignore optional context bootstrap failures.
+          } finally {
+            chat.db_bootstrapped = true;
+            touchChat(chat);
+            saveChatsToStorage();
+            if (chat.id === activeChatIdRef.value) {
+              stateRef.value = cloneJson(chat.state);
+              refreshDecisionFromState(stateRef.value);
+              renderSessionTitle();
+            }
+            renderHistoryList();
           }
         }
 
-        /* ── Init ── */
+        async function maybeNameChat(chatId) {
+          const chat = getChatById(chatId);
+          if (!chat || chat.naming_in_progress || chat.title_auto !== true) {
+            return;
+          }
+
+          const messages = chat.user_messages
+            .map((entry) => String(entry || "").trim())
+            .filter((entry) => entry.length > 0)
+            .slice(0, 2);
+          if (messages.length < 2) {
+            return;
+          }
+
+          chat.naming_in_progress = true;
+          saveChatsToStorage();
+          renderHistoryList();
+
+          try {
+            const response = await fetch("/api/chat/name", {
+              method: "POST",
+              headers: { "content-type": "application/json" },
+              body: JSON.stringify({ messages })
+            });
+            const payload = await response.json();
+            if (!response.ok || !payload || typeof payload.title !== "string") {
+              return;
+            }
+            const target = getChatById(chatId);
+            if (!target || target.title_auto !== true) {
+              return;
+            }
+            target.title = sanitizeTitle(payload.title);
+            target.title_auto = false;
+            touchChat(target);
+          } catch {
+            // keep fallback title
+          } finally {
+            const target = getChatById(chatId);
+            if (target) {
+              target.naming_in_progress = false;
+              saveChatsToStorage();
+              renderHistoryList();
+              if (target.id === activeChatIdRef.value) {
+                renderSessionTitle();
+              }
+            }
+          }
+        }
+
+        function activateChat(chatId) {
+          const target = getChatById(chatId);
+          if (!target) {
+            return;
+          }
+          activeChatIdRef.value = chatId;
+          stateRef.value = cloneJson(target.state);
+          renderSessionTitle();
+          renderHistoryList();
+          renderMessagesForActiveChat();
+          refreshDecisionFromState(stateRef.value);
+          void bootstrapDbContextForChat(chatId);
+        }
+
+        function createNewChatAndActivate() {
+          const session = createEmptyChatSession();
+          chatsRef.value.unshift(session);
+          if (chatsRef.value.length > MAX_STORED_CHATS) {
+            chatsRef.value = chatsRef.value.slice(0, MAX_STORED_CHATS);
+          }
+          activeChatIdRef.value = session.id;
+          saveChatsToStorage();
+          activateChat(session.id);
+        }
+
+        function initializeSessions() {
+          const stored = loadChatsFromStorage();
+          if (stored.length === 0) {
+            const session = createEmptyChatSession();
+            chatsRef.value = [session];
+            activeChatIdRef.value = session.id;
+            saveChatsToStorage();
+          } else {
+            chatsRef.value = stored;
+            activeChatIdRef.value = stored[0].id;
+          }
+          activateChat(activeChatIdRef.value);
+        }
+
+        /* â”€â”€ Init â”€â”€ */
         formEl.addEventListener("submit", (event) => {
           event.preventDefault();
           const value = inputEl.value;
@@ -1069,14 +1935,20 @@ export function renderChatPage(): string {
           }
         });
 
-        appendMessage(
-          "assistant",
-          "Hey! Tell me what report you'd like to build - **who's the audience** and **what metric matters most**? I'll handle the rest."
-        );
+        newChatButtonEl.addEventListener("click", () => {
+          if (runtimeStatusRef.busy) {
+            return;
+          }
+          createNewChatAndActivate();
+          if (!composerStateRef.locked) {
+            inputEl.focus();
+          }
+        });
+
+        initializeSessions();
         refreshDecisionFromState(stateRef.value);
         renderStatus();
         loadRuntimeStatus();
-        loadDbContextForChat();
         if (!composerStateRef.locked) {
           inputEl.focus();
         }

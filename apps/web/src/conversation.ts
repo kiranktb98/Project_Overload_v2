@@ -20,6 +20,16 @@ export type ConversationResponse = {
   draft_updates?: DraftUpdates;
 };
 
+export type ConversationTitleInput = {
+  first_user_messages: string[];
+  catalog_summary?: string;
+  business_context?: string;
+};
+
+export type ConversationTitleResponse = {
+  title: string;
+};
+
 export type ConversationTurnInput = {
   user_message: string;
   /** Structured context from action execution — serves as fallback response if LLM is unavailable. */
@@ -34,6 +44,7 @@ export interface ConversationClient {
   provider: ConversationProvider;
   mode: "provider" | "deterministic";
   respond(input: ConversationTurnInput): Promise<ConversationResponse>;
+  nameConversation?(input: ConversationTitleInput): Promise<ConversationTitleResponse>;
 }
 
 type Fetcher = typeof fetch;
@@ -70,6 +81,9 @@ export function createPassthroughConversationClient(): ConversationClient {
     mode: "deterministic",
     async respond(input: ConversationTurnInput): Promise<ConversationResponse> {
       return { message: input.action_context };
+    },
+    async nameConversation(input: ConversationTitleInput): Promise<ConversationTitleResponse> {
+      return { title: buildDeterministicConversationTitle(input.first_user_messages) };
     }
   };
 }
@@ -164,11 +178,53 @@ type RemoteConversationClientOptions = {
 function createRemoteConversationClient(
   options: RemoteConversationClientOptions
 ): ConversationClient {
+  async function requestText(input: ConversationTurnInput): Promise<string> {
+    const request = options.request_factory(input);
+
+    const response = await fetchWithTimeout(
+      options.fetcher,
+      request.endpoint,
+      {
+        method: "POST",
+        headers: request.headers,
+        body: JSON.stringify(request.payload)
+      },
+      options.timeout_ms
+    );
+
+    if (!response.ok) {
+      const text = await response.text();
+      throw new Error(`${options.provider} chat request failed (${response.status}): ${text}`);
+    }
+
+    const payload = (await response.json()) as unknown;
+    const textPayload = extractTextPayload(payload);
+    if (!textPayload) {
+      throw new Error("Unable to parse provider response text.");
+    }
+
+    return textPayload.trim();
+  }
+
   return {
     provider: options.provider,
     mode: "provider",
     async respond(input: ConversationTurnInput): Promise<ConversationResponse> {
-      const request = options.request_factory(input);
+      const textPayload = await requestText(input);
+      return parseLlmResponse(textPayload);
+    },
+    async nameConversation(input: ConversationTitleInput): Promise<ConversationTitleResponse> {
+      const titleTurn: ConversationTurnInput = {
+        user_message: "",
+        action_context: "",
+        state: createTitleStateSkeleton(),
+        history: [],
+        catalog_summary: input.catalog_summary,
+        business_context: input.business_context
+      };
+
+      const request = options.request_factory(titleTurn);
+      request.payload = withTitleNamingPayload(request.payload, input.first_user_messages);
 
       const response = await fetchWithTimeout(
         options.fetcher,
@@ -183,16 +239,16 @@ function createRemoteConversationClient(
 
       if (!response.ok) {
         const text = await response.text();
-        throw new Error(`${options.provider} chat request failed (${response.status}): ${text}`);
+        throw new Error(`${options.provider} title request failed (${response.status}): ${text}`);
       }
 
       const payload = (await response.json()) as unknown;
       const textPayload = extractTextPayload(payload);
       if (!textPayload) {
-        throw new Error("Unable to parse provider response text.");
+        throw new Error("Unable to parse provider title response.");
       }
 
-      return parseLlmResponse(textPayload.trim());
+      return { title: sanitizeConversationTitle(textPayload) };
     }
   };
 }
@@ -209,6 +265,16 @@ function withDeterministicFallback(
         return await remote.respond(input);
       } catch {
         return fallback.respond(input);
+      }
+    },
+    async nameConversation(input: ConversationTitleInput): Promise<ConversationTitleResponse> {
+      if (!remote.nameConversation || !fallback.nameConversation) {
+        return { title: buildDeterministicConversationTitle(input.first_user_messages) };
+      }
+      try {
+        return await remote.nameConversation(input);
+      } catch {
+        return fallback.nameConversation(input);
       }
     }
   };
@@ -407,6 +473,173 @@ function conversationalUserPrompt(input: ConversationTurnInput): string {
     "Current report draft state:",
     JSON.stringify(stateSnapshot)
   ].join("\n");
+}
+
+function withTitleNamingPayload(
+  providerPayload: Record<string, unknown>,
+  firstUserMessages: string[]
+): Record<string, unknown> {
+  const cleanedMessages = firstUserMessages
+    .map((entry) => String(entry ?? "").trim())
+    .filter((entry) => entry.length > 0)
+    .slice(0, 2);
+
+  const titlePrompt = titleNamingPrompt(cleanedMessages);
+
+  if (Array.isArray(providerPayload.input)) {
+    return {
+      ...providerPayload,
+      input: [
+        {
+          role: "system",
+          content: [{ type: "text", text: titleNamingSystemPrompt() }]
+        },
+        {
+          role: "user",
+          content: [{ type: "text", text: titlePrompt }]
+        }
+      ],
+      temperature: 0
+    };
+  }
+
+  if (Array.isArray(providerPayload.messages)) {
+    return {
+      ...providerPayload,
+      messages: [
+        { role: "system", content: titleNamingSystemPrompt() },
+        { role: "user", content: titlePrompt }
+      ],
+      temperature: 0
+    };
+  }
+
+  return providerPayload;
+}
+
+function titleNamingSystemPrompt(): string {
+  return [
+    "You are the chat naming agent for Project Overload.",
+    "Generate a concise conversation title from the first one or two user messages.",
+    "Rules:",
+    "- Return only the title text.",
+    "- 2 to 6 words.",
+    "- No quotes, markdown, emoji, or punctuation at the end.",
+    "- Use clear business language."
+  ].join("\n");
+}
+
+function titleNamingPrompt(messages: string[]): string {
+  if (messages.length === 0) {
+    return "User messages:\n1) (none)";
+  }
+
+  return [
+    "User messages:",
+    ...messages.map((entry, index) => `${index + 1}) ${entry}`),
+    "Return only the title."
+  ].join("\n");
+}
+
+function sanitizeConversationTitle(raw: string): string {
+  const normalized = raw
+    .replace(/[\r\n]+/g, " ")
+    .replace(/^["'`]+/, "")
+    .replace(/["'`]+$/, "")
+    .replace(/\s+/g, " ")
+    .trim();
+
+  if (normalized.length === 0) {
+    return "New Chat";
+  }
+
+  const capped = normalized.slice(0, 64).trim();
+  if (capped.length === 0) {
+    return "New Chat";
+  }
+
+  return capped;
+}
+
+function createTitleStateSkeleton() {
+  return {
+    draft: {
+      name: "",
+      audience: "Executive",
+      timezone: "UTC",
+      schedule_cron: null,
+      sql_template: "SELECT * FROM analytics.sales",
+      metric_ids: ["metric_revenue"],
+      dimension_ids: ["region"],
+      allowed_relations: ["analytics.sales"],
+      allowed_schemas: ["analytics"],
+      insight_mode: "business" as const
+    },
+    contract_id: null,
+    last_run_id: null,
+    last_query_id: null,
+    last_exec_brief: null,
+    conversation_history: [],
+    prep_pending: false,
+    prep_complete: false,
+    scope_pending: false,
+    metric_definitions: [],
+    pending_metric_confirmations: [],
+    pending_metric_resume_message: null,
+    pending_metric_resume_mode: null,
+    scope_clarification_pending: false,
+    scope_source_prompt: null,
+    scope_questions: [],
+    pending_query_sql: null,
+    pending_query_limit: null,
+    pending_single_query_request: null,
+    last_single_query_snapshot: null,
+    planner_summary: null,
+    preparation_summary: null,
+    prepared_payloads: [],
+    awaiting_pdf_confirmation: false,
+    awaiting_post_run_refinement: false,
+    refinement_active: false,
+    refinement_questions_remaining: 0,
+    awaiting_save_confirmation: false,
+    awaiting_schedule_confirmation: false,
+    awaiting_schedule_mode_selection: false,
+    schedule_mode_pending: null,
+    schedule_day_kind: null,
+    awaiting_custom_day_input: false,
+    last_concise_summary: null,
+    last_token_usage: null
+  };
+}
+
+export function buildDeterministicConversationTitle(firstUserMessages: string[]): string {
+  const joined = firstUserMessages
+    .map((entry) => String(entry ?? "").trim())
+    .filter((entry) => entry.length > 0)
+    .slice(0, 2)
+    .join(" ");
+
+  if (joined.length === 0) {
+    return "New Chat";
+  }
+
+  const cleaned = joined
+    .replace(/[\r\n]+/g, " ")
+    .replace(/[^a-zA-Z0-9\s-]/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+
+  if (cleaned.length === 0) {
+    return "New Chat";
+  }
+
+  const words = cleaned.split(" ").slice(0, 6);
+  const title = words
+    .map((word) => word.charAt(0).toUpperCase() + word.slice(1).toLowerCase())
+    .join(" ")
+    .trim();
+
+  return title.length > 0 ? title : "New Chat";
 }
 
 function parseProvider(rawProvider: string | ConversationProvider | undefined): ConversationProvider {

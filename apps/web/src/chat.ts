@@ -421,8 +421,8 @@ const DEFAULT_DRAFT: ChatDraft = {
   timezone: "UTC",
   schedule_cron: null,
   sql_template: "SELECT * FROM analytics.sales",
-  metric_ids: ["metric_revenue"],
-  dimension_ids: ["region"],
+  metric_ids: [],
+  dimension_ids: [],
   allowed_relations: ["analytics.sales"],
   allowed_schemas: ["analytics"],
   insight_mode: "business"

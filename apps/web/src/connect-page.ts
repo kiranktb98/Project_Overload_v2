@@ -9,19 +9,19 @@ export function renderConnectionPage(): string {
       @import url("https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap");
 
       :root {
-        --ink: #0e1c36;
-        --ink-soft: #4c6389;
-        --line: rgba(17, 44, 90, 0.16);
-        --line-soft: rgba(17, 44, 90, 0.08);
-        --surface: rgba(255, 255, 255, 0.92);
-        --surface-strong: #ffffff;
-        --primary: #103575;
-        --primary-2: #1f4f9f;
-        --primary-3: #2e6dd0;
-        --warn: #cc8f19;
-        --danger: #d64545;
-        --ok: #1ea85b;
-        --shadow: 0 28px 54px rgba(7, 20, 44, 0.18);
+        --ink: #e9f1ff;
+        --ink-soft: #6f86b4;
+        --line: #14386f;
+        --line-soft: rgba(60, 104, 184, 0.42);
+        --surface: rgba(7, 19, 50, 0.98);
+        --surface-strong: rgba(9, 24, 60, 0.98);
+        --primary: #4e3dff;
+        --primary-2: #5f4dff;
+        --primary-3: #6f5fff;
+        --warn: #f59f0b;
+        --danger: #ef4444;
+        --ok: #22c55e;
+        --shadow: 0 18px 48px rgba(1, 8, 32, 0.44);
       }
 
       * { box-sizing: border-box; }
@@ -32,10 +32,9 @@ export function renderConnectionPage(): string {
         font-family: "Space Grotesk", sans-serif;
         color: var(--ink);
         background:
-          radial-gradient(circle at 10% 10%, rgba(16, 53, 117, 0.2), transparent 34%),
-          radial-gradient(circle at 90% -8%, rgba(46, 109, 208, 0.24), transparent 36%),
-          radial-gradient(circle at 50% 120%, rgba(93, 155, 255, 0.18), transparent 36%),
-          linear-gradient(152deg, #edf4ff 0%, #e7f1ff 38%, #f8fbff 100%);
+          radial-gradient(circle at -8% 22%, rgba(80, 110, 255, 0.15), transparent 26%),
+          radial-gradient(circle at 104% -8%, rgba(98, 80, 255, 0.12), transparent 24%),
+          linear-gradient(180deg, #02071b 0%, #030b27 50%, #030d2e 100%);
       }
 
       body::before {
@@ -43,65 +42,322 @@ export function renderConnectionPage(): string {
         position: fixed;
         inset: 0;
         pointer-events: none;
-        background-image:
-          linear-gradient(to right, rgba(17, 44, 90, 0.03) 1px, transparent 1px),
-          linear-gradient(to bottom, rgba(17, 44, 90, 0.03) 1px, transparent 1px);
-        background-size: 42px 42px;
-        mask-image: radial-gradient(circle at 50% 35%, rgba(0, 0, 0, 0.88), transparent 80%);
+        background-image: linear-gradient(to right, rgba(108, 138, 214, 0.05) 1px, transparent 1px);
+        background-size: 60px 60px;
+        mask-image: radial-gradient(circle at 50% 45%, rgba(0, 0, 0, 0.86), transparent 92%);
       }
 
       .page {
-        width: min(1460px, 100% - 28px);
-        margin: 18px auto 26px;
+        width: 100%;
+      }
+
+      .layout {
         display: grid;
-        grid-template-columns: 1.15fr 1fr;
-        gap: 16px;
+        grid-template-columns: 198px 1fr;
+        min-height: 100vh;
+      }
+
+      .workspace {
+        padding: 16px 18px 18px;
+      }
+
+      .platform-panel {
+        border: 1px solid var(--line);
+        border-right: 1px solid #112f62;
+        background: linear-gradient(180deg, rgba(6, 17, 47, 0.98), rgba(5, 13, 36, 0.98));
+        box-shadow: var(--shadow);
+        display: flex;
+        flex-direction: column;
+        padding: 14px 14px 12px;
+      }
+
+      .platform-brand {
+        display: flex;
+        align-items: center;
+        gap: 10px;
+        padding: 8px 6px 14px;
+        margin-bottom: 6px;
+        border-bottom: 1px solid #173469;
+      }
+
+      .platform-brand-badge {
+        width: 36px;
+        height: 36px;
+        border-radius: 12px;
+        display: grid;
+        place-items: center;
+        font-weight: 700;
+        color: #f3f8ff;
+        background: linear-gradient(135deg, #4e3eff, #6e56ff);
+        box-shadow: 0 12px 20px rgba(82, 73, 255, 0.36);
+      }
+
+      .platform-brand strong {
+        display: block;
+        font-size: 0.76rem;
+        line-height: 1.1;
+        letter-spacing: 0.06em;
+        text-transform: uppercase;
+      }
+
+      .platform-brand span {
+        display: block;
+        margin-top: 2px;
+        font-family: "JetBrains Mono", monospace;
+        font-size: 0.63rem;
+        letter-spacing: 0.2em;
+        text-transform: uppercase;
+        color: #8199c6;
+      }
+
+      .platform-section {
+        margin: 14px 8px 8px;
+        font-size: 0.62rem;
+        letter-spacing: 0.24em;
+        text-transform: uppercase;
+        color: var(--ink-soft);
+      }
+
+      .platform-nav {
+        display: flex;
+        flex-direction: column;
+        gap: 6px;
+      }
+
+      .platform-link {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        padding: 10px 11px;
+        border-radius: 11px;
+        color: #90a7d8;
+        text-decoration: none;
+        border: 1px solid transparent;
+        font-size: 0.84rem;
+        font-weight: 500;
+      }
+
+      .platform-link .link-icon {
+        width: 22px;
+        text-align: center;
+        color: #6f8ac1;
+        font-family: "JetBrains Mono", monospace;
+        font-size: 0.7rem;
+      }
+
+      .platform-link:hover {
+        background: rgba(24, 49, 112, 0.45);
+        border-color: #2f4f9e;
+      }
+
+      .platform-link.active {
+        background: linear-gradient(135deg, #4e3dff, #5d4dff 55%, #6d5dff);
+        border-color: rgba(143, 160, 255, 0.48);
+        color: #f3f8ff;
+        box-shadow: 0 10px 22px rgba(82, 74, 255, 0.32);
+      }
+
+      .platform-link.active .link-icon {
+        color: #e8f1ff;
+      }
+
+      .platform-footer {
+        margin-top: auto;
+        display: flex;
+        flex-direction: column;
+        gap: 10px;
+      }
+
+      .platform-user {
+        display: flex;
+        align-items: center;
+        gap: 10px;
+        border: 1px solid #1d366f;
+        border-radius: 12px;
+        padding: 9px 10px;
+        background: rgba(8, 20, 53, 0.92);
+      }
+
+      .platform-user-avatar {
+        width: 28px;
+        height: 28px;
+        border-radius: 9px;
+        display: grid;
+        place-items: center;
+        border: 1px solid #2f4d95;
+        color: #9cb3e3;
+        background: rgba(12, 29, 72, 0.9);
+      }
+
+      .platform-user small {
+        display: block;
+        color: #6e86bd;
+        font-size: 0.63rem;
+        text-transform: uppercase;
+        letter-spacing: 0.12em;
+      }
+
+      .platform-user strong {
+        display: block;
+        margin-top: 2px;
+        font-size: 0.81rem;
+      }
+
+      .platform-support {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 8px;
+        border: 1px solid #1e366f;
+        border-radius: 12px;
+        padding: 8px 10px 8px 11px;
+        background: rgba(7, 17, 46, 0.9);
+      }
+
+      .platform-support span {
+        color: var(--ink-soft);
+        font-size: 0.72rem;
+        letter-spacing: 0.08em;
+        text-transform: uppercase;
+      }
+
+      .platform-support form {
+        margin: 0;
+      }
+
+      .logout-btn {
+        border: 1px solid #2f4e9f;
+        border-radius: 10px;
+        background: rgba(15, 33, 79, 0.92);
+        color: #cfddff;
+        padding: 6px 9px;
+        font-family: "JetBrains Mono", monospace;
+        font-size: 0.64rem;
+        cursor: pointer;
       }
 
       .card {
-        border: 1px solid var(--line);
-        border-radius: 20px;
+        border: 1px solid #1f3f82;
+        border-radius: 14px;
         background: var(--surface);
-        backdrop-filter: blur(12px);
         box-shadow: var(--shadow);
-        padding: 16px;
+        padding: 14px;
+        margin-bottom: 12px;
       }
 
       .top {
-        grid-column: 1 / -1;
         display: flex;
         justify-content: space-between;
         align-items: center;
-        background: linear-gradient(145deg, rgba(255, 255, 255, 0.96), rgba(246, 250, 255, 0.84));
+      }
+
+      .step-track {
+        display: grid;
+        grid-template-columns: repeat(3, minmax(0, 1fr));
+        gap: 8px;
+        margin-bottom: 12px;
+      }
+
+      .step-pill {
+        border: 1px solid #234785;
+        border-radius: 12px;
+        padding: 9px 10px;
+        background: rgba(8, 23, 58, 0.88);
+        color: var(--ink-soft);
+        font-size: 0.74rem;
+        display: flex;
+        align-items: center;
+        gap: 8px;
+      }
+
+      .step-pill .num {
+        width: 22px;
+        height: 22px;
+        border-radius: 999px;
+        border: 1px solid #335899;
+        display: grid;
+        place-items: center;
+        font-family: "JetBrains Mono", monospace;
+        font-size: 0.68rem;
+      }
+
+      .step-pill.active {
+        border-color: rgba(143, 160, 255, 0.48);
+        color: #f3f8ff;
+        background: linear-gradient(135deg, #4e3dff, #5d4dff 55%, #6d5dff);
       }
 
       .top h1 {
         margin: 0;
-        font-size: 1.16rem;
+        font-size: 1.1rem;
       }
 
       .top a {
         text-decoration: none;
-        color: #153a80;
-        border: 1px solid rgba(21, 58, 128, 0.2);
-        padding: 8px 12px;
-        border-radius: 999px;
-        font-size: 0.78rem;
+        color: #d9e6ff;
+        border: 1px solid #2a4b91;
+        background: rgba(9, 26, 66, 0.95);
+        padding: 8px 10px;
+        border-radius: 10px;
+        font-size: 0.72rem;
+        font-family: "JetBrains Mono", monospace;
         transition: transform 140ms ease, border-color 140ms ease, background 140ms ease;
       }
 
       .top a:hover {
         transform: translateY(-1px);
-        border-color: rgba(21, 58, 128, 0.32);
-        background: rgba(255, 255, 255, 0.8);
+        border-color: rgba(143, 160, 255, 0.48);
+        background: rgba(12, 32, 79, 0.96);
+      }
+
+      .mode-grid {
+        display: grid;
+        grid-template-columns: 1fr 1fr;
+        gap: 10px;
+      }
+
+      .mode-btn {
+        border: 1px solid #2b4f96;
+        border-radius: 12px;
+        padding: 11px;
+        text-align: left;
+        background: rgba(8, 22, 56, 0.9);
+        color: #c8d9ff;
+        cursor: pointer;
+      }
+
+      .mode-btn strong {
+        display: block;
+        font-size: 0.8rem;
+        margin-bottom: 4px;
+      }
+
+      .mode-btn small {
+        display: block;
+        color: var(--ink-soft);
+        font-size: 0.71rem;
+      }
+
+      .mode-btn.active {
+        border-color: rgba(143, 160, 255, 0.48);
+        background: linear-gradient(134deg, var(--primary), var(--primary-2), var(--primary-3));
+        color: #ffffff;
+      }
+
+      .mode-btn.active small {
+        color: rgba(235, 244, 255, 0.92);
+      }
+
+      .panel-hidden {
+        display: none;
       }
 
       h2 {
         margin: 14px 0 8px;
-        font-size: 0.9rem;
-        letter-spacing: 0.015em;
+        font-size: 0.88rem;
+        letter-spacing: 0.08em;
         text-transform: uppercase;
-        color: #1b3f80;
+        color: #9fb4e0;
       }
 
       label {
@@ -123,18 +379,18 @@ export function renderConnectionPage(): string {
       select {
         width: 100%;
         border-radius: 12px;
-        border: 1px solid var(--line);
+        border: 1px solid #2e4d8f;
         padding: 11px 12px;
-        background: rgba(255, 255, 255, 0.96);
-        color: var(--ink);
+        background: rgba(9, 24, 58, 0.94);
+        color: #edf3ff;
       }
 
       input:focus,
       textarea:focus,
       select:focus {
         outline: none;
-        border-color: var(--primary-3);
-        box-shadow: 0 0 0 3px rgba(46, 109, 208, 0.12);
+        border-color: #5d7eff;
+        box-shadow: 0 0 0 4px rgba(90, 112, 236, 0.2);
       }
 
       textarea {
@@ -165,6 +421,8 @@ export function renderConnectionPage(): string {
         padding: 10px 14px;
         cursor: pointer;
         font-size: 0.76rem;
+        border: 1px solid transparent;
+        color: #fff;
         transition: transform 130ms ease, box-shadow 130ms ease, filter 130ms ease;
       }
 
@@ -174,28 +432,28 @@ export function renderConnectionPage(): string {
       }
 
       .primary {
-        border: 1px solid rgba(16, 53, 117, 0.28);
+        border: 1px solid rgba(143, 160, 255, 0.48);
         background: linear-gradient(134deg, var(--primary), var(--primary-2), var(--primary-3));
         color: #ffffff;
-        box-shadow: 0 12px 22px rgba(31, 79, 159, 0.26);
+        box-shadow: 0 10px 22px rgba(82, 74, 255, 0.32);
       }
 
       .secondary {
-        background: rgba(255, 255, 255, 0.86);
-        color: #153a80;
-        border: 1px solid rgba(21, 58, 128, 0.28);
+        background: rgba(10, 28, 68, 0.96);
+        color: #dbe8ff;
+        border: 1px solid #2f4d95;
       }
 
       .warn {
-        background: rgba(204, 143, 25, 0.16);
-        color: #6a4200;
-        border: 1px solid rgba(204, 143, 25, 0.42);
+        background: rgba(245, 159, 11, 0.18);
+        color: #ffe4b8;
+        border: 1px solid rgba(245, 159, 11, 0.48);
       }
 
       .danger {
-        background: rgba(214, 69, 69, 0.14);
-        color: #852020;
-        border: 1px solid rgba(214, 69, 69, 0.42);
+        background: rgba(239, 68, 68, 0.18);
+        color: #ffd2d2;
+        border: 1px solid rgba(239, 68, 68, 0.5);
       }
 
       .muted {
@@ -217,10 +475,10 @@ export function renderConnectionPage(): string {
       }
 
       .kv {
-        border: 1px solid var(--line);
+        border: 1px solid #2a4b91;
         border-radius: 12px;
         padding: 10px 12px;
-        background: rgba(255, 255, 255, 0.96);
+        background: rgba(9, 25, 61, 0.92);
         min-height: 56px;
       }
 
@@ -234,17 +492,17 @@ export function renderConnectionPage(): string {
       .kv .v {
         font-family: "JetBrains Mono", monospace;
         font-size: 0.72rem;
-        color: var(--ink);
+        color: #dbe7ff;
         word-break: break-word;
       }
 
       .table-list {
-        border: 1px solid var(--line);
+        border: 1px solid #2a4b91;
         border-radius: 12px;
         padding: 10px;
         max-height: 360px;
         overflow: auto;
-        background: rgba(255, 255, 255, 0.94);
+        background: rgba(9, 25, 61, 0.92);
       }
 
       .table-item {
@@ -258,7 +516,7 @@ export function renderConnectionPage(): string {
       }
 
       .table-item:hover {
-        background: rgba(23, 63, 133, 0.06);
+        background: rgba(39, 71, 140, 0.45);
       }
 
       .badges {
@@ -272,37 +530,37 @@ export function renderConnectionPage(): string {
         font-size: 0.66rem;
         border-radius: 999px;
         padding: 3px 8px;
-        border: 1px solid var(--line);
-        background: rgba(17, 44, 90, 0.06);
-        color: var(--ink-soft);
+        border: 1px solid #35579f;
+        background: rgba(19, 39, 88, 0.86);
+        color: #9db4e3;
         white-space: nowrap;
       }
 
       .badge.ok {
-        background: rgba(30, 168, 91, 0.14);
-        border-color: rgba(30, 168, 91, 0.3);
-        color: #166239;
+        background: rgba(30, 168, 91, 0.2);
+        border-color: rgba(30, 168, 91, 0.45);
+        color: #7be5aa;
       }
 
       .badge.warn {
-        background: rgba(204, 143, 25, 0.14);
-        border-color: rgba(204, 143, 25, 0.35);
-        color: #6a4200;
+        background: rgba(245, 159, 11, 0.2);
+        border-color: rgba(245, 159, 11, 0.46);
+        color: #ffd999;
       }
 
       .badge.danger {
-        background: rgba(214, 69, 69, 0.12);
-        border-color: rgba(214, 69, 69, 0.35);
-        color: #842323;
+        background: rgba(239, 68, 68, 0.2);
+        border-color: rgba(239, 68, 68, 0.48);
+        color: #ffcdcd;
       }
 
       .output {
-        border: 1px solid rgba(17, 44, 90, 0.28);
+        border: 1px solid #2f4d95;
         border-radius: 12px;
         padding: 10px;
         max-height: 360px;
         overflow: auto;
-        background: linear-gradient(165deg, #0e2240 0%, #0f2749 70%, #14345f 100%);
+        background: linear-gradient(165deg, #0d214f 0%, #123266 70%, #163f77 100%);
         color: #dceafe;
         font-family: "JetBrains Mono", monospace;
         font-size: 0.73rem;
@@ -311,9 +569,9 @@ export function renderConnectionPage(): string {
 
       .validation-panel {
         margin-top: 12px;
-        border: 1px solid var(--line);
+        border: 1px solid #2a4b91;
         border-radius: 14px;
-        background: rgba(255, 255, 255, 0.94);
+        background: rgba(9, 25, 61, 0.92);
         overflow: hidden;
       }
 
@@ -325,13 +583,13 @@ export function renderConnectionPage(): string {
       }
 
       .validation-summary.all-ok {
-        background: rgba(30, 168, 91, 0.1);
-        color: #166239;
+        background: rgba(30, 168, 91, 0.16);
+        color: #7be5aa;
       }
 
       .validation-summary.has-errors {
-        background: rgba(214, 69, 69, 0.1);
-        color: #8a2323;
+        background: rgba(239, 68, 68, 0.16);
+        color: #ffc5c5;
       }
 
       .val-table {
@@ -374,7 +632,7 @@ export function renderConnectionPage(): string {
       }
 
       .val-col.fail {
-        color: #8a2323;
+        color: #ffcdcd;
       }
 
       .val-spinner {
@@ -387,16 +645,26 @@ export function renderConnectionPage(): string {
 
       .callout {
         border-radius: 14px;
-        border: 1px solid rgba(204, 143, 25, 0.35);
-        background: rgba(204, 143, 25, 0.12);
+        border: 1px solid rgba(245, 159, 11, 0.46);
+        background: rgba(245, 159, 11, 0.16);
         padding: 10px 12px;
         font-size: 0.76rem;
-        color: #6a4200;
+        color: #ffd999;
         margin-top: 10px;
       }
 
       .callout strong {
-        color: #4f3100;
+        color: #ffeecf;
+      }
+
+      .governance-summary {
+        margin-top: 10px;
+        border-radius: 12px;
+        padding: 10px 12px;
+        border: 1px solid rgba(30, 168, 91, 0.42);
+        background: rgba(30, 168, 91, 0.16);
+        color: #9ff1c4;
+        font-size: 0.74rem;
       }
 
       .modal {
@@ -417,8 +685,8 @@ export function renderConnectionPage(): string {
       .modal-card {
         width: min(920px, 100%);
         border-radius: 20px;
-        border: 1px solid rgba(255, 255, 255, 0.25);
-        background: rgba(255, 255, 255, 0.97);
+        border: 1px solid #3d61ab;
+        background: rgba(10, 26, 62, 0.98);
         box-shadow: 0 24px 60px rgba(5, 16, 34, 0.3);
         padding: 16px;
       }
@@ -442,11 +710,10 @@ export function renderConnectionPage(): string {
       }
 
       @media (max-width: 980px) {
-        .page {
-          width: calc(100% - 16px);
-          margin: 10px auto 18px;
-          grid-template-columns: 1fr;
-        }
+        .layout { grid-template-columns: 1fr; }
+        .platform-panel { display: none; }
+        .workspace { padding: 12px; }
+        .step-track { grid-template-columns: 1fr; }
 
         .kvs {
           grid-template-columns: 1fr;
@@ -460,16 +727,104 @@ export function renderConnectionPage(): string {
   </head>
   <body>
     <div class="page">
-      <header class="card top">
-        <h1>1-Click Database Connection Wizard</h1>
-        <a href="/">Open Chat Interface</a>
-      </header>
+      <div class="layout">
+        <aside class="platform-panel">
+          <div class="platform-brand">
+            <div class="platform-brand-badge">*</div>
+            <div>
+              <strong>Project Overload</strong>
+              <span>Enterprise</span>
+            </div>
+          </div>
+          <div class="platform-section">Core Platform</div>
+          <nav class="platform-nav">
+            <a class="platform-link" href="/"><span class="link-icon">[]</span>Chat Explorer</a>
+            <a class="platform-link" href="/usage"><span class="link-icon">=</span>Usage Metrics</a>
+          </nav>
+          <div class="platform-section">Infrastructure</div>
+          <nav class="platform-nav">
+            <a class="platform-link active" href="/connect"><span class="link-icon">DB</span>Data Sources</a>
+            <a class="platform-link" href="/config"><span class="link-icon">CFG</span>Global Config</a>
+          </nav>
+          <div class="platform-footer">
+            <div class="platform-user">
+              <div class="platform-user-avatar">@</div>
+              <div>
+                <small>Admin Profile</small>
+                <strong>Project Owner</strong>
+              </div>
+            </div>
+            <div class="platform-support">
+              <span>Support</span>
+              <form method="post" action="/auth/logout">
+                <button type="submit" class="logout-btn">Sign Out</button>
+              </form>
+            </div>
+          </div>
+        </aside>
+        <main class="workspace">
+          <header class="card top">
+            <h1>1-Click Database Connection Wizard</h1>
+            <a href="/">Open Chat Interface</a>
+          </header>
+
+          <section class="step-track">
+            <div class="step-pill active" id="step-pill-source"><span class="num">1</span><span>Source</span></div>
+            <div class="step-pill" id="step-pill-governance"><span class="num">2</span><span>Governance</span></div>
+            <div class="step-pill" id="step-pill-activate"><span class="num">3</span><span>Activate</span></div>
+          </section>
 
       <section class="card">
+        <h2 style="margin-top: 0;">Data Sources</h2>
+        <div class="mode-grid">
+          <button class="mode-btn" id="mode-edit" type="button">
+            <strong>Edit connected databases</strong>
+            <small>View active source details, keep/remove allowlisted tables, and disconnect safely.</small>
+          </button>
+          <button class="mode-btn" id="mode-connect" type="button">
+            <strong>Connect new DB or tables</strong>
+            <small>Run Source -> Governance -> Activate flow with automatic validation and catalog indexing.</small>
+          </button>
+        </div>
         <div class="status" id="connection-status">No active runtime connection.</div>
+      </section>
 
-        <h2>STEP A - Paste &amp; Test</h2>
+      <section class="card panel-hidden" id="edit-panel">
+        <h2 style="margin-top: 0;">Edit Connected Databases</h2>
+        <div id="edit-empty" class="callout panel-hidden"><strong>No active source.</strong> Use <em>Connect new DB or tables</em> to start setup.</div>
+        <div id="edit-content" class="panel-hidden">
+          <div class="kvs">
+            <div class="kv"><span class="k">Connection ID</span><span class="v" id="edit-connection-id">-</span></div>
+            <div class="kv"><span class="k">Provider</span><span class="v" id="edit-provider">-</span></div>
+            <div class="kv"><span class="k">Database</span><span class="v" id="edit-database">-</span></div>
+            <div class="kv"><span class="k">Connected At</span><span class="v" id="edit-connected-at">-</span></div>
+            <div class="kv" style="grid-column: 1 / -1;"><span class="k">Connection String (masked)</span><span class="v" id="edit-connection-string">Stored encrypted server-side.</span></div>
+          </div>
 
+          <div class="row" style="margin-top: 10px;">
+            <div>
+              <label for="edit-schema-filter">Schema filter</label>
+              <select id="edit-schema-filter"></select>
+            </div>
+            <div>
+              <label for="edit-search-filter">Search</label>
+              <input id="edit-search-filter" placeholder="sales, customers, reporting..." />
+            </div>
+          </div>
+
+          <div class="actions">
+            <button class="secondary" id="edit-select-all">Select all visible</button>
+            <button class="secondary" id="edit-select-none">Select none</button>
+            <button class="primary" id="edit-save-allowlist">Save allowlist changes</button>
+            <button class="warn" id="edit-disconnect">Disconnect source</button>
+          </div>
+          <div class="table-list" id="edit-table-list"></div>
+          <div id="edit-validation-container"></div>
+        </div>
+      </section>
+
+      <section class="card panel-hidden" id="connect-flow-panel">
+        <h2 style="margin-top: 0;">STEP A - Source</h2>
         <div class="row">
           <div>
             <label for="connection-name">Connection Name</label>
@@ -509,16 +864,9 @@ export function renderConnectionPage(): string {
           </div>
         </details>
 
-        <div style="margin-top: 10px;">
-          <label for="business-context">Business Context (required)</label>
-          <textarea id="business-context" style="min-height: 80px;" placeholder="E.g. We're a B2B SaaS company selling project management tools. Our main revenue comes from monthly subscriptions. We track sales by region, plan tier, and customer segment."></textarea>
-          <p class="muted">Describe what your business does so the chat assistant can suggest relevant reports and understand your data better.</p>
-        </div>
-
         <div class="actions">
           <button class="secondary" id="test-connection">Test Connection</button>
-          <button class="primary" id="connect-connection">Connect</button>
-          <button class="warn" id="disconnect-connection">Disconnect</button>
+          <button class="primary" id="connect-source">Connect source & continue</button>
         </div>
 
         <div class="kvs" id="test-metadata" style="display:none;">
@@ -529,8 +877,11 @@ export function renderConnectionPage(): string {
 
         <div id="test-notes"></div>
 
-        <h2 style="margin-top: 16px;">STEP B - Pick Allowlist</h2>
-        <p class="muted">Only allowlisted relations can be referenced by safe queries. Recommended default: views in analytics/reporting (if present), else public relations.</p>
+      </section>
+
+      <section class="card panel-hidden" id="governance-panel">
+        <h2 style="margin-top: 0;">STEP B - Governance</h2>
+        <p class="muted">Pick allowlist tables/views. After save, validation and catalog indexing run automatically.</p>
         <div class="row">
           <div>
             <label for="schema-filter">Schema filter</label>
@@ -546,26 +897,28 @@ export function renderConnectionPage(): string {
           <button class="secondary" id="select-recommended">Select recommended</button>
           <button class="secondary" id="select-ok">Select all OK</button>
           <button class="secondary" id="select-none">Select none</button>
-          <button class="secondary" id="save-allowlist">Save allowlist</button>
-          <button class="secondary" id="save-business-context">Save business context</button>
-          <button class="secondary" id="run-catalogue">Catalogue & index</button>
+          <button class="primary" id="save-allowlist">Save governance & continue</button>
           <button class="danger" id="open-fix-script">Fix-it script</button>
         </div>
         <div class="table-list" id="table-list"></div>
+        <div class="governance-summary panel-hidden" id="governance-summary"></div>
         <div id="validation-container"></div>
       </section>
 
-      <section class="card">
-        <h2>Query Runner (Safe Query)</h2>
+      <section class="card panel-hidden" id="activate-panel">
+        <h2>STEP C - Activate (Safe Query)</h2>
         <p class="muted"><strong>Read-only enforced</strong> and <strong>SELECT-only enforced</strong>. Exactly one statement (no semicolons). Allowlist enforced. LIMIT enforced.</p>
         <label for="safe-sql">SQL</label>
         <textarea id="safe-sql">SELECT * FROM public.sales LIMIT 50</textarea>
         <div class="actions">
           <button class="primary" id="run-query">Run Query</button>
           <button class="secondary" id="refresh-logs">Refresh audit logs</button>
+          <button class="primary" id="submit-connection">Submit connected source</button>
         </div>
         <div class="output" id="query-output"></div>
       </section>
+        </main>
+      </div>
     </div>
 
     <div class="modal" id="fix-modal" aria-hidden="true">
@@ -590,10 +943,44 @@ export function renderConnectionPage(): string {
       </div>
     </div>
 
+    <div class="modal" id="error-modal" aria-hidden="true">
+      <div class="modal-card" style="width:min(680px, 100%);">
+        <div class="modal-title">
+          <h2 id="error-title">Action failed</h2>
+          <button class="secondary" id="close-error-modal">Close</button>
+        </div>
+        <p class="muted" id="error-message"></p>
+      </div>
+    </div>
+
     <script>
       (() => {
         const elements = {
           status: document.getElementById("connection-status"),
+          modeEditBtn: document.getElementById("mode-edit"),
+          modeConnectBtn: document.getElementById("mode-connect"),
+          editPanel: document.getElementById("edit-panel"),
+          connectFlowPanel: document.getElementById("connect-flow-panel"),
+          governancePanel: document.getElementById("governance-panel"),
+          activatePanel: document.getElementById("activate-panel"),
+          stepSource: document.getElementById("step-pill-source"),
+          stepGovernance: document.getElementById("step-pill-governance"),
+          stepActivate: document.getElementById("step-pill-activate"),
+          editEmpty: document.getElementById("edit-empty"),
+          editContent: document.getElementById("edit-content"),
+          editConnectionId: document.getElementById("edit-connection-id"),
+          editProvider: document.getElementById("edit-provider"),
+          editDatabase: document.getElementById("edit-database"),
+          editConnectedAt: document.getElementById("edit-connected-at"),
+          editConnectionString: document.getElementById("edit-connection-string"),
+          editSchemaFilter: document.getElementById("edit-schema-filter"),
+          editSearchFilter: document.getElementById("edit-search-filter"),
+          editTableList: document.getElementById("edit-table-list"),
+          editSelectAllBtn: document.getElementById("edit-select-all"),
+          editSelectNoneBtn: document.getElementById("edit-select-none"),
+          editSaveAllowlistBtn: document.getElementById("edit-save-allowlist"),
+          editDisconnectBtn: document.getElementById("edit-disconnect"),
+          editValidationContainer: document.getElementById("edit-validation-container"),
           name: document.getElementById("connection-name"),
           provider: document.getElementById("connection-provider"),
           connectionString: document.getElementById("connection-string"),
@@ -602,18 +989,18 @@ export function renderConnectionPage(): string {
           schemaFilter: document.getElementById("schema-filter"),
           searchFilter: document.getElementById("search-filter"),
           tableList: document.getElementById("table-list"),
+          governanceSummary: document.getElementById("governance-summary"),
           sql: document.getElementById("safe-sql"),
           output: document.getElementById("query-output"),
           testBtn: document.getElementById("test-connection"),
-          connectBtn: document.getElementById("connect-connection"),
-          disconnectBtn: document.getElementById("disconnect-connection"),
+          connectSourceBtn: document.getElementById("connect-source"),
           runBtn: document.getElementById("run-query"),
           refreshLogsBtn: document.getElementById("refresh-logs"),
+          submitConnectionBtn: document.getElementById("submit-connection"),
           selectRecommendedBtn: document.getElementById("select-recommended"),
           selectOkBtn: document.getElementById("select-ok"),
           selectNoneBtn: document.getElementById("select-none"),
           saveAllowlistBtn: document.getElementById("save-allowlist"),
-          runCatalogueBtn: document.getElementById("run-catalogue"),
           metaBlock: document.getElementById("test-metadata"),
           metaUser: document.getElementById("meta-user"),
           metaDb: document.getElementById("meta-db"),
@@ -626,23 +1013,117 @@ export function renderConnectionPage(): string {
           closeFixModalBtn: document.getElementById("close-fix-modal"),
           copyFixScriptBtn: document.getElementById("copy-fix-script"),
           ranFixScriptBtn: document.getElementById("ran-fix-script"),
-          businessContext: document.getElementById("business-context"),
-          saveBusinessContextBtn: document.getElementById("save-business-context"),
-          validationContainer: document.getElementById("validation-container")
+          validationContainer: document.getElementById("validation-container"),
+          errorModal: document.getElementById("error-modal"),
+          errorTitle: document.getElementById("error-title"),
+          errorMessage: document.getElementById("error-message"),
+          closeErrorModalBtn: document.getElementById("close-error-modal")
         };
 
         const state = {
+          mode: "connect",
+          context: null,
           relations: [],
           selected: new Set(),
-          testResult: null
+          testResult: null,
+          lastValidation: null,
+          lastCatalog: null,
+          wizard: {
+            source_tested: false,
+            source_connected: false,
+            governance_saved: false
+          }
         };
 
         function showOutput(value) {
           elements.output.textContent = typeof value === "string" ? value : JSON.stringify(value, null, 2);
         }
 
-        function renderValidation(result) {
-          const container = elements.validationContainer;
+        function openModal(modalEl) {
+          modalEl.classList.add("open");
+          modalEl.setAttribute("aria-hidden", "false");
+        }
+
+        function closeModal(modalEl) {
+          modalEl.classList.remove("open");
+          modalEl.setAttribute("aria-hidden", "true");
+        }
+
+        function showError(message, title) {
+          elements.errorTitle.textContent = title || "Action failed";
+          elements.errorMessage.textContent = String(message || "Unknown error");
+          openModal(elements.errorModal);
+        }
+
+        function setWizardStep(step) {
+          const current = step === "governance" || step === "activate" ? step : "source";
+          elements.stepSource.classList.toggle("active", current === "source");
+          elements.stepGovernance.classList.toggle("active", current === "governance");
+          elements.stepActivate.classList.toggle("active", current === "activate");
+        }
+
+        function resetConnectWizardState() {
+          state.wizard.source_tested = false;
+          state.wizard.source_connected = false;
+          state.wizard.governance_saved = false;
+          elements.governanceSummary.classList.add("panel-hidden");
+          elements.validationContainer.innerHTML = "";
+          elements.metaBlock.style.display = "none";
+          elements.testNotes.innerHTML = "";
+          if (!state.context || !state.context.connected) {
+            state.selected = new Set();
+            state.relations = [];
+            renderSchemaFilter(elements.schemaFilter);
+            renderSchemaFilter(elements.editSchemaFilter);
+            renderAllRelationLists();
+          }
+        }
+
+        function setMode(mode) {
+          state.mode = mode === "edit" ? "edit" : "connect";
+          const editMode = state.mode === "edit";
+          elements.modeEditBtn.classList.toggle("active", editMode);
+          elements.modeConnectBtn.classList.toggle("active", !editMode);
+          elements.editPanel.classList.toggle("panel-hidden", !editMode);
+          elements.connectFlowPanel.classList.toggle("panel-hidden", editMode);
+          elements.governancePanel.classList.toggle(
+            "panel-hidden",
+            editMode || !state.wizard.source_connected
+          );
+          elements.activatePanel.classList.toggle(
+            "panel-hidden",
+            editMode || !state.wizard.governance_saved
+          );
+
+          if (editMode) {
+            setWizardStep("source");
+          } else if (state.wizard.governance_saved) {
+            setWizardStep("activate");
+          } else if (state.wizard.source_connected) {
+            setWizardStep("governance");
+          } else {
+            setWizardStep("source");
+          }
+        }
+
+        function maskConnectionString(raw) {
+          const value = String(raw || "").trim();
+          if (!value) {
+            return "Stored encrypted server-side.";
+          }
+          try {
+            const url = new URL(value);
+            const user = url.username || "user";
+            const host = url.hostname || "host";
+            const db = (url.pathname || "").replace(/^\\//, "") || "db";
+            return url.protocol + "//" + user + ":****@" + host + "/" + db;
+          } catch {
+            return value.slice(0, 12) + "...";
+          }
+        }
+
+        function renderValidation(result, container) {
+          const target = container || elements.validationContainer;
           const summaryClass = result.ok ? "all-ok" : "has-errors";
           const icon = result.ok ? "&#10004;" : "&#10008;";
 
@@ -686,13 +1167,13 @@ export function renderConnectionPage(): string {
           }
 
           html += '</div>';
-          container.innerHTML = html;
+          target.innerHTML = html;
 
           // Toggle column details on table header click
-          container.addEventListener("click", function(e) {
-            const target = e.target.closest("[data-toggle]");
-            if (!target) return;
-            const colsEl = document.getElementById(target.dataset.toggle);
+          target.addEventListener("click", function(e) {
+            const toggleEl = e.target.closest("[data-toggle]");
+            if (!toggleEl) return;
+            const colsEl = document.getElementById(toggleEl.dataset.toggle);
             if (colsEl) colsEl.classList.toggle("expanded");
           });
         }
@@ -763,50 +1244,50 @@ export function renderConnectionPage(): string {
           return Array.from(schemas).sort((a, b) => a.localeCompare(b));
         }
 
-        function renderSchemaFilter() {
+        function renderSchemaFilter(selectEl) {
           const schemas = getSchemas(state.relations);
-          const prev = String(elements.schemaFilter.value || "__all__");
-          elements.schemaFilter.innerHTML = "";
+          const prev = String(selectEl.value || "__all__");
+          selectEl.innerHTML = "";
 
           const all = document.createElement("option");
           all.value = "__all__";
           all.textContent = "All schemas";
-          elements.schemaFilter.appendChild(all);
+          selectEl.appendChild(all);
 
           for (const schema of schemas) {
             const opt = document.createElement("option");
             opt.value = schema;
             opt.textContent = schema;
-            elements.schemaFilter.appendChild(opt);
+            selectEl.appendChild(opt);
           }
 
           if (schemas.includes(prev)) {
-            elements.schemaFilter.value = prev;
+            selectEl.value = prev;
           } else {
-            elements.schemaFilter.value = "__all__";
+            selectEl.value = "__all__";
           }
         }
 
-        function renderRelations() {
-          elements.tableList.innerHTML = "";
+        function renderRelations(listEl, schemaValue, searchValue) {
+          listEl.innerHTML = "";
 
           if (!Array.isArray(state.relations) || state.relations.length === 0) {
-            elements.tableList.textContent = "No tables/views loaded yet. Test a connection first.";
+            listEl.textContent = "No tables/views loaded yet. Test a connection first.";
             return;
           }
 
-          const schemaValue = String(elements.schemaFilter.value || "__all__");
-          const searchValue = String(elements.searchFilter.value || "").trim().toLowerCase();
+          const schemaFilter = String(schemaValue || "__all__");
+          const searchFilter = String(searchValue || "").trim().toLowerCase();
 
           const filtered = state.relations.filter((relation) => {
             const schema = relation && typeof relation.schema_name === "string" ? relation.schema_name : "";
             const name = qualifiedName(relation).toLowerCase();
 
-            if (schemaValue !== "__all__" && schema !== schemaValue) {
+            if (schemaFilter !== "__all__" && schema !== schemaFilter) {
               return false;
             }
 
-            if (searchValue && !name.includes(searchValue)) {
+            if (searchFilter && !name.includes(searchFilter)) {
               return false;
             }
 
@@ -858,13 +1339,20 @@ export function renderConnectionPage(): string {
             row.appendChild(checkbox);
             row.appendChild(text);
             row.appendChild(badges);
-            elements.tableList.appendChild(row);
+            listEl.appendChild(row);
           }
+        }
+
+        function renderAllRelationLists() {
+          renderRelations(elements.tableList, elements.schemaFilter.value, elements.searchFilter.value);
+          renderRelations(elements.editTableList, elements.editSchemaFilter.value, elements.editSearchFilter.value);
         }
 
         function setConnectionStatus(context) {
           if (!context || !context.connected) {
             elements.status.textContent = "No active runtime connection.";
+            elements.editEmpty.classList.remove("panel-hidden");
+            elements.editContent.classList.add("panel-hidden");
             return;
           }
 
@@ -889,6 +1377,65 @@ export function renderConnectionPage(): string {
             " | allowlisted: " +
             tableCount +
             (businessId ? " | business_id: " + businessId : "");
+
+          elements.editEmpty.classList.add("panel-hidden");
+          elements.editContent.classList.remove("panel-hidden");
+          elements.editConnectionId.textContent = String(context.connection_id || "-");
+          elements.editProvider.textContent = provider;
+          elements.editDatabase.textContent = String(db || "-");
+          elements.editConnectedAt.textContent = context.connected_at ? new Date(context.connected_at).toLocaleString() : "-";
+          elements.editConnectionString.textContent = maskConnectionString(elements.connectionString.value);
+        }
+
+        function showGovernanceSummary(validation, catalog) {
+          if (!validation || !Array.isArray(validation.tables) || !catalog || !Array.isArray(catalog.tables)) {
+            elements.governanceSummary.classList.add("panel-hidden");
+            return;
+          }
+
+          let validatedTables = 0;
+          let totalTables = validation.tables.length;
+          let validatedColumns = 0;
+          let totalColumns = 0;
+          for (const table of validation.tables) {
+            if (table && table.accessible) {
+              validatedTables += 1;
+            }
+            if (table && Array.isArray(table.columns)) {
+              totalColumns += table.columns.length;
+              for (const column of table.columns) {
+                if (column && column.accessible) {
+                  validatedColumns += 1;
+                }
+              }
+            }
+          }
+
+          let catalogTables = catalog.tables.length;
+          let catalogColumns = 0;
+          for (const table of catalog.tables) {
+            if (table && Array.isArray(table.columns)) {
+              catalogColumns += table.columns.length;
+            }
+          }
+
+          const tableDone = Math.min(validatedTables, catalogTables);
+          const tableAll = Math.max(totalTables, catalogTables);
+          const columnDone = Math.min(validatedColumns, catalogColumns);
+          const columnAll = Math.max(totalColumns, catalogColumns);
+          const businessId = typeof catalog.business_id === "string" ? catalog.business_id : "pending";
+
+          elements.governanceSummary.textContent =
+            tableDone +
+            "/" +
+            tableAll +
+            " tables and " +
+            columnDone +
+            "/" +
+            columnAll +
+            " columns validated and catalogued automatically. business_id: " +
+            businessId;
+          elements.governanceSummary.classList.remove("panel-hidden");
         }
 
         function renderTestNotes(result) {
@@ -934,10 +1481,15 @@ export function renderConnectionPage(): string {
             const msg = error instanceof Error ? error.message : "Failed to load context";
             elements.status.textContent = "API unreachable: " + msg;
             elements.tableList.innerHTML = '<div class="callout"><strong>Cannot reach the API server.</strong> Make sure the API is running (pnpm --filter api dev) before using the wizard.</div>';
+            showError(msg, "Connection context failed");
             return;
           }
 
+          state.context = context;
           state.testResult = null;
+          state.wizard.source_tested = false;
+          state.wizard.source_connected = false;
+          state.wizard.governance_saved = false;
           setConnectionStatus(context);
 
           const tables = await request("/api/db/tables", "GET").catch(() => null);
@@ -948,19 +1500,24 @@ export function renderConnectionPage(): string {
             elements.provider.value = context.provider;
           }
 
-          renderSchemaFilter();
-          renderRelations();
+          renderSchemaFilter(elements.schemaFilter);
+          renderSchemaFilter(elements.editSchemaFilter);
+          renderAllRelationLists();
           renderTestNotes(null);
+
+          if (context && context.connected) {
+            setMode("edit");
+          } else {
+            setMode("connect");
+          }
         }
 
         function openFixModal() {
-          elements.fixModal.classList.add("open");
-          elements.fixModal.setAttribute("aria-hidden", "false");
+          openModal(elements.fixModal);
         }
 
         function closeFixModal() {
-          elements.fixModal.classList.remove("open");
-          elements.fixModal.setAttribute("aria-hidden", "true");
+          closeModal(elements.fixModal);
         }
 
         elements.closeFixModalBtn.addEventListener("click", () => closeFixModal());
@@ -970,8 +1527,25 @@ export function renderConnectionPage(): string {
           }
         });
 
-        elements.schemaFilter.addEventListener("change", () => renderRelations());
-        elements.searchFilter.addEventListener("input", () => renderRelations());
+        elements.closeErrorModalBtn.addEventListener("click", () => closeModal(elements.errorModal));
+        elements.errorModal.addEventListener("click", (event) => {
+          if (event.target === elements.errorModal) {
+            closeModal(elements.errorModal);
+          }
+        });
+
+        elements.modeEditBtn.addEventListener("click", () => setMode("edit"));
+        elements.modeConnectBtn.addEventListener("click", () => {
+          if (state.mode !== "connect") {
+            resetConnectWizardState();
+          }
+          setMode("connect");
+        });
+
+        elements.schemaFilter.addEventListener("change", () => renderAllRelationLists());
+        elements.searchFilter.addEventListener("input", () => renderAllRelationLists());
+        elements.editSchemaFilter.addEventListener("change", () => renderAllRelationLists());
+        elements.editSearchFilter.addEventListener("input", () => renderAllRelationLists());
 
         elements.testBtn.addEventListener("click", async () => {
           try {
@@ -993,6 +1567,7 @@ export function renderConnectionPage(): string {
             const result = await request("/api/db/test", "POST", body);
 
             state.testResult = result;
+            state.wizard.source_tested = true;
             state.relations = Array.isArray(result.relations) ? result.relations : [];
             const recommended = Array.isArray(result.recommended_allowlist) ? result.recommended_allowlist : [];
             state.selected = new Set(recommended.map((entry) => String(entry).toLowerCase()));
@@ -1006,65 +1581,229 @@ export function renderConnectionPage(): string {
               elements.metaBlock.style.display = "none";
             }
 
-            renderSchemaFilter();
-            renderRelations();
+            elements.editConnectionString.textContent = maskConnectionString(connectionString);
+            renderSchemaFilter(elements.schemaFilter);
+            renderSchemaFilter(elements.editSchemaFilter);
+            renderAllRelationLists();
             renderTestNotes(result);
+            setWizardStep("source");
+            setMode("connect");
             showOutput(result);
           } catch (error) {
-            showOutput(error instanceof Error ? error.message : "Unknown error");
+            const message = error instanceof Error ? error.message : "Unknown error";
+            showOutput(message);
+            showError(message, "Test connection failed");
           }
         });
 
-        elements.connectBtn.addEventListener("click", async () => {
+        elements.connectSourceBtn.addEventListener("click", async () => {
           try {
+            if (!state.wizard.source_tested || !state.testResult) {
+              throw new Error("Run Step A test connection first.");
+            }
+
             const connectionString = String(elements.connectionString.value || "").trim();
             if (!connectionString) {
               throw new Error("Connection string is required.");
             }
-
-            if (state.selected.size === 0) {
-              throw new Error("Select at least one table/view for your allowlist.");
-            }
             const provider = String(elements.provider.value || "postgres").trim().toLowerCase();
 
-            const tlsCaPem = String(elements.tlsCaPem.value || "").trim();
-            const businessContext = String(elements.businessContext.value || "").trim();
-            if (!businessContext || businessContext.length < 5) {
-              throw new Error("Business context is required (minimum 5 characters).");
+            if (state.selected.size === 0) {
+              const recommended =
+                state.testResult && Array.isArray(state.testResult.recommended_allowlist)
+                  ? state.testResult.recommended_allowlist
+                  : [];
+              if (recommended.length > 0) {
+                state.selected = new Set(recommended.map((entry) => String(entry).toLowerCase()));
+              }
             }
+            if (state.selected.size === 0) {
+              const ok = (state.relations || [])
+                .filter((relation) => relation && relation.status === "OK")
+                .map((relation) => qualifiedName(relation).toLowerCase())
+                .filter((v) => v.length > 0);
+              if (ok.length > 0) {
+                state.selected = new Set(ok);
+              }
+            }
+            if (state.selected.size === 0) {
+              throw new Error("Select at least one table/view before connecting.");
+            }
+
+            const tlsCaPem = String(elements.tlsCaPem.value || "").trim();
             const body = {
               name: String(elements.name.value || "").trim() || undefined,
               connection_string: connectionString,
               provider,
-              allowed_relations: Array.from(state.selected),
-              business_context: businessContext
+              allowed_relations: Array.from(state.selected)
             };
             if (tlsCaPem) {
               body.tls_ca_pem = tlsCaPem;
             }
 
             const context = await request("/api/db/connect", "POST", body);
+            state.context = context;
+            state.wizard.source_connected = true;
+            state.wizard.governance_saved = false;
+            setConnectionStatus(context);
 
+            const tables = await request("/api/db/tables", "GET").catch(() => null);
+            state.relations = tables && Array.isArray(tables.relations) ? tables.relations : state.relations;
+            state.selected = new Set(
+              Array.isArray(context.allowed_relations)
+                ? context.allowed_relations.map((v) => String(v).toLowerCase())
+                : []
+            );
+            elements.editConnectionString.textContent = maskConnectionString(connectionString);
+            renderSchemaFilter(elements.schemaFilter);
+            renderSchemaFilter(elements.editSchemaFilter);
+            renderAllRelationLists();
+            setMode("connect");
+            setWizardStep("governance");
+            showOutput({
+              message: "Source connected. Step B governance is now unlocked.",
+              connection_id: context.connection_id || null
+            });
+          } catch (error) {
+            const message = error instanceof Error ? error.message : "Unknown error";
+            showOutput(message);
+            showError(message, "Connect source failed");
+          }
+        });
+
+        elements.selectRecommendedBtn.addEventListener("click", () => {
+          const recommended = state.testResult && Array.isArray(state.testResult.recommended_allowlist) ? state.testResult.recommended_allowlist : [];
+          state.selected = new Set(recommended.map((entry) => String(entry).toLowerCase()));
+          renderAllRelationLists();
+        });
+
+        elements.selectOkBtn.addEventListener("click", () => {
+          const ok = (state.relations || [])
+            .filter((relation) => relation && relation.status === "OK")
+            .map((relation) => qualifiedName(relation).toLowerCase())
+            .filter((v) => v.length > 0);
+          state.selected = new Set(ok);
+          renderAllRelationLists();
+        });
+
+        elements.selectNoneBtn.addEventListener("click", () => {
+          state.selected = new Set();
+          renderAllRelationLists();
+        });
+
+        elements.saveAllowlistBtn.addEventListener("click", async () => {
+          try {
+            if (!state.wizard.source_connected || !state.context || !state.context.connected) {
+              throw new Error("Complete Step A and connect the source before Step B.");
+            }
+
+            if (state.selected.size === 0) {
+              throw new Error("Select at least one table/view for your allowlist.");
+            }
+
+            const context = await request("/api/db/allowlist", "POST", {
+              allowed_relations: Array.from(state.selected)
+            });
+            state.context = context;
             setConnectionStatus(context);
             const tables = await request("/api/db/tables", "GET").catch(() => null);
             state.relations = tables && Array.isArray(tables.relations) ? tables.relations : state.relations;
             state.selected = new Set(Array.isArray(context.allowed_relations) ? context.allowed_relations.map((v) => String(v).toLowerCase()) : []);
+            renderSchemaFilter(elements.schemaFilter);
+            renderSchemaFilter(elements.editSchemaFilter);
+            renderAllRelationLists();
 
-            renderSchemaFilter();
-            renderRelations();
-            showOutput(context);
+            const validation = await request("/api/db/validate", "POST", {});
+            state.lastValidation = validation;
+            renderValidation(validation, elements.validationContainer);
+            renderValidation(validation, elements.editValidationContainer);
+
+            const catalog = await request("/api/db/catalogue", "POST", {});
+            state.lastCatalog = catalog;
+            showGovernanceSummary(validation, catalog);
+
+            if (!validation.ok) {
+              showError("Governance saved, but some tables/columns failed validation. Open Fix-it script and re-test.", "Validation warning");
+            }
+
+            showOutput({
+              message: "Governance saved and auto-catalog completed.",
+              validation_summary: validation.summary,
+              cataloged_at: catalog ? catalog.cataloged_at : null,
+              business_id: catalog ? catalog.business_id : null
+            });
+
+            state.wizard.governance_saved = true;
+            setMode("connect");
+            setWizardStep("activate");
           } catch (error) {
-            showOutput(error instanceof Error ? error.message : "Unknown error");
+            const message = error instanceof Error ? error.message : "Unknown error";
+            showOutput(message);
+            showError(message, "Governance step failed");
           }
         });
 
-        elements.disconnectBtn.addEventListener("click", async () => {
+        elements.editSelectAllBtn.addEventListener("click", () => {
+          const schemaValue = String(elements.editSchemaFilter.value || "__all__");
+          const searchValue = String(elements.editSearchFilter.value || "").trim().toLowerCase();
+          for (const relation of state.relations || []) {
+            const schema = relation && typeof relation.schema_name === "string" ? relation.schema_name : "";
+            const name = qualifiedName(relation).toLowerCase();
+            if (schemaValue !== "__all__" && schema !== schemaValue) {
+              continue;
+            }
+            if (searchValue && !name.includes(searchValue)) {
+              continue;
+            }
+            state.selected.add(name);
+          }
+          renderAllRelationLists();
+        });
+
+        elements.editSelectNoneBtn.addEventListener("click", () => {
+          state.selected = new Set();
+          renderAllRelationLists();
+        });
+
+        elements.editSaveAllowlistBtn.addEventListener("click", async () => {
+          try {
+            if (state.selected.size === 0) {
+              throw new Error("At least one relation is required. To remove everything, disconnect this source.");
+            }
+
+            const context = await request("/api/db/allowlist", "POST", {
+              allowed_relations: Array.from(state.selected)
+            });
+
+            state.context = context;
+            setConnectionStatus(context);
+            const validation = await request("/api/db/validate", "POST", {});
+            state.lastValidation = validation;
+            renderValidation(validation, elements.editValidationContainer);
+            renderValidation(validation, elements.validationContainer);
+            if (!validation.ok) {
+              showError("Allowlist was updated with validation warnings.", "Validation warning");
+            }
+            showOutput(context);
+          } catch (error) {
+            const message = error instanceof Error ? error.message : "Unknown error";
+            showOutput(message);
+            showError(message, "Allowlist update failed");
+          }
+        });
+
+        elements.editDisconnectBtn.addEventListener("click", async () => {
           try {
             await request("/api/db/disconnect", "POST");
+            elements.governanceSummary.classList.add("panel-hidden");
+            elements.validationContainer.innerHTML = "";
+            elements.editValidationContainer.innerHTML = "";
             await loadContext();
             showOutput("Disconnected.");
           } catch (error) {
-            showOutput(error instanceof Error ? error.message : "Unknown error");
+            const message = error instanceof Error ? error.message : "Unknown error";
+            showOutput(message);
+            showError(message, "Disconnect failed");
           }
         });
 
@@ -1083,7 +1822,9 @@ export function renderConnectionPage(): string {
 
             showOutput(result);
           } catch (error) {
-            showOutput(error instanceof Error ? error.message : "Unknown error");
+            const message = error instanceof Error ? error.message : "Unknown error";
+            showOutput(message);
+            showError(message, "Safe query failed");
           }
         });
 
@@ -1092,84 +1833,23 @@ export function renderConnectionPage(): string {
             const logs = await request("/api/db/query-logs", "GET");
             showOutput(logs);
           } catch (error) {
-            showOutput(error instanceof Error ? error.message : "Unknown error");
+            const message = error instanceof Error ? error.message : "Unknown error";
+            showOutput(message);
+            showError(message, "Audit log load failed");
           }
         });
 
-        elements.selectRecommendedBtn.addEventListener("click", () => {
-          const recommended = state.testResult && Array.isArray(state.testResult.recommended_allowlist) ? state.testResult.recommended_allowlist : [];
-          state.selected = new Set(recommended.map((entry) => String(entry).toLowerCase()));
-          renderRelations();
-        });
-
-        elements.selectOkBtn.addEventListener("click", () => {
-          const ok = (state.relations || [])
-            .filter((relation) => relation && relation.status === "OK")
-            .map((relation) => qualifiedName(relation).toLowerCase())
-            .filter((v) => v.length > 0);
-          state.selected = new Set(ok);
-          renderRelations();
-        });
-
-        elements.selectNoneBtn.addEventListener("click", () => {
-          state.selected = new Set();
-          renderRelations();
-        });
-
-        elements.saveAllowlistBtn.addEventListener("click", async () => {
+        elements.submitConnectionBtn.addEventListener("click", async () => {
           try {
-            if (state.selected.size === 0) {
-              throw new Error("Select at least one table/view for allowlist.");
+            if (!state.context || !state.context.connected) {
+              throw new Error("No active connected source to submit.");
             }
-
-            const context = await request("/api/db/allowlist", "POST", {
-              allowed_relations: Array.from(state.selected)
-            });
-
-            setConnectionStatus(context);
-            state.selected = new Set(Array.isArray(context.allowed_relations) ? context.allowed_relations.map((v) => String(v).toLowerCase()) : []);
-            renderRelations();
-            showOutput(context);
-
-            // Auto-validate after save
-            elements.validationContainer.innerHTML = '<div class="val-spinner">Validating access to all tables and columns...</div>';
-            try {
-              const validation = await request("/api/db/validate", "POST", {});
-              renderValidation(validation);
-            } catch (valError) {
-              elements.validationContainer.innerHTML = '<div class="callout"><strong>Validation failed:</strong> ' + escapeHtml(valError instanceof Error ? valError.message : "Unknown error") + '</div>';
-            }
-          } catch (error) {
-            showOutput(error instanceof Error ? error.message : "Unknown error");
-          }
-        });
-
-        elements.saveBusinessContextBtn.addEventListener("click", async () => {
-          try {
-            const text = String(elements.businessContext.value || "").trim();
-            await request("/api/db/business-context", "POST", { business_context: text });
-            showOutput(text ? "Business context saved." : "Business context cleared.");
-          } catch (error) {
-            showOutput(error instanceof Error ? error.message : "Unknown error");
-          }
-        });
-
-        elements.runCatalogueBtn.addEventListener("click", async () => {
-          try {
-            const catalog = await request("/api/db/catalogue", "POST", {});
-            const tableCount = Array.isArray(catalog && catalog.tables) ? catalog.tables.length : 0;
-            const businessId =
-              catalog && typeof catalog.business_id === "string" ? catalog.business_id : "unknown";
-            showOutput({
-              message: "Catalogue agent completed.",
-              business_id: businessId,
-              indexed_tables: tableCount,
-              cataloged_at: catalog ? catalog.cataloged_at : null,
-              catalog
-            });
             await loadContext();
+            setMode("edit");
+            showOutput("Connection submitted. Source is now active for chat and reports.");
           } catch (error) {
-            showOutput(error instanceof Error ? error.message : "Unknown error");
+            const message = error instanceof Error ? error.message : "Unknown error";
+            showError(message, "Submit failed");
           }
         });
 
@@ -1191,6 +1871,7 @@ export function renderConnectionPage(): string {
           } catch (error) {
             elements.fixScript.value = "";
             elements.fixStatus.textContent = error instanceof Error ? error.message : "Unknown error";
+            showError(elements.fixStatus.textContent, "Fix-it script failed");
           }
         });
 
@@ -1236,6 +1917,7 @@ export function renderConnectionPage(): string {
             const result = await request("/api/db/test", "POST", body);
 
             state.testResult = result;
+            state.wizard.source_tested = true;
             state.relations = Array.isArray(result.relations) ? result.relations : [];
 
             if (result && result.metadata) {
@@ -1247,11 +1929,13 @@ export function renderConnectionPage(): string {
               elements.metaBlock.style.display = "none";
             }
 
-            renderSchemaFilter();
-            renderRelations();
+            elements.editConnectionString.textContent = maskConnectionString(connectionString);
+            renderSchemaFilter(elements.schemaFilter);
+            renderSchemaFilter(elements.editSchemaFilter);
+            renderAllRelationLists();
             renderTestNotes(result);
 
-            elements.fixStatus.textContent = "Re-test complete. You can now Connect and run queries.";
+            elements.fixStatus.textContent = "Re-test complete. You can now save governance and continue.";
           } catch (error) {
             elements.fixStatus.textContent = error instanceof Error ? error.message : "Re-test failed";
           }
