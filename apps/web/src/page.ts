@@ -593,14 +593,9 @@ export function renderChatPage(): string {
 
       .exec-brief-embed {
         margin-top: 12px;
-        padding: 0;
         border: 1px solid #243d84;
         border-radius: 22px;
-        background: linear-gradient(180deg, rgba(5, 13, 38, 0.97), rgba(4, 10, 30, 0.97));
-        font-size: 0.85rem;
-        line-height: 1.55;
-        max-height: 620px;
-        overflow-y: auto;
+        overflow: hidden;
       }
 
       .exec-brief-embed h1 {
@@ -630,6 +625,83 @@ export function renderChatPage(): string {
         background: rgba(82, 134, 225, 0.12);
         border: 1px solid rgba(93, 143, 232, 0.22);
         font-size: 0.8rem;
+      }
+
+      .query-log-toggle {
+        display: inline-flex;
+        align-items: center;
+        gap: 5px;
+        margin-top: 10px;
+        padding: 4px 10px;
+        background: rgba(36, 61, 132, 0.28);
+        border: 1px solid rgba(93, 143, 232, 0.25);
+        border-radius: 6px;
+        color: #8aacdf;
+        font-size: 0.75rem;
+        cursor: pointer;
+        user-select: none;
+      }
+      .query-log-toggle:hover { background: rgba(36, 61, 132, 0.45); color: #aec6f0; }
+
+      .query-log {
+        margin-top: 8px;
+        display: none;
+        flex-direction: column;
+        gap: 10px;
+      }
+      .query-log.open { display: flex; }
+
+      .query-card {
+        background: rgba(5, 15, 42, 0.85);
+        border: 1px solid rgba(36, 61, 132, 0.5);
+        border-radius: 10px;
+        padding: 12px 14px;
+        font-size: 0.78rem;
+      }
+
+      .query-card-title {
+        font-weight: 600;
+        color: #aec6f0;
+        margin-bottom: 4px;
+      }
+
+      .query-card-purpose {
+        color: #6b90c4;
+        font-size: 0.74rem;
+        margin-bottom: 8px;
+      }
+
+      .query-card-meta {
+        display: flex;
+        gap: 14px;
+        color: #7a9fc7;
+        font-size: 0.72rem;
+        margin-bottom: 8px;
+      }
+
+      .query-card pre.qc-sql {
+        background: rgba(0, 0, 0, 0.4);
+        border: 1px solid rgba(36, 61, 132, 0.35);
+        border-radius: 6px;
+        padding: 8px 10px;
+        overflow-x: auto;
+        font-size: 0.71rem;
+        color: #b0cce8;
+        white-space: pre;
+        margin: 0 0 8px;
+      }
+
+      .coverage-dots {
+        display: flex;
+        gap: 2px;
+        flex-wrap: wrap;
+        align-items: center;
+      }
+
+      .coverage-dot {
+        width: 9px;
+        height: 9px;
+        border-radius: 2px;
       }
 
       .composer {
@@ -1431,6 +1503,24 @@ export function renderChatPage(): string {
             };
           }
 
+          if (state.schedule_pending === true && state.pending_schedule) {
+            const freq = state.pending_schedule.frequency || "recurring";
+            const tz = state.pending_schedule.timezone || "UTC";
+            const kpiCount = Array.isArray(state.pending_schedule.kpi_watchlist)
+              ? state.pending_schedule.kpi_watchlist.length
+              : 0;
+            const kpiNote = kpiCount > 0 ? " + " + kpiCount + " KPI alert" + (kpiCount === 1 ? "" : "s") : "";
+            return {
+              kind: "schedule-llm",
+              title: "Schedule " + freq + " runs in " + tz + kpiNote + "?",
+              lockPlaceholder: "Confirm or adjust the schedule.",
+              options: [
+                { label: "Yes, schedule this", command: "__ui_confirm_llm_schedule__" },
+                { label: "Adjust schedule", command: "__ui_adjust_llm_schedule__" }
+              ]
+            };
+          }
+
           if (state.awaiting_schedule_confirmation === true) {
             return {
               kind: "schedule-confirm",
@@ -1645,8 +1735,39 @@ export function renderChatPage(): string {
           if (entry.role === "assistant" && typeof entry.exec_brief_html === "string" && entry.exec_brief_html.length > 0) {
             const briefContainer = document.createElement("div");
             briefContainer.className = "exec-brief-embed";
-            briefContainer.innerHTML = entry.exec_brief_html;
+            const frame = document.createElement("iframe");
+            frame.setAttribute("srcdoc", entry.exec_brief_html);
+            frame.setAttribute("sandbox", "allow-same-origin");
+            frame.style.cssText = "display:block;width:100%;border:none;min-height:200px;height:500px;";
+            frame.addEventListener("load", function () {
+              try {
+                const h = frame.contentDocument?.documentElement?.scrollHeight;
+                if (h && h > 50) {
+                  frame.style.height = Math.min(h + 24, 620) + "px";
+                }
+              } catch {}
+            });
+            briefContainer.appendChild(frame);
             bubble.appendChild(briefContainer);
+          }
+
+          if (entry.role === "assistant" && Array.isArray(entry.prepared_payloads) && entry.prepared_payloads.length > 0) {
+            const toggleBtn = document.createElement("button");
+            toggleBtn.className = "query-log-toggle";
+            toggleBtn.textContent = "\u25BA View data queries (" + entry.prepared_payloads.length + ")";
+            const queryLog = document.createElement("div");
+            queryLog.className = "query-log";
+            for (const payload of entry.prepared_payloads) {
+              queryLog.appendChild(buildQueryCard(payload));
+            }
+            toggleBtn.addEventListener("click", function () {
+              const open = queryLog.classList.toggle("open");
+              toggleBtn.textContent = open
+                ? "\u25BC Hide data queries (" + entry.prepared_payloads.length + ")"
+                : "\u25BA View data queries (" + entry.prepared_payloads.length + ")";
+            });
+            bubble.appendChild(toggleBtn);
+            bubble.appendChild(queryLog);
           }
 
           if (entry.role === "assistant" && typeof entry.download_url === "string" && entry.download_url.length > 0) {
@@ -1676,6 +1797,63 @@ export function renderChatPage(): string {
           messagesEl.scrollTop = messagesEl.scrollHeight;
         }
 
+        function buildQueryCard(payload) {
+          const card = document.createElement("div");
+          card.className = "query-card";
+
+          const title = document.createElement("div");
+          title.className = "query-card-title";
+          const label = payload.question_number != null ? "Q" + payload.question_number + ". " : "";
+          title.textContent = label + (payload.question || "");
+          card.appendChild(title);
+
+          if (payload.purpose) {
+            const purpose = document.createElement("div");
+            purpose.className = "query-card-purpose";
+            purpose.textContent = payload.purpose;
+            card.appendChild(purpose);
+          }
+
+          const meta = document.createElement("div");
+          meta.className = "query-card-meta";
+          meta.innerHTML = "<span>Raw rows: <strong>" + (payload.row_count_before_reduction ?? "?") + "</strong></span><span>Prepared: <strong>" + (payload.prepared_row_count ?? "?") + "</strong></span>";
+          if (payload.warnings && payload.warnings.length > 0) {
+            const warn = document.createElement("span");
+            warn.style.color = "#f59e0b";
+            warn.textContent = "\u26A0 " + payload.warnings[0];
+            meta.appendChild(warn);
+          }
+          card.appendChild(meta);
+
+          const sqls = payload.preparation_sqls || [];
+          for (const sql of sqls.slice(0, 3)) {
+            const pre = document.createElement("pre");
+            pre.className = "qc-sql";
+            pre.textContent = sql.trim();
+            card.appendChild(pre);
+          }
+
+          const monthlyRows = payload.validation?.monthly_row_counts || [];
+          if (monthlyRows.length > 0) {
+            const dotsLabel = document.createElement("div");
+            dotsLabel.style.cssText = "color:#5580a8;font-size:0.7rem;margin-bottom:3px;";
+            dotsLabel.textContent = "Monthly coverage:";
+            card.appendChild(dotsLabel);
+            const dots = document.createElement("div");
+            dots.className = "coverage-dots";
+            for (const m of monthlyRows) {
+              const dot = document.createElement("div");
+              dot.className = "coverage-dot";
+              dot.style.background = m.row_count > 0 ? "#16a34a" : "#dc2626";
+              dot.title = m.month + ": " + m.row_count + " rows";
+              dots.appendChild(dot);
+            }
+            card.appendChild(dots);
+          }
+
+          return card;
+        }
+
         function appendMessage(role, text, downloadUrl, execBriefHtml, options) {
           const opts = options || {};
           const targetChatId = opts.chatId || activeChatIdRef.value;
@@ -1689,6 +1867,7 @@ export function renderChatPage(): string {
             text: String(text || ""),
             download_url: typeof downloadUrl === "string" && downloadUrl.length > 0 ? downloadUrl : null,
             exec_brief_html: typeof execBriefHtml === "string" && execBriefHtml.length > 0 ? execBriefHtml : null,
+            prepared_payloads: Array.isArray(opts.prepared_payloads) ? opts.prepared_payloads : null,
             at: nowIso()
           };
 
@@ -1767,7 +1946,8 @@ export function renderChatPage(): string {
             setActiveChatState(payload.state);
             refreshDecisionFromState(stateRef.value);
             appendMessage("assistant", payload.assistant_message, payload.pdf_download_url, payload.exec_brief_html, {
-              trackForNaming: false
+              trackForNaming: false,
+              prepared_payloads: Array.isArray(payload.prepared_payloads) ? payload.prepared_payloads : null
             });
           } catch (error) {
             const errorText = error instanceof Error ? error.message : "Unknown error";

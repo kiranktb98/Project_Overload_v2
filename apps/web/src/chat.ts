@@ -163,6 +163,29 @@ export const ChatStateSchema = z.object({
   schedule_mode_pending: z.enum(["weekly", "monthly", "quarterly"]).nullable().default(null),
   schedule_day_kind: z.enum(["weekday", "monthday"]).nullable().default(null),
   awaiting_custom_day_input: z.boolean().default(false),
+  schedule_pending: z.boolean().default(false),
+  pending_schedule: z
+    .object({
+      frequency: z.enum(["weekly", "monthly", "quarterly"]),
+      day_of_week: z.number().int().min(0).max(6).optional(),
+      day_of_month: z.number().int().min(1).max(28).optional(),
+      hour_utc: z.number().int().min(0).max(23).default(9),
+      minute_utc: z.number().int().min(0).max(59).default(0),
+      timezone: z.string().default("UTC"),
+      kpi_watchlist: z
+        .array(
+          z.object({
+            metric_key: z.string(),
+            display_name: z.string(),
+            threshold_value: z.number(),
+            direction: z.enum(["above", "below"]),
+            alert_message: z.string()
+          })
+        )
+        .default([])
+    })
+    .nullable()
+    .default(null),
   last_concise_summary: z.string().nullable().default(null),
   last_token_usage: z
     .object({
@@ -197,6 +220,7 @@ export type ChatTurnResponse = {
   state: ChatState;
   pdf_download_url?: string;
   exec_brief_html?: string;
+  prepared_payloads?: PreparedPayloadRecord[];
 };
 
 type ReportContractRecord = z.output<typeof ReportContractSchema>;
@@ -251,6 +275,13 @@ export interface WebApiClient {
       day_of_month?: number;
       hour_utc?: number;
       minute_utc?: number;
+      kpi_watchlist?: Array<{
+        metric_key: string;
+        display_name: string;
+        threshold_value: number;
+        direction: "above" | "below";
+        alert_message: string;
+      }>;
     }
   ): Promise<{
     contract_id: string;
@@ -285,6 +316,7 @@ const PreparedPayloadSchema = z.object({
   purpose: z.string().min(1),
   group_id: z.string().optional(),
   source_query_count: z.number().int().min(1).optional(),
+  preparation_sqls: z.array(z.string()).default([]),
   row_count_before_reduction: z.number().int().min(0),
   prepared_row_count: z.number().int().min(0),
   validation: z
@@ -318,6 +350,16 @@ const PreparedPayloadSchema = z.object({
 type TokenUsageRecord = z.output<typeof TokenUsageSchema>;
 type PreparedPayloadRecord = z.output<typeof PreparedPayloadSchema>;
 
+const KpiCheckResultSchema = z.object({
+  metric_key: z.string(),
+  display_name: z.string(),
+  status: z.enum(["pass", "fail"]),
+  actual: z.number().nullable(),
+  threshold: z.number(),
+  direction: z.enum(["above", "below"]),
+  alert_message: z.string()
+});
+
 const RunContractResponseSchema = z.object({
   run_id: z.string().min(1),
   exec_brief: ExecBriefSchema,
@@ -325,6 +367,7 @@ const RunContractResponseSchema = z.object({
   planner_summary: z.string().optional(),
   concise_summary: z.string().optional(),
   prepared_payloads: z.array(PreparedPayloadSchema).optional(),
+  kpi_results: z.array(KpiCheckResultSchema).optional(),
   token_usage: TokenUsageSchema.optional(),
   pdf_path: z.string().min(1).optional()
 });
@@ -472,6 +515,8 @@ export function createInitialChatState(): ChatState {
     schedule_mode_pending: null,
     schedule_day_kind: null,
     awaiting_custom_day_input: false,
+    schedule_pending: false,
+    pending_schedule: null,
     last_concise_summary: null,
     last_token_usage: null
   };
@@ -553,6 +598,8 @@ export function parseChatState(value: unknown): ChatState {
     schedule_mode_pending: parsed.data.schedule_mode_pending ?? null,
     schedule_day_kind: parsed.data.schedule_day_kind ?? null,
     awaiting_custom_day_input: parsed.data.awaiting_custom_day_input ?? false,
+    schedule_pending: parsed.data.schedule_pending ?? false,
+    pending_schedule: parsed.data.pending_schedule ?? null,
     last_concise_summary: parsed.data.last_concise_summary ?? null,
     last_token_usage: parsed.data.last_token_usage ?? null
   };
@@ -1024,7 +1071,8 @@ export async function handleChatTurn(input: {
     !nextState.awaiting_save_confirmation &&
     !nextState.awaiting_schedule_confirmation &&
     !nextState.awaiting_schedule_mode_selection &&
-    !nextState.awaiting_custom_day_input
+    !nextState.awaiting_custom_day_input &&
+    !nextState.schedule_pending
   ) {
     nextState.scope_pending = true;
   }
@@ -1322,6 +1370,34 @@ export async function handleChatTurn(input: {
       assistant_message: "Save decision pending (Save report log / Skip save).",
       state: nextState
     };
+  }
+
+  // --- LLM schedule confirm/adjust gate ---
+
+  if (nextState.schedule_pending === true && nextState.pending_schedule) {
+    if (command === "__ui_confirm_llm_schedule__") {
+      const params = nextState.pending_schedule;
+      nextState.schedule_pending = false;
+      nextState.pending_schedule = null;
+      return executeSchedule(nextState, input.api_client, {
+        frequency: params.frequency,
+        day_of_week: params.day_of_week,
+        day_of_month: params.day_of_month,
+        hour_utc: params.hour_utc ?? 9,
+        minute_utc: params.minute_utc ?? 0,
+        timezone: params.timezone ?? "UTC",
+        kpi_watchlist: params.kpi_watchlist ?? []
+      });
+    }
+
+    if (command === "__ui_adjust_llm_schedule__") {
+      nextState.schedule_pending = false;
+      nextState.pending_schedule = null;
+      return {
+        assistant_message: "Sure, let\u2019s adjust. Tell me what frequency, day/time, or timezone you\u2019d like, and any KPI alerts to set up.",
+        state: nextState
+      };
+    }
   }
 
   // --- Schedule confirmation gate ---
@@ -4209,6 +4285,38 @@ function parseCustomMonthDay(rawMessage: string): number | null {
   return value;
 }
 
+const ScheduleParamsSchema = z.object({
+  frequency: z.enum(["weekly", "monthly", "quarterly"]),
+  day_of_week: z.number().int().min(0).max(6).optional(),
+  day_of_month: z.number().int().min(1).max(28).optional(),
+  hour_utc: z.number().int().min(0).max(23).default(9),
+  minute_utc: z.number().int().min(0).max(59).default(0),
+  timezone: z.string().default("UTC"),
+  kpi_watchlist: z
+    .array(
+      z.object({
+        metric_key: z.string(),
+        display_name: z.string(),
+        threshold_value: z.number(),
+        direction: z.enum(["above", "below"]),
+        alert_message: z.string()
+      })
+    )
+    .default([])
+});
+
+export function parseScheduleParams(text: string): z.output<typeof ScheduleParamsSchema> | null {
+  const match = text.match(/<<<SCHEDULE_PARAMS>>>([\s\S]*?)<<<END_SCHEDULE_PARAMS>>>/);
+  if (!match) return null;
+  try {
+    const raw = JSON.parse(match[1].trim());
+    const result = ScheduleParamsSchema.safeParse(raw);
+    return result.success ? result.data : null;
+  } catch {
+    return null;
+  }
+}
+
 function parseWeekdayChoice(command: string): number | null {
   const normalized = command.trim().toLowerCase();
   if (/^__ui_schedule_weekday_mon__$/.test(normalized) || /\bmonday\b/.test(normalized)) return 1;
@@ -4421,7 +4529,8 @@ async function executeRun(state: ChatState, apiClient: WebApiClient): Promise<Ch
       "Before PDF, choose one path: ask follow-up refinement questions (max 2), generate PDF now, or start a new conversation."
     ].filter((line) => line.length > 0).join("\n\n"),
     state: nextState,
-    exec_brief_html: run.exec_brief_html
+    exec_brief_html: run.exec_brief_html,
+    prepared_payloads: run.prepared_payloads
   };
 }
 
@@ -4432,6 +4541,16 @@ async function executeSchedule(
     frequency: "weekly" | "monthly" | "quarterly";
     day_of_week?: number;
     day_of_month?: number;
+    hour_utc?: number;
+    minute_utc?: number;
+    timezone?: string;
+    kpi_watchlist?: Array<{
+      metric_key: string;
+      display_name: string;
+      threshold_value: number;
+      direction: "above" | "below";
+      alert_message: string;
+    }>;
   }
 ): Promise<ChatTurnResponse> {
   const nextState = parseChatState(state);
@@ -4450,7 +4569,10 @@ async function executeSchedule(
       frequency: payload.frequency,
       day_of_week: payload.day_of_week,
       day_of_month: payload.day_of_month,
-      timezone: nextState.draft.timezone
+      hour_utc: payload.hour_utc,
+      minute_utc: payload.minute_utc,
+      timezone: payload.timezone ?? nextState.draft.timezone,
+      kpi_watchlist: payload.kpi_watchlist
     });
 
     nextState.draft.timezone = scheduled.timezone;
@@ -4461,8 +4583,10 @@ async function executeSchedule(
     nextState.schedule_day_kind = null;
     nextState.awaiting_custom_day_input = false;
 
+    const kpiCount = Array.isArray(payload.kpi_watchlist) ? payload.kpi_watchlist.length : 0;
+    const kpiNote = kpiCount > 0 ? ` I\u2019ll flag KPI breaches and compare against the previous run each time.` : "";
     return {
-      assistant_message: `Scheduled ${scheduled.frequency} runs in ${scheduled.timezone} (cron: \`${scheduled.schedule_cron}\`).`,
+      assistant_message: `Scheduled! This report will run ${scheduled.frequency} in ${scheduled.timezone} (cron: \`${scheduled.schedule_cron}\`).${kpiNote}`,
       state: nextState
     };
   } catch (error) {

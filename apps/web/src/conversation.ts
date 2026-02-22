@@ -415,7 +415,19 @@ function conversationalSystemPrompt(input: ConversationTurnInput): string {
     "Supported fields: name, audience, timezone, schedule_cron (cron string or null), sql_template (SELECT only), metric_ids (array), dimension_ids (array), allowed_relations (array of schema.table), allowed_schemas (array), insight_mode (\"business\" or \"data\").",
     "Only include fields that genuinely changed based on the conversation. Omit unchanged fields.",
     "When you update allowed_relations, derive allowed_schemas from the schema prefix of each relation automatically.",
-    "The structured block is machine-parsed and hidden from the user — your conversational reply above it is all they see."
+    "The structured block is machine-parsed and hidden from the user — your conversational reply above it is all they see.",
+    "",
+    "SCHEDULING:",
+    "When the user asks to schedule, automate, or set up recurring runs of this report:",
+    "1. Confirm your understanding: what frequency (weekly/monthly/quarterly), what day/time, timezone.",
+    "2. Ask about KPI thresholds if the user mentions alerts (e.g. 'alert me if revenue drops below $1M').",
+    "3. End your response with a <<<SCHEDULE_PARAMS>>> block (after your reply text):",
+    "<<<SCHEDULE_PARAMS>>>",
+    '{"frequency":"weekly","day_of_week":1,"hour_utc":9,"minute_utc":0,"timezone":"UTC","kpi_watchlist":[{"metric_key":"revenue","display_name":"Revenue","threshold_value":1000000,"direction":"below","alert_message":"Revenue dropped below $1M"}]}',
+    "<<<END_SCHEDULE_PARAMS>>>",
+    "",
+    "Fields: frequency (weekly|monthly|quarterly), day_of_week (0=Sun...6=Sat, weekly only), day_of_month (1-28, monthly/quarterly), hour_utc (0-23), minute_utc (0-59), timezone (IANA string), kpi_watchlist (array, may be empty).",
+    "Do NOT say 'I have scheduled it' — the user will confirm with a button. Only describe what you understood and present the <<<SCHEDULE_PARAMS>>> block."
   ];
 
   if (input.business_context) {
@@ -607,6 +619,8 @@ function createTitleStateSkeleton() {
     schedule_mode_pending: null,
     schedule_day_kind: null,
     awaiting_custom_day_input: false,
+    schedule_pending: false,
+    pending_schedule: null,
     last_concise_summary: null,
     last_token_usage: null
   };

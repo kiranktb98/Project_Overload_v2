@@ -7,7 +7,8 @@ import {
   createWebApiClient,
   fetchCatalogContext,
   handleChatTurn,
-  parseChatState
+  parseChatState,
+  parseScheduleParams
 } from "./chat";
 import {
   buildDeterministicConversationTitle,
@@ -292,7 +293,7 @@ export function buildWebApp(options: WebAppDependencies = {}) {
         conversationResponse.message,
         response.assistant_message
       );
-      const safeAiMessage = sanitizeCustomerFacingAssistantMessage(aiMessage);
+      let safeAiMessage = sanitizeCustomerFacingAssistantMessage(aiMessage);
       let stateAfterLlm = response.state;
       if (conversationResponse.draft_updates) {
         stateAfterLlm = applyLlmDraftUpdates(response.state, conversationResponse.draft_updates, {
@@ -301,6 +302,16 @@ export function buildWebApp(options: WebAppDependencies = {}) {
       }
       stateAfterLlm = syncDecisionStateFromAssistantMessage(stateAfterLlm, aiMessage);
       stateAfterLlm = normalizeWorkflowDecisionState(stateAfterLlm);
+
+      // Detect <<<SCHEDULE_PARAMS>>> block from LLM response
+      const scheduleParams = parseScheduleParams(safeAiMessage);
+      if (scheduleParams) {
+        safeAiMessage = safeAiMessage
+          .replace(/<<<SCHEDULE_PARAMS>>>[\s\S]*?<<<END_SCHEDULE_PARAMS>>>/g, "")
+          .trim();
+        stateAfterLlm = { ...stateAfterLlm, schedule_pending: true, pending_schedule: scheduleParams };
+      }
+
       const nextState = appendConversationTurn(stateAfterLlm, parsed.data.message, safeAiMessage);
 
       return reply.code(200).send({

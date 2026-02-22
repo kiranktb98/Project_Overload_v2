@@ -18,7 +18,7 @@ import type {
   TokenUsageEvent
 } from "@project-overload/llm-client";
 import { extractReferencedRelations } from "@project-overload/sql-guard";
-import type { BatchAnalysis, PlannerOutput, QueryStrategyOutput, SqlDialect } from "@project-overload/shared";
+import type { BatchAnalysis, KpiWatchlistItem, PlannerOutput, QueryStrategyOutput, SqlDialect } from "@project-overload/shared";
 import type { MetadataStore } from "../store";
 
 const PREPARATION_ROW_CAP = 10_000;
@@ -142,6 +142,16 @@ export type DataPreparationResult = {
   token_usage: TokenUsageReport;
 };
 
+export type KpiCheckResult = {
+  metric_key: string;
+  display_name: string;
+  status: "pass" | "fail";
+  actual: number | null;
+  threshold: number;
+  direction: "above" | "below";
+  alert_message: string;
+};
+
 export type RunReportContractResult = {
   run: ReportRun;
   exec_brief: ExecBrief;
@@ -149,6 +159,7 @@ export type RunReportContractResult = {
   planner_summary?: string;
   concise_summary: string;
   prepared_payloads: PreparedQuestionPayloadPublic[];
+  kpi_results: KpiCheckResult[];
   token_usage: TokenUsageReport;
 };
 
@@ -359,7 +370,10 @@ export async function runReportContractPipeline(input: {
   const scoredAnalyses: ScoredAnalysis[] = [];
 
   for (const payload of preparation.prepared_payloads) {
-    const questionLabel = `Q${payload.question_number}. ${payload.question}`;
+    const questionLabel = [
+      `Q${payload.question_number}. ${payload.question}`,
+      `Report: "${input.contract.name}" | Audience: ${input.contract.audience} | Mode: ${insightMode}`
+    ].join("\n");
     const coverageGap = describeCoverageGap(payload);
 
     if (payload.prepared_rows.length === 0) {
@@ -431,10 +445,14 @@ export async function runReportContractPipeline(input: {
 
   const conciseSummary = buildConciseSummary(input.contract.name, analyses);
   const metricDefinitions = buildRunMetricDefinitions(input.contract);
+  const kpiResults = checkKpiWatchlist(
+    (input.contract.kpi_watchlist ?? []) as KpiWatchlistItem[],
+    preparation.prepared_payloads
+  );
   const previousRun = await input.store.getLatestReportRun(input.contract.id, storeContext);
   const execBrief = buildExecBrief(analyses, input.contract.name, startedAt, previousRun);
 
-  const html = await composeReportHtmlWithFallback({
+  let html = await composeReportHtmlWithFallback({
     report_composer: input.report_composer,
     compose_input: {
       title: input.contract.name,
@@ -448,6 +466,11 @@ export async function runReportContractPipeline(input: {
     metric_definitions: metricDefinitions
   });
   collectClientUsage(input.report_composer, tokenUsage);
+
+  if (kpiResults.length > 0) {
+    html = injectKpiResultsIntoHtml(html, kpiResults);
+  }
+
   const analysisPayloads: AnalysisPayload[] = scoredAnalyses.map((item) => ({
     question_id: item.question_id,
     question: item.entry.question,
@@ -473,7 +496,8 @@ export async function runReportContractPipeline(input: {
       previous_run_id: previousRun?.id ?? null,
       metric_definitions: metricDefinitions,
       prepared_payloads: preparation.prepared_payloads.map(toPreparedPayloadPublic),
-      analysis_payloads: analysisPayloads
+      analysis_payloads: analysisPayloads,
+      kpi_results: kpiResults
     },
     exec_brief: execBrief,
     report_html: html
@@ -488,6 +512,7 @@ export async function runReportContractPipeline(input: {
     planner_summary: preparation.planner_summary,
     concise_summary: conciseSummary,
     prepared_payloads: preparation.prepared_payloads.map(toPreparedPayloadPublic),
+    kpi_results: kpiResults,
     token_usage: tokenUsage.snapshot()
   };
 }
@@ -2483,6 +2508,75 @@ function buildDeltasVsLastRun(
   }
 
   return deltas.slice(0, 5);
+}
+
+function checkKpiWatchlist(
+  watchlist: KpiWatchlistItem[],
+  payloads: PreparedQuestionPayload[]
+): KpiCheckResult[] {
+  if (!watchlist || watchlist.length === 0) {
+    return [];
+  }
+
+  return watchlist.map((kpi) => {
+    const allTotals = payloads.flatMap((p) => p.validation?.monthly_metric_totals ?? []);
+    const latestTotal = allTotals.length > 0 ? allTotals[allTotals.length - 1]?.total ?? null : null;
+
+    let status: "pass" | "fail" = "pass";
+    if (latestTotal !== null) {
+      if (kpi.direction === "below" && latestTotal < kpi.threshold_value) {
+        status = "fail";
+      } else if (kpi.direction === "above" && latestTotal > kpi.threshold_value) {
+        status = "fail";
+      }
+    }
+
+    return {
+      metric_key: kpi.metric_key,
+      display_name: kpi.display_name,
+      status,
+      actual: latestTotal,
+      threshold: kpi.threshold_value,
+      direction: kpi.direction,
+      alert_message: kpi.alert_message
+    };
+  });
+}
+
+function injectKpiResultsIntoHtml(html: string, kpiResults: KpiCheckResult[]): string {
+  if (kpiResults.length === 0) return html;
+
+  const badges = kpiResults
+    .map((r) => {
+      const isPassed = r.status === "pass";
+      const color = isPassed ? "#16a34a" : "#dc2626";
+      const bg = isPassed ? "#f0fdf4" : "#fef2f2";
+      const border = isPassed ? "#86efac" : "#fca5a5";
+      const label = isPassed ? "PASS" : "FAIL";
+      const actualStr = r.actual !== null ? r.actual.toLocaleString() : "N/A";
+      const thresholdStr = r.threshold.toLocaleString();
+      const dirLabel = r.direction === "above" ? ">" : "<";
+      return `<div style="display:flex;align-items:center;gap:10px;padding:10px 14px;background:${bg};border:1px solid ${border};border-radius:8px;margin-bottom:8px;">
+  <span style="font-weight:700;color:${color};font-size:12px;letter-spacing:.05em;padding:2px 8px;background:${color}22;border-radius:4px;">${label}</span>
+  <span style="font-weight:600;color:#111827;font-size:14px;">${r.display_name}</span>
+  <span style="color:#6b7280;font-size:13px;">Actual: <strong>${actualStr}</strong> &nbsp;·&nbsp; Threshold: ${dirLabel} ${thresholdStr}</span>
+  ${!isPassed ? `<span style="color:${color};font-size:13px;margin-left:auto;">${r.alert_message}</span>` : ""}
+</div>`;
+    })
+    .join("\n");
+
+  const section = `<div style="margin:24px 0;padding:16px 20px;background:#fff;border:1px solid #e5e7eb;border-radius:12px;">
+  <h3 style="margin:0 0 12px;font-size:15px;font-weight:700;color:#111827;display:flex;align-items:center;gap:8px;">
+    <span>KPI Watchlist</span>
+    ${kpiResults.some((r) => r.status === "fail") ? '<span style="font-size:12px;color:#dc2626;background:#fef2f2;border:1px solid #fca5a5;border-radius:4px;padding:1px 6px;">&#9888; Alerts</span>' : '<span style="font-size:12px;color:#16a34a;background:#f0fdf4;border:1px solid #86efac;border-radius:4px;padding:1px 6px;">&#10003; All Clear</span>'}
+  </h3>
+  ${badges}
+</div>`;
+
+  if (html.includes("</body>")) {
+    return html.replace("</body>", `${section}\n</body>`);
+  }
+  return section + html;
 }
 
 function normalizeSignal(value: string): string {

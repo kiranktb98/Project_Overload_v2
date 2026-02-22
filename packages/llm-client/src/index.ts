@@ -1200,7 +1200,7 @@ function analystSystemPrompt(input: AnalystInput): string {
 
 function analystUserPrompt(input: AnalystInput): string {
   const packet = input.evidence_packet;
-  const rowPreview = packet.rows.slice(0, 10)
+  const rowPreview = packet.rows.slice(0, 30)
     .map((r) => JSON.stringify(r)).join("\n");
   const allColumns = packet.rows.length > 0 ? Object.keys(packet.rows[0]) : [];
 
@@ -1219,8 +1219,8 @@ function analystUserPrompt(input: AnalystInput): string {
 
   parts.push("", "Sample rows (first 10):", rowPreview);
 
-  if (packet.row_count > 10) {
-    parts.push(`... and ${packet.row_count - 10} more rows.`);
+  if (packet.row_count > 30) {
+    parts.push(`... and ${packet.row_count - 30} more rows.`);
   }
 
   parts.push("", "Analyze and return JSON only.");
