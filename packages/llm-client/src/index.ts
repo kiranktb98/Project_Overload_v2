@@ -1186,6 +1186,7 @@ function analystSystemPrompt(input: AnalystInput): string {
     questionContext,
     "",
     "COMBINED DATA NOTE: If the rows contain a '_source_query' field, the data was merged from multiple SQL queries. Use this field to understand which rows came from which query and cross-reference the datasets in your analysis.",
+    "DATA CONTEXT NOTE: If a DATA CONTEXT section is provided in the user message, treat it as authoritative pre-computed aggregates. Use the monthly totals to identify trends, the column statistics to understand distributions, and the preparation notes/warnings to calibrate your confidence. The sample rows are representative examples; the DATA CONTEXT captures the full dataset's shape.",
     "",
     "Return strictly valid JSON matching this shape:",
     '{"request_id": "...", "batch_index": 0, "total_batches": 1, "highlights": ["..."], "risks": ["..."], "recommendations": ["..."], "confidence_score": 0.85, "appendix_refs": ["..."]}',
@@ -1217,10 +1218,16 @@ function analystUserPrompt(input: AnalystInput): string {
     parts.push(`question: ${input.question}`);
   }
 
-  parts.push("", "Sample rows (first 10):", rowPreview);
+  if (input.data_context && input.data_context.trim().length > 0) {
+    parts.push("", "═══ DATA CONTEXT (authoritative pre-computed aggregates) ═══");
+    parts.push(input.data_context);
+    parts.push("═══ END DATA CONTEXT ═══");
+  }
+
+  parts.push("", "Sample rows (up to 30):", rowPreview);
 
   if (packet.row_count > 30) {
-    parts.push(`... and ${packet.row_count - 30} more rows.`);
+    parts.push(`... and ${packet.row_count - 30} more rows (aggregated statistics above reflect the full dataset).`);
   }
 
   parts.push("", "Analyze and return JSON only.");

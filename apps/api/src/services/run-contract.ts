@@ -415,6 +415,7 @@ export async function runReportContractPipeline(input: {
       summary_word_budget: 220,
       question: questionLabel,
       insight_mode: insightMode,
+      data_context: buildAnalystDataContext(payload),
       evidence_packet: {
         request_id: payload.question_id,
         batch_index: 0,
@@ -2754,4 +2755,100 @@ function collectClientUsage(
     return;
   }
   accumulator.add(client.drainUsageEvents());
+}
+
+function buildAnalystDataContext(payload: PreparedQuestionPayload): string {
+  const parts: string[] = [];
+
+  parts.push(`Rows fetched: ${payload.row_count_before_reduction}`);
+  if (payload.row_count_before_reduction !== payload.prepared_row_count) {
+    parts.push(`Rows after reduction: ${payload.prepared_row_count}`);
+  }
+
+  const validation = payload.validation;
+  if (validation) {
+    if (validation.monthly_metric_totals && validation.monthly_metric_totals.length > 0) {
+      const metric = validation.metric_column ?? "metric";
+      const rowCounts = validation.monthly_row_counts ?? [];
+      parts.push(`\nMonthly ${metric} totals:`);
+      for (const item of validation.monthly_metric_totals) {
+        const rc = rowCounts.find((r) => r.month === item.month);
+        const rcStr = rc !== undefined ? ` (${rc.row_count} rows)` : "";
+        parts.push(`  ${item.month}: ${item.total}${rcStr}`);
+      }
+    } else if (validation.monthly_row_counts && validation.monthly_row_counts.length > 0) {
+      parts.push(`\nMonthly row counts:`);
+      for (const item of validation.monthly_row_counts) {
+        parts.push(`  ${item.month}: ${item.row_count} rows`);
+      }
+    }
+
+    if (validation.expected_months !== null && validation.missing_months.length > 0) {
+      parts.push(`\nMissing months: ${validation.missing_months.join(", ")}`);
+    }
+  }
+
+  const colStats = computeColumnStatsForAnalyst(payload.prepared_rows);
+  if (colStats.length > 0) {
+    parts.push(`\nColumn statistics (sample of ${Math.min(payload.prepared_rows.length, 300)} rows):`);
+    for (const stat of colStats) {
+      parts.push(`  ${stat}`);
+    }
+  }
+
+  const keyNotes = payload.preparation_notes
+    .filter((n) => /reduction|aggregation|coverage|repair/i.test(n))
+    .slice(0, 3);
+  if (keyNotes.length > 0) {
+    parts.push(`\nPreparation notes:`);
+    for (const note of keyNotes) {
+      parts.push(`  - ${note}`);
+    }
+  }
+
+  if (payload.warnings.length > 0) {
+    parts.push(`\nData warnings:`);
+    for (const w of payload.warnings.slice(0, 4)) {
+      parts.push(`  - ${w}`);
+    }
+  }
+
+  return parts.join("\n");
+}
+
+function computeColumnStatsForAnalyst(rows: Record<string, unknown>[]): string[] {
+  if (rows.length === 0) {
+    return [];
+  }
+
+  const first = rows[0];
+  const stats: string[] = [];
+  const sampleRows = rows.slice(0, 300);
+
+  for (const column of Object.keys(first).filter((k) => !k.startsWith("_"))) {
+    const values = sampleRows.map((r) => r[column]).filter((v) => v !== null && v !== undefined);
+    if (values.length === 0) {
+      continue;
+    }
+
+    const numerics = values
+      .map((v) => (typeof v === "number" ? v : Number(String(v))))
+      .filter((n): n is number => Number.isFinite(n));
+
+    if (numerics.length >= values.length * 0.7) {
+      const min = Math.min(...numerics);
+      const max = Math.max(...numerics);
+      const avg = numerics.reduce((a, b) => a + b, 0) / numerics.length;
+      stats.push(`${column}: numeric, min=${min.toFixed(2)}, max=${max.toFixed(2)}, avg=${avg.toFixed(2)}`);
+      continue;
+    }
+
+    const distinct = new Set(values.map((v) => String(v)));
+    if (distinct.size <= 15) {
+      const listed = Array.from(distinct).slice(0, 10).join(", ");
+      stats.push(`${column}: ${distinct.size} distinct values [${listed}]`);
+    }
+  }
+
+  return stats.slice(0, 10);
 }
