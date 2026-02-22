@@ -378,7 +378,7 @@ export function createQueryStrategistClientFromEnv(
       overrides.openrouterModel ??
       process.env.QUERY_STRATEGIST_MODEL ??
       process.env.DATA_PREPARATION_MODEL ??
-      "anthropic/claude-opus-4.6"
+      "anthropic/claude-sonnet-4.6"
   });
   return createQueryStrategistClient(options);
 }
@@ -720,7 +720,7 @@ export function createPlannerClientFromEnv(
       overrides.openrouterModel ??
       process.env.DATA_PREPARATION_MODEL ??
       process.env.QUERY_STRATEGIST_MODEL ??
-      "anthropic/claude-opus-4.6"
+      "anthropic/claude-sonnet-4.6"
   });
   return createPlannerClient(options);
 }
