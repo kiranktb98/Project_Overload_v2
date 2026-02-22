@@ -4,6 +4,7 @@ import { z } from "zod";
 import {
   ContractLifecycleStatusSchema,
   ExecBriefSchema,
+  KpiWatchlistItemSchema,
   ReportContractSchema,
   ReportContractDeliverySchema,
   ReportGuardrailsSchema,
@@ -272,6 +273,7 @@ export function registerContractRoutes(
         planner_summary: result.planner_summary,
         concise_summary: result.concise_summary,
         prepared_payloads: result.prepared_payloads,
+        kpi_results: result.kpi_results,
         token_usage: result.token_usage,
         lifecycle_status: contract.lifecycle_status ?? "draft",
         contract_version: contract.contract_version ?? 1,
@@ -319,6 +321,7 @@ export function registerContractRoutes(
           purpose: payload.purpose,
           group_id: payload.group_id,
           source_query_count: payload.source_query_count,
+          preparation_sqls: payload.preparation_sqls,
           row_count_before_reduction: payload.row_count_before_reduction,
           prepared_row_count: payload.prepared_row_count,
           validation: payload.validation,
@@ -413,9 +416,6 @@ export function registerContractRoutes(
     if (!contract) {
       return reply.code(404).send({ message: "Report contract not found" });
     }
-    if (contract.lifecycle_status !== "locked") {
-      return reply.code(409).send({ message: "Contract must be locked before scheduling." });
-    }
 
     const parsed = z.object({
       frequency: z.enum(["weekly", "monthly", "quarterly"]),
@@ -423,7 +423,8 @@ export function registerContractRoutes(
       day_of_week: z.number().int().min(0).max(6).optional(),
       day_of_month: z.number().int().min(1).max(28).optional(),
       hour_utc: z.number().int().min(0).max(23).default(9),
-      minute_utc: z.number().int().min(0).max(59).default(0)
+      minute_utc: z.number().int().min(0).max(59).default(0),
+      kpi_watchlist: z.array(KpiWatchlistItemSchema).default([])
     }).safeParse(request.body ?? {});
 
     if (!parsed.success) {
@@ -438,12 +439,17 @@ export function registerContractRoutes(
       return reply.code(400).send({ message: schedule.message });
     }
 
+    const now = new Date().toISOString();
     const timezone = parsed.data.timezone ?? contract.timezone;
     const updated = toReportContract(
       {
-      ...contract,
-      timezone,
-      schedule_cron: schedule.cron
+        ...contract,
+        timezone,
+        schedule_cron: schedule.cron,
+        kpi_watchlist: parsed.data.kpi_watchlist,
+        lifecycle_status: "locked",
+        locked_at: contract.locked_at ?? now,
+        locked_by: contract.locked_by ?? context.actor_id ?? "system"
       },
       context.tenant_id
     );
@@ -457,6 +463,7 @@ export function registerContractRoutes(
         frequency: parsed.data.frequency,
         cron: schedule.cron,
         timezone,
+        kpi_watchlist_count: parsed.data.kpi_watchlist.length,
         actor_id: context.actor_id
       },
       context

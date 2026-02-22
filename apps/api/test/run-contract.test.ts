@@ -36,6 +36,7 @@ function makeContract(overrides: Partial<ReportContract> = {}): ReportContract {
     approved_by: null,
     locked_at: null,
     locked_by: null,
+    kpi_watchlist: [],
     guardrails: {
       evidence_row_cap: 200,
       max_batches: 5,

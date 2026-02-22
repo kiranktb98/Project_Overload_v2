@@ -56,6 +56,8 @@ const TURN_INPUT: ConversationTurnInput = {
     schedule_mode_pending: null,
     schedule_day_kind: null,
     awaiting_custom_day_input: false,
+    schedule_pending: false,
+    pending_schedule: null,
     last_concise_summary: null,
     last_token_usage: null
   }

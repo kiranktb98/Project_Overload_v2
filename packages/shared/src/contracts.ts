@@ -10,6 +10,14 @@ export const ReportGuardrailsSchema = z.object({
   deny_write: z.literal(true).default(true)
 });
 
+export const KpiWatchlistItemSchema = z.object({
+  metric_key: z.string().min(1),
+  display_name: z.string().min(1),
+  threshold_value: z.number(),
+  direction: z.enum(["above", "below"]),
+  alert_message: z.string().min(1)
+});
+
 export const InsightModeSchema = z.enum(["business", "data"]).default("business");
 export type InsightMode = z.infer<typeof InsightModeSchema>;
 
@@ -50,6 +58,7 @@ export const ReportContractSchema = z.object({
   approved_at: z.string().datetime().nullable().optional(),
   locked_by: z.string().min(1).nullable().optional(),
   locked_at: z.string().datetime().nullable().optional(),
+  kpi_watchlist: z.array(KpiWatchlistItemSchema).default([]),
   guardrails: ReportGuardrailsSchema
 });
 
@@ -81,4 +90,5 @@ export type ReportGuardrails = z.infer<typeof ReportGuardrailsSchema>;
 export type ReportContract = z.infer<typeof ReportContractSchema>;
 export type ReportRun = z.infer<typeof ReportRunSchema>;
 export type ReportContractDelivery = z.infer<typeof ReportContractDeliverySchema>;
+export type KpiWatchlistItem = z.infer<typeof KpiWatchlistItemSchema>;
 export type ReportRunDelivery = z.infer<typeof ReportRunDeliverySchema>;

@@ -288,7 +288,7 @@ describe("api semantic and run flow", () => {
     await app.close();
   });
 
-  it("requires lock before scheduling and stores lifecycle versions", async () => {
+  it("auto-locks contract on schedule and stores lifecycle versions", async () => {
     const app = await buildApiApp({
       store: new InMemoryMetadataStore(),
       data_plane: new LocalStubDataPlane({ row_provider: () => [] }),
@@ -320,16 +320,7 @@ describe("api semantic and run flow", () => {
     });
     expect(create.statusCode).toBe(201);
 
-    const scheduleBeforeLock = await app.inject({
-      method: "POST",
-      url: "/report-contracts/contract_lifecycle/schedule",
-      payload: {
-        frequency: "weekly",
-        day_of_week: 1
-      }
-    });
-    expect(scheduleBeforeLock.statusCode).toBe(409);
-
+    // Scheduled/retry runs still require the contract to be locked first
     const scheduledRunBeforeLock = await app.inject({
       method: "POST",
       url: "/report-contracts/contract_lifecycle/run",
@@ -339,29 +330,18 @@ describe("api semantic and run flow", () => {
     });
     expect(scheduledRunBeforeLock.statusCode).toBe(409);
 
-    const approve = await app.inject({
-      method: "POST",
-      url: "/report-contracts/contract_lifecycle/approve"
-    });
-    expect(approve.statusCode).toBe(200);
-    expect(approve.json().lifecycle_status).toBe("approved");
-
-    const lock = await app.inject({
-      method: "POST",
-      url: "/report-contracts/contract_lifecycle/lock"
-    });
-    expect(lock.statusCode).toBe(200);
-    expect(lock.json().lifecycle_status).toBe("locked");
-
-    const scheduleAfterLock = await app.inject({
+    // Schedule endpoint auto-locks the contract
+    const scheduleResult = await app.inject({
       method: "POST",
       url: "/report-contracts/contract_lifecycle/schedule",
       payload: {
-        frequency: "monthly",
-        day_of_month: 15
+        frequency: "weekly",
+        day_of_week: 1,
+        kpi_watchlist: []
       }
     });
-    expect(scheduleAfterLock.statusCode).toBe(200);
+    expect(scheduleResult.statusCode).toBe(200);
+    expect(scheduleResult.json().schedule_cron).toBeDefined();
 
     const versions = await app.inject({
       method: "GET",
@@ -369,7 +349,7 @@ describe("api semantic and run flow", () => {
     });
     expect(versions.statusCode).toBe(200);
     expect(Array.isArray(versions.json())).toBe(true);
-    expect(versions.json().length).toBeGreaterThanOrEqual(3);
+    expect(versions.json().length).toBeGreaterThanOrEqual(2);
 
     await app.close();
   });

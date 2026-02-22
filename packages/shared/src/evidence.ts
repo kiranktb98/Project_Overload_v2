@@ -18,7 +18,8 @@ export const AnalystInputSchema = z.object({
   summary_word_budget: z.number().int().min(50).max(800),
   evidence_packet: EvidencePacketSchema,
   question: z.string().min(1).optional(),
-  insight_mode: z.enum(["business", "data"]).default("business")
+  insight_mode: z.enum(["business", "data"]).default("business"),
+  data_context: z.string().optional()
 });
 
 export const QueryStrategyInputSchema = z.object({
