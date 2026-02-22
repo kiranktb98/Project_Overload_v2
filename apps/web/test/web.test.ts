@@ -4256,4 +4256,99 @@ describe("web chat interface", () => {
 
     await app.close();
   });
+
+  it("retries final analysis run when upstream returns transient html errors before succeeding", async () => {
+    let runCalls = 0;
+    const fetchImpl: typeof fetch = async (input, init) => {
+      const url = typeof input === "string" ? input : input instanceof URL ? input.toString() : input.url;
+      const method = init?.method?.toUpperCase() ?? "GET";
+
+      if (url.endsWith("/report-contracts/contract_run_retry/run") && method === "POST") {
+        runCalls += 1;
+        if (runCalls < 3) {
+          return new Response("<!DOCTYPE html><html><body>502 Bad Gateway</body></html>", {
+            status: 502,
+            headers: { "content-type": "text/html" }
+          });
+        }
+
+        return new Response(
+          JSON.stringify({
+            run_id: "run_retry_ok",
+            exec_brief: {
+              what_changed: ["Revenue up 9%"],
+              why: ["Higher conversion in top channels"],
+              so_what: ["Pipeline targets remain on track"],
+              what_to_do: ["Scale the winning channel mix"],
+              confidence: { score: 0.82, rationale: "Coverage includes top segments." },
+              appendix_refs: ["evidence_contract_retry_1"],
+              deltas_vs_last_run: ["Revenue +3% vs last run"],
+              generated_at: "2026-01-01T00:00:00.000Z"
+            },
+            concise_summary: "Retry path summary",
+            prepared_payloads: [],
+            token_usage: {
+              input_tokens: 210,
+              output_tokens: 75,
+              total_tokens: 285,
+              by_agent: {}
+            },
+            pdf_path: "/report-runs/run_retry_ok/pdf"
+          }),
+          {
+            status: 200,
+            headers: { "content-type": "application/json" }
+          }
+        );
+      }
+
+      if (url.endsWith("/connections/catalog") && method === "GET") {
+        return new Response(JSON.stringify({ tables: [], business_context: "", cataloged_at: null }), {
+          status: 200,
+          headers: { "content-type": "application/json" }
+        });
+      }
+
+      return new Response(JSON.stringify({ message: `Unhandled request: ${method} ${url}` }), {
+        status: 404,
+        headers: { "content-type": "application/json" }
+      });
+    };
+
+    const app = buildWebApp({
+      api_base_url: "http://api.local",
+      fetch_impl: fetchImpl,
+      conversation_client: createPassthroughConversationClient()
+    });
+
+    const initial = await app.inject({
+      method: "POST",
+      url: "/api/chat",
+      payload: { message: "set name: Weekly Revenue Retry" }
+    });
+    expect(initial.statusCode).toBe(200);
+    const readyToRunState = {
+      ...initial.json().state,
+      contract_id: "contract_run_retry",
+      prep_complete: true,
+      scope_pending: true
+    };
+
+    const response = await app.inject({
+      method: "POST",
+      url: "/api/chat",
+      payload: {
+        message: "__ui_finish_scoping_run_analysis__",
+        state: readyToRunState
+      }
+    });
+
+    expect(response.statusCode).toBe(200);
+    expect(runCalls).toBe(3);
+    expect(response.json().assistant_message).toContain("Report executed. Run ID: run_retry_ok.");
+    expect(response.json().state.scope_pending).toBe(false);
+    expect(response.json().state.awaiting_post_run_refinement).toBe(true);
+
+    await app.close();
+  });
 });
