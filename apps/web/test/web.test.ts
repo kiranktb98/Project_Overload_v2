@@ -3145,6 +3145,7 @@ describe("web chat interface", () => {
     expect(response.json().state.prep_complete).toBe(true);
     expect(response.json().state.scope_pending).toBe(true);
     expect(response.json().assistant_message).toContain("Data preparation completed");
+    expect(response.json().assistant_message).not.toContain("Query quality:");
     expect(requests.some((entry) => entry.endsWith("POST http://api.local/report-contracts/contract_prep/prepare"))).toBe(true);
 
     await app.close();
@@ -4156,6 +4157,102 @@ describe("web chat interface", () => {
     expect(body.assistant_message).toContain("Data prep validation:");
     expect(body.assistant_message).toContain("Validation timeline: GAP (4/6 months, 67%) | missing: 2025-09, 2025-10");
     expect(body.assistant_message).toContain("MoM refund_amount");
+
+    await app.close();
+  });
+
+  it("sanitizes provider text that mentions system/run-report click instructions", async () => {
+    const app = buildWebApp({
+      api_base_url: "http://api.local",
+      fetch_impl: async () =>
+        new Response(JSON.stringify({ message: "Unhandled request" }), {
+          status: 404,
+          headers: { "content-type": "application/json" }
+        }),
+      conversation_client: {
+        provider: "openrouter",
+        mode: "provider",
+        async respond() {
+          return {
+            message: "The system can auto-trigger this. Click Run Report to proceed."
+          };
+        }
+      }
+    });
+
+    const response = await app.inject({
+      method: "POST",
+      url: "/api/chat",
+      payload: { message: "hello" }
+    });
+
+    expect(response.statusCode).toBe(200);
+    const assistant = response.json().assistant_message as string;
+    expect(assistant.toLowerCase()).not.toContain("system");
+    expect(assistant).not.toContain("Run Report");
+    expect(assistant.toLowerCase()).not.toContain("click");
+
+    await app.close();
+  });
+
+  it("returns a safe run error when final analysis response is non-json html", async () => {
+    const fetchImpl: typeof fetch = async (input, init) => {
+      const url = typeof input === "string" ? input : input instanceof URL ? input.toString() : input.url;
+      const method = init?.method?.toUpperCase() ?? "GET";
+
+      if (url.endsWith("/report-contracts/contract_run_test/run") && method === "POST") {
+        return new Response("<!DOCTYPE html><html><body>502 Bad Gateway</body></html>", {
+          status: 502,
+          headers: { "content-type": "text/html" }
+        });
+      }
+
+      if (url.endsWith("/connections/catalog") && method === "GET") {
+        return new Response(JSON.stringify({ tables: [], business_context: "", cataloged_at: null }), {
+          status: 200,
+          headers: { "content-type": "application/json" }
+        });
+      }
+
+      return new Response(JSON.stringify({ message: `Unhandled request: ${method} ${url}` }), {
+        status: 404,
+        headers: { "content-type": "application/json" }
+      });
+    };
+
+    const app = buildWebApp({
+      api_base_url: "http://api.local",
+      fetch_impl: fetchImpl,
+      conversation_client: createPassthroughConversationClient()
+    });
+
+    const initial = await app.inject({
+      method: "POST",
+      url: "/api/chat",
+      payload: { message: "set name: Weekly Revenue" }
+    });
+    expect(initial.statusCode).toBe(200);
+    const readyToRunState = {
+      ...initial.json().state,
+      contract_id: "contract_run_test",
+      prep_complete: true,
+      scope_pending: true
+    };
+
+    const response = await app.inject({
+      method: "POST",
+      url: "/api/chat",
+      payload: {
+        message: "__ui_finish_scoping_run_analysis__",
+        state: readyToRunState
+      }
+    });
+
+    expect(response.statusCode).toBe(200);
+    expect(response.json().assistant_message).toContain("Run execution did not complete yet.");
+    expect(response.json().assistant_message).toContain("invalid format");
+    expect(response.json().assistant_message).not.toContain("Unexpected token");
+    expect(response.json().state.scope_pending).toBe(true);
 
     await app.close();
   });

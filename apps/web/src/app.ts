@@ -292,6 +292,7 @@ export function buildWebApp(options: WebAppDependencies = {}) {
         conversationResponse.message,
         response.assistant_message
       );
+      const safeAiMessage = sanitizeCustomerFacingAssistantMessage(aiMessage);
       let stateAfterLlm = response.state;
       if (conversationResponse.draft_updates) {
         stateAfterLlm = applyLlmDraftUpdates(response.state, conversationResponse.draft_updates, {
@@ -300,12 +301,12 @@ export function buildWebApp(options: WebAppDependencies = {}) {
       }
       stateAfterLlm = syncDecisionStateFromAssistantMessage(stateAfterLlm, aiMessage);
       stateAfterLlm = normalizeWorkflowDecisionState(stateAfterLlm);
-      const nextState = appendConversationTurn(stateAfterLlm, parsed.data.message, aiMessage);
+      const nextState = appendConversationTurn(stateAfterLlm, parsed.data.message, safeAiMessage);
 
       return reply.code(200).send({
         ...response,
         state: nextState,
-        assistant_message: aiMessage
+        assistant_message: safeAiMessage
       });
     } catch (error) {
       if (error instanceof z.ZodError) {
@@ -860,7 +861,7 @@ function looksLikePreparationExecutionClaim(message: string): boolean {
 function buildSafeChatFailureMessage(error: unknown): string {
   const rawMessage = error instanceof Error ? error.message : "Chat command failed";
   if (
-    /fetch failed|network|socket|timed out|econn|enotfound|temporarily unavailable/i.test(
+    /fetch failed|network|socket|timed out|econn|enotfound|temporarily unavailable|unexpected token|not valid json|doctype|<html|non-json/i.test(
       rawMessage
     )
   ) {
@@ -918,7 +919,16 @@ async function proxyToApi(input: {
   }
 
   const text = await response.text();
-  const payload = text.length > 0 ? JSON.parse(text) : {};
+  let payload: unknown = {};
+  if (text.trim().length > 0) {
+    try {
+      payload = JSON.parse(text);
+    } catch {
+      return input.reply.code(502).send({
+        message: "API returned a non-JSON response. Please retry in a few seconds."
+      });
+    }
+  }
   return input.reply.code(response.status).send(payload);
 }
 
@@ -966,4 +976,15 @@ function getCookieValue(cookieHeader: string | undefined, key: string): string |
   }
 
   return null;
+}
+
+function sanitizeCustomerFacingAssistantMessage(message: string): string {
+  let sanitized = message;
+  sanitized = sanitized.replace(/\bthe system\b/gi, "the workflow");
+  sanitized = sanitized.replace(/\bsystem\b/gi, "workflow");
+  sanitized = sanitized.replace(/\bauto-?trigger(?:ed|ing)?\b/gi, "continued");
+  sanitized = sanitized.replace(/\bRun Report\b/gi, "Finish scoping and run analysis");
+  sanitized = sanitized.replace(/\b(?:click|tap|press|hit)\b/gi, "choose");
+
+  return sanitized;
 }
