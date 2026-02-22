@@ -4332,10 +4332,10 @@ async function executeRun(state: ChatState, apiClient: WebApiClient): Promise<Ch
   try {
     run = await apiClient.runContract(nextState.contract_id!);
   } catch (error) {
-    const message = error instanceof Error ? error.message : "Run execution failed.";
+    const message = formatRunExecutionFailure(error);
     nextState.scope_pending = true;
     return {
-      assistant_message: `Run execution did not complete. ${message}`,
+      assistant_message: `Run execution did not complete yet. ${message}`,
       state: nextState
     };
   }
@@ -4458,11 +4458,6 @@ function formatPreparedPayloadSummary(payload: PreparedPayloadRecord): string {
     lines.push(`  Sources merged: ${payload.source_query_count} queries${payload.group_id ? ` (group: ${payload.group_id})` : ""}`);
   }
 
-  const qualitySummary = summarizeQueryQuality(payload.preparation_notes);
-  if (qualitySummary) {
-    lines.push(`  Query quality: ${qualitySummary}`);
-  }
-
   const autoCorrections = collectAutoCorrections(payload.preparation_notes, payload.warnings);
   if (autoCorrections.length > 0) {
     lines.push(`  Auto-corrections: ${autoCorrections.join(" | ")}`);
@@ -4517,24 +4512,6 @@ function formatPreparedPayloadSummary(payload: PreparedPayloadRecord): string {
   }
 
   return lines.join("\n");
-}
-
-function summarizeQueryQuality(preparationNotes: string[]): string | null {
-  const scores = preparationNotes
-    .map((note) => {
-      const match = note.match(/Source query\s+(\d+).*quality score:\s*(\d+)\/100/i);
-      if (!match) {
-        return null;
-      }
-      return `Q${match[1]}=${match[2]}/100`;
-    })
-    .filter((entry): entry is string => entry !== null);
-
-  if (scores.length === 0) {
-    return null;
-  }
-
-  return scores.join(", ");
 }
 
 function collectAutoCorrections(preparationNotes: string[], warnings: string[]): string[] {
@@ -6970,17 +6947,53 @@ async function parseJsonResponse<TSchema extends z.ZodTypeAny>(
   schema: TSchema
 ): Promise<z.output<TSchema>> {
   const text = await response.text();
-  const payload = text.length > 0 ? JSON.parse(text) : {};
+  const trimmed = text.trim();
+  let payload: unknown = {};
+  if (trimmed.length > 0) {
+    try {
+      payload = JSON.parse(trimmed);
+    } catch {
+      const isHtmlPayload = /^<!doctype html/i.test(trimmed) || /^<html/i.test(trimmed);
+      const formatIssue = isHtmlPayload
+        ? "Service returned an HTML error page instead of JSON"
+        : "Service returned a non-JSON response";
+      if (!response.ok) {
+        throw new Error(`${formatIssue} (${response.status}).`);
+      }
+      throw new Error(`${formatIssue}. Please retry once.`);
+    }
+  }
 
   if (!response.ok) {
+    const payloadRecord =
+      typeof payload === "object" && payload !== null
+        ? payload as Record<string, unknown>
+        : null;
     const message =
-      typeof payload?.message === "string"
-        ? payload.message
+      typeof payloadRecord?.message === "string"
+        ? payloadRecord.message
         : `API request failed with status ${response.status}`;
     throw new Error(message);
   }
 
   return schema.parse(payload);
+}
+
+function formatRunExecutionFailure(error: unknown): string {
+  const message = error instanceof Error ? error.message : "Run execution failed.";
+  if (
+    /unexpected token|not valid json|doctype|<html|service returned an html error page|service returned a non-json response/i.test(
+      message
+    )
+  ) {
+    return "The final analysis response came back in an invalid format. Please try again once.";
+  }
+
+  if (/fetch failed|network|socket|timed out|timeout|econn|enotfound|aborted|502|503|504/i.test(message)) {
+    return "There was a temporary connectivity issue while generating the final analysis. Please try again once.";
+  }
+
+  return message;
 }
 
 
