@@ -1063,13 +1063,10 @@ export function renderChatPage(): string {
               <div class="chat-head-mark">*</div>
               <div class="chat-head-copy">
                 <strong id="chat-session-title">New Chat</strong>
-                <span class="chat-subtitle">Enterprise v2.4</span>
               </div>
             </div>
             <div class="chat-head-right">
-              <button class="head-icon" type="button" tabindex="-1" aria-hidden="true">↓</button>
-              <button class="head-icon" type="button" tabindex="-1" aria-hidden="true">◷</button>
-              <span class="status" id="status">starting</span>
+              <span class="status" id="status" style="display:none"></span>
             </div>
           </header>
           <section class="messages" id="messages"></section>
