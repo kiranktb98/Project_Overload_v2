@@ -751,24 +751,117 @@ export function renderChatPage(): string {
         background: linear-gradient(180deg, rgba(6, 17, 44, 0.99), rgba(5, 14, 36, 0.99));
       }
 
-      .quick-chips {
+      .queries-btn-bar {
         display: flex;
-        gap: 8px;
         justify-content: center;
-        flex-wrap: wrap;
         margin-bottom: 11px;
       }
 
-      .quick-chip {
-        border: 1px solid #28457f;
+      .queries-bar-btn {
+        display: none;
+        align-items: center;
+        gap: 6px;
+        border: 1px solid rgba(93, 143, 232, 0.3);
         background: rgba(11, 27, 63, 0.92);
-        color: #94aad8;
+        color: #8aacdf;
         border-radius: 999px;
-        padding: 6px 13px;
+        padding: 6px 16px;
         font-family: "JetBrains Mono", monospace;
-        font-size: 0.67rem;
+        font-size: 0.7rem;
+        cursor: pointer;
+        transition: background 0.15s, color 0.15s;
+      }
+      .queries-bar-btn:hover {
+        background: rgba(36, 61, 132, 0.55);
+        color: #c0d8f8;
+        border-color: rgba(93, 143, 232, 0.55);
+      }
+
+      .queries-modal-backdrop {
+        display: none;
+        position: fixed;
+        inset: 0;
+        background: rgba(2, 8, 23, 0.82);
+        z-index: 200;
+      }
+
+      .queries-modal {
+        display: none;
+        position: fixed;
+        inset: 0;
+        z-index: 201;
+        flex-direction: column;
+        pointer-events: none;
+        align-items: center;
+        justify-content: center;
+      }
+      .queries-modal.open {
+        display: flex;
+      }
+
+      .queries-modal-panel {
+        pointer-events: all;
+        background: linear-gradient(160deg, #050f2c 0%, #030a1f 100%);
+        border: 1px solid rgba(36, 61, 132, 0.6);
+        border-radius: 16px;
+        width: min(780px, 95vw);
+        max-height: 80vh;
+        display: flex;
+        flex-direction: column;
+        overflow: hidden;
+        box-shadow: 0 24px 60px rgba(0,0,0,0.6);
+      }
+
+      .queries-modal-header {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        padding: 14px 18px;
+        border-bottom: 1px solid rgba(36, 61, 132, 0.4);
+        flex-shrink: 0;
+      }
+
+      .queries-modal-title {
+        font-size: 0.85rem;
+        font-weight: 600;
+        color: #aec6f0;
+        font-family: "JetBrains Mono", monospace;
+      }
+
+      .queries-modal-close {
+        background: none;
+        border: none;
+        color: #5580a8;
+        font-size: 1.1rem;
+        cursor: pointer;
+        padding: 2px 6px;
+        border-radius: 4px;
+        line-height: 1;
+      }
+      .queries-modal-close:hover { color: #aec6f0; background: rgba(36,61,132,0.3); }
+
+      .queries-modal-body {
+        overflow-y: auto;
+        padding: 16px 18px;
+        display: flex;
+        flex-direction: column;
+        gap: 20px;
+      }
+
+      .queries-run-section {
+        display: flex;
+        flex-direction: column;
+        gap: 10px;
+      }
+
+      .queries-run-header {
+        font-size: 0.72rem;
+        font-weight: 600;
+        color: #5580a8;
         text-transform: uppercase;
-        letter-spacing: 0.03em;
+        letter-spacing: 0.06em;
+        padding-bottom: 4px;
+        border-bottom: 1px solid rgba(36, 61, 132, 0.3);
       }
 
       .composer form {
@@ -982,17 +1075,24 @@ export function renderChatPage(): string {
           <section class="messages" id="messages"></section>
           <section class="composer">
             <div id="decision-panel" class="decision-panel hidden"></div>
-            <div class="quick-chips">
-              <span class="quick-chip">Sales</span>
-              <span class="quick-chip">Refunds</span>
-              <span class="quick-chip">Inventory</span>
-              <span class="quick-chip">Summary</span>
+            <div class="queries-btn-bar">
+              <button id="queries-bar-btn" class="queries-bar-btn" type="button">&#9654; Queries run in this chat</button>
             </div>
             <form id="composer-form">
               <textarea id="composer-input" rows="2" placeholder="Describe the report you want, e.g. weekly refund analysis by product category"></textarea>
               <button id="composer-send" type="submit">Send</button>
             </form>
           </section>
+          <div class="queries-modal-backdrop" id="queries-modal-backdrop"></div>
+          <div class="queries-modal" id="queries-modal">
+            <div class="queries-modal-panel">
+              <div class="queries-modal-header">
+                <span class="queries-modal-title" id="queries-modal-title">Queries run in this chat</span>
+                <button class="queries-modal-close" id="queries-modal-close" type="button">&#x2715;</button>
+              </div>
+              <div class="queries-modal-body" id="queries-modal-body"></div>
+            </div>
+          </div>
         </main>
       </div>
     </div>
@@ -1014,6 +1114,11 @@ export function renderChatPage(): string {
         const sendButtonEl = document.getElementById("composer-send");
         const formEl = document.getElementById("composer-form");
         const decisionPanelEl = document.getElementById("decision-panel");
+        const queriesBarBtnEl = document.getElementById("queries-bar-btn");
+        const queriesModalEl = document.getElementById("queries-modal");
+        const queriesModalBackdropEl = document.getElementById("queries-modal-backdrop");
+        const queriesModalBodyEl = document.getElementById("queries-modal-body");
+        const queriesModalTitleEl = document.getElementById("queries-modal-title");
         const historyListEl = document.getElementById("history-list");
         const newChatButtonEl = document.getElementById("new-chat-button");
         const chatSessionTitleEl = document.getElementById("chat-session-title");
@@ -1830,12 +1935,59 @@ export function renderChatPage(): string {
           messagesEl.innerHTML = "";
           const active = getActiveChat();
           if (!active) {
+            updateQueriesBtn();
             return;
           }
           for (const entry of active.messages) {
             renderMessageBubble(entry);
           }
           messagesEl.scrollTop = messagesEl.scrollHeight;
+          updateQueriesBtn();
+        }
+
+        function updateQueriesBtn() {
+          const chat = getActiveChat();
+          if (!chat || !queriesBarBtnEl) { return; }
+          const runs = chat.messages.filter(function (m) { return Array.isArray(m.prepared_payloads) && m.prepared_payloads.length > 0; });
+          const totalQuestions = runs.reduce(function (sum, m) { return sum + m.prepared_payloads.length; }, 0);
+          if (totalQuestions === 0) {
+            queriesBarBtnEl.style.display = "none";
+          } else {
+            queriesBarBtnEl.style.display = "inline-flex";
+            queriesBarBtnEl.textContent = "\u25BA " + totalQuestions + " " + (totalQuestions === 1 ? "query" : "queries") + " run in this chat";
+          }
+        }
+
+        function openQueriesModal() {
+          const chat = getActiveChat();
+          if (!chat || !queriesModalBodyEl) { return; }
+          queriesModalBodyEl.innerHTML = "";
+          const runs = chat.messages.filter(function (m) { return Array.isArray(m.prepared_payloads) && m.prepared_payloads.length > 0; });
+          if (runs.length === 0) { return; }
+          const totalQ = runs.reduce(function (sum, m) { return sum + m.prepared_payloads.length; }, 0);
+          if (queriesModalTitleEl) {
+            queriesModalTitleEl.textContent = "Queries run in this chat \u00B7 " + totalQ + " total";
+          }
+          for (var ri = 0; ri < runs.length; ri++) {
+            var entry = runs[ri];
+            var section = document.createElement("div");
+            section.className = "queries-run-section";
+            var header = document.createElement("div");
+            header.className = "queries-run-header";
+            header.textContent = "Run " + (ri + 1) + " \u00B7 " + entry.prepared_payloads.length + " " + (entry.prepared_payloads.length === 1 ? "question" : "questions");
+            section.appendChild(header);
+            for (var qi = 0; qi < entry.prepared_payloads.length; qi++) {
+              section.appendChild(buildQueryCard(entry.prepared_payloads[qi]));
+            }
+            queriesModalBodyEl.appendChild(section);
+          }
+          queriesModalEl.classList.add("open");
+          queriesModalBackdropEl.style.display = "block";
+        }
+
+        function closeQueriesModal() {
+          if (queriesModalEl) { queriesModalEl.classList.remove("open"); }
+          if (queriesModalBackdropEl) { queriesModalBackdropEl.style.display = "none"; }
         }
 
         function buildQueryCard(payload) {
@@ -1974,6 +2126,7 @@ export function renderChatPage(): string {
           if (target.id === activeChatIdRef.value) {
             renderSessionTitle();
             renderMessageBubble(messageEntry);
+            updateQueriesBtn();
           }
         }
 
@@ -2255,6 +2408,21 @@ export function renderChatPage(): string {
           saveChatsToStorage(true);
           activateChat(activeChatIdRef.value);
         }
+
+        /* -- Queries modal wiring -- */
+        if (queriesBarBtnEl) {
+          queriesBarBtnEl.addEventListener("click", openQueriesModal);
+        }
+        if (queriesModalBackdropEl) {
+          queriesModalBackdropEl.addEventListener("click", closeQueriesModal);
+        }
+        var queriesModalCloseEl = document.getElementById("queries-modal-close");
+        if (queriesModalCloseEl) {
+          queriesModalCloseEl.addEventListener("click", closeQueriesModal);
+        }
+        document.addEventListener("keydown", function (e) {
+          if (e.key === "Escape") { closeQueriesModal(); }
+        });
 
         /* â”€â”€ Init â”€â”€ */
         formEl.addEventListener("submit", (event) => {
