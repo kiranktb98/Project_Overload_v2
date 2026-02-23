@@ -344,7 +344,8 @@ const PreparedPayloadSchema = z.object({
     })
     .optional(),
   preparation_notes: z.array(z.string()).default([]),
-  warnings: z.array(z.string()).default([])
+  warnings: z.array(z.string()).default([]),
+  sample_rows: z.array(z.record(z.string(), z.unknown())).default([])
 });
 
 type TokenUsageRecord = z.output<typeof TokenUsageSchema>;

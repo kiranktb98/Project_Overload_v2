@@ -29,6 +29,7 @@ const MAX_SQL_REPAIR_ATTEMPTS = 3;
 const MIN_QUERY_QUALITY_SCORE = 45;
 const MIN_ANALYSIS_GROUNDING_SCORE = 0.45;
 const DEFAULT_SQL_DIALECT: SqlDialect = "postgres";
+const ANALYST_ROW_CAP = 200; // Max rows sent to analyst per call; batch if exceeded
 
 type CatalogModel = {
   table_columns: Map<string, Set<string>>;
@@ -96,6 +97,8 @@ const PreparedQuestionPayloadSchema = z.object({
 const PreparedQuestionPayloadPublicSchema = PreparedQuestionPayloadSchema.omit({
   prepared_rows: true,
   primary_sql: true
+}).extend({
+  sample_rows: z.array(z.record(z.string(), z.unknown())).max(5).default([])
 });
 
 const AnalysisPayloadSchema = z.object({
@@ -408,21 +411,13 @@ export async function runReportContractPipeline(input: {
       continue;
     }
 
-    const analysis = await input.analyst_client.analyzeBatch({
-      request_id: `${input.contract.id}_${payload.question_id}`,
-      batch_index: 0,
-      total_batches: 1,
-      summary_word_budget: 220,
-      question: questionLabel,
+    const analysis = await runAnalystWithBatching({
+      analyst_client: input.analyst_client,
+      payload,
+      question_label: questionLabel,
       insight_mode: insightMode,
-      data_context: buildAnalystDataContext(payload),
-      evidence_packet: {
-        request_id: payload.question_id,
-        batch_index: 0,
-        total_batches: 1,
-        rows: payload.prepared_rows.slice(0, input.contract.guardrails.evidence_row_cap),
-        row_count: Math.min(payload.prepared_rows.length, input.contract.guardrails.evidence_row_cap)
-      }
+      contract_id: input.contract.id,
+      data_context: buildAnalystDataContext(payload)
     });
     collectClientUsage(input.analyst_client, tokenUsage);
     const hardened = hardenBatchAnalysisOutput(payload, analysis, questionLabel);
@@ -710,10 +705,12 @@ async function runDataPreparationAgent(input: {
     }
 
     for (const row of result.rows) {
-      mergedRows.push({
-        ...row,
-        _source_query: index + 1
-      });
+      const tagged: Record<string, unknown> = { ...row };
+      // Only tag rows when multiple sub-queries feed one question (group_id scenario)
+      if (plannedQueries.length > 1) {
+        tagged._sub_query = `${planned.purpose} (${index + 1}/${plannedQueries.length})`;
+      }
+      mergedRows.push(tagged);
     }
 
     queryDetails.push({
@@ -908,9 +905,7 @@ async function runPreparedQueryWithHardening(input: {
       continue;
     }
 
-    if (compiledCandidate.compiled && executableCandidateSql !== candidateSql) {
-      warnings.push(`Candidate ${index + 1} compiled for ${input.sql_dialect} dialect.`);
-    }
+    // Dialect compilation is a normal step, not a warning — omit from warnings
 
     const quality = scoreQueryQuality({
       sql: executableCandidateSql,
@@ -2687,7 +2682,8 @@ function toPreparedPayloadPublic(payload: PreparedQuestionPayload): PreparedQues
     prepared_row_count: payload.prepared_row_count,
     validation: payload.validation,
     preparation_notes: payload.preparation_notes,
-    warnings: payload.warnings
+    warnings: payload.warnings,
+    sample_rows: (payload.prepared_rows ?? []).slice(0, 5)
   });
 }
 
@@ -2757,8 +2753,136 @@ function collectClientUsage(
   accumulator.add(client.drainUsageEvents());
 }
 
+async function runAnalystWithBatching(input: {
+  analyst_client: AnalystClient;
+  payload: PreparedQuestionPayload;
+  question_label: string;
+  insight_mode: "business" | "data";
+  contract_id: string;
+  data_context: string;
+}): Promise<import("@project-overload/shared").BatchAnalysis> {
+  const { analyst_client, payload, question_label, insight_mode, contract_id, data_context } = input;
+  const rows = payload.prepared_rows;
+
+  if (rows.length === 0) {
+    return {
+      request_id: `${contract_id}_${payload.question_id}`,
+      batch_index: 0,
+      total_batches: 1,
+      highlights: [],
+      risks: [],
+      recommendations: [],
+      confidence_score: 0,
+      appendix_refs: []
+    };
+  }
+
+  if (rows.length <= ANALYST_ROW_CAP) {
+    return analyst_client.analyzeBatch({
+      request_id: `${contract_id}_${payload.question_id}`,
+      batch_index: 0,
+      total_batches: 1,
+      summary_word_budget: 220,
+      question: question_label,
+      insight_mode,
+      data_context,
+      evidence_packet: {
+        request_id: payload.question_id,
+        batch_index: 0,
+        total_batches: 1,
+        rows,
+        row_count: rows.length
+      }
+    });
+  }
+
+  // Split into batches of ANALYST_ROW_CAP
+  const batches: (typeof rows)[] = [];
+  for (let i = 0; i < rows.length; i += ANALYST_ROW_CAP) {
+    batches.push(rows.slice(i, i + ANALYST_ROW_CAP));
+  }
+
+  const results: import("@project-overload/shared").BatchAnalysis[] = [];
+  for (let i = 0; i < batches.length; i++) {
+    const batchRows = batches[i];
+    const analysis = await analyst_client.analyzeBatch({
+      request_id: `${contract_id}_${payload.question_id}_b${i}`,
+      batch_index: i,
+      total_batches: batches.length,
+      summary_word_budget: 150,
+      question: question_label,
+      insight_mode,
+      data_context: i === 0 ? data_context : undefined,
+      evidence_packet: {
+        request_id: `${payload.question_id}_b${i}`,
+        batch_index: i,
+        total_batches: batches.length,
+        rows: batchRows,
+        row_count: batchRows.length
+      }
+    });
+    results.push(analysis);
+  }
+
+  return mergeBatchAnalyses(results, `${contract_id}_${payload.question_id}`);
+}
+
+function mergeBatchAnalyses(
+  results: import("@project-overload/shared").BatchAnalysis[],
+  requestId: string
+): import("@project-overload/shared").BatchAnalysis {
+  if (results.length === 0) {
+    return {
+      request_id: requestId,
+      batch_index: 0,
+      total_batches: 1,
+      highlights: [],
+      risks: [],
+      recommendations: [],
+      confidence_score: 0,
+      appendix_refs: []
+    };
+  }
+
+  if (results.length === 1) {
+    return results[0];
+  }
+
+  const highlights = Array.from(new Set(results.flatMap((r) => r.highlights))).slice(0, 5);
+  const risks = Array.from(new Set(results.flatMap((r) => r.risks))).slice(0, 3);
+  const recommendations = Array.from(new Set(results.flatMap((r) => r.recommendations))).slice(0, 4);
+  const avgConfidence = results.reduce((sum, r) => sum + r.confidence_score, 0) / results.length;
+
+  return {
+    request_id: requestId,
+    batch_index: 0,
+    total_batches: 1,
+    highlights,
+    risks,
+    recommendations,
+    confidence_score: Number(avgConfidence.toFixed(2)),
+    appendix_refs: Array.from(new Set(results.flatMap((r) => r.appendix_refs)))
+  };
+}
+
 function buildAnalystDataContext(payload: PreparedQuestionPayload): string {
   const parts: string[] = [];
+
+  // When multiple sub-queries feed one question, describe the structure upfront
+  const subQueryCount = payload.source_query_count ?? 1;
+  if (subQueryCount > 1) {
+    parts.push(`DATA STRUCTURE: This question was answered by ${subQueryCount} separate SQL queries whose results are merged below.`);
+    parts.push(`Each row has a _sub_query column indicating which query produced it.`);
+    // Extract per-sub-query row counts from preparation notes
+    const sourceNotes = payload.preparation_notes.filter((n) => /^Source query \d+\/\d+/.test(n) && /returned \d+ row/.test(n));
+    if (sourceNotes.length > 0) {
+      parts.push("Sub-query breakdown:");
+      for (const note of sourceNotes) {
+        parts.push(`  - ${note}`);
+      }
+    }
+    parts.push("");
+  }
 
   parts.push(`Rows fetched: ${payload.row_count_before_reduction}`);
   if (payload.row_count_before_reduction !== payload.prepared_row_count) {
