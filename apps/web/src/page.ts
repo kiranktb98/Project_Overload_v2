@@ -1959,26 +1959,42 @@ export function renderChatPage(): string {
           const POLL_TIMEOUT_MS = 900000;   // 15 min hard ceiling
           const startedAt = Date.now();
 
+          function abortPoll(reason) {
+            if (activeRunPollId !== runId) { return; }
+            activeRunPollId = null;
+            if (stateRef.value) {
+              stateRef.value = Object.assign({}, stateRef.value, { pending_run_id: null });
+            }
+            setActiveChatState(stateRef.value);
+            appendMessage("assistant", reason, null, null, { trackForNaming: false });
+            setBusy(false);
+            composerStateRef.locked = false;
+            syncComposerAvailability();
+            refreshDecisionFromState(stateRef.value);
+          }
+
           function poll() {
             if (activeRunPollId !== runId) { return; }   // cancelled (e.g. chat switched)
 
             if (Date.now() - startedAt > POLL_TIMEOUT_MS) {
-              activeRunPollId = null;
-              setBusy(false);
-              composerStateRef.locked = false;
-              syncComposerAvailability();
-              appendMessage("assistant",
-                "Report generation timed out. Please try running again.",
-                null, null, { trackForNaming: false }
-              );
+              abortPoll("Report generation timed out. Please try running again.");
               return;
             }
 
             fetch("/api/run-status/" + encodeURIComponent(runId))
-              .then(function(r) { return r.text(); })
-              .then(function(raw) {
+              .then(function(r) {
+                var ok = r.ok;
+                return r.text().then(function(t) { return { ok: ok, text: t }; });
+              })
+              .then(function(result) {
+                if (activeRunPollId !== runId) { return; }
+                if (!result.ok) {
+                  // HTTP error (502/404): run not found or server unavailable — fail gracefully
+                  abortPoll("Report run could not be found — it may have expired or the server was restarted. Please try running again.");
+                  return;
+                }
                 var s;
-                try { s = JSON.parse(raw); } catch { return setTimeout(poll, POLL_INTERVAL_MS); }
+                try { s = JSON.parse(result.text); } catch { setTimeout(poll, POLL_INTERVAL_MS); return; }
 
                 if (s && s.status === "succeeded") {
                   activeRunPollId = null;
@@ -2020,12 +2036,16 @@ export function renderChatPage(): string {
                   syncComposerAvailability();
                   refreshDecisionFromState(stateRef.value);
 
-                } else {
-                  // pending or running — keep polling
+                } else if (s && (s.status === "pending" || s.status === "running")) {
+                  // still in progress — keep polling
                   setTimeout(poll, POLL_INTERVAL_MS);
+
+                } else {
+                  // unexpected/missing status — fail gracefully to unblock UI
+                  abortPoll("Report run returned an unexpected status. Please try running again.");
                 }
               })
-              .catch(function() { setTimeout(poll, POLL_INTERVAL_MS); });   // transient error, retry
+              .catch(function() { setTimeout(poll, POLL_INTERVAL_MS); });   // network error — retry
           }
 
           setTimeout(poll, POLL_INTERVAL_MS);   // first poll after 3s
