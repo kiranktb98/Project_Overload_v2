@@ -29,7 +29,7 @@ const MAX_SQL_REPAIR_ATTEMPTS = 3;
 const MIN_QUERY_QUALITY_SCORE = 45;
 const MIN_ANALYSIS_GROUNDING_SCORE = 0.45;
 const DEFAULT_SQL_DIALECT: SqlDialect = "postgres";
-const ANALYST_ROW_CAP = 50; // Max rows sent to analyst per call; batch if exceeded
+const ANALYST_ROW_CAP = 200; // Max rows sent to analyst per call; batch if exceeded
 
 type CatalogModel = {
   table_columns: Map<string, Set<string>>;
@@ -705,10 +705,12 @@ async function runDataPreparationAgent(input: {
     }
 
     for (const row of result.rows) {
-      mergedRows.push({
-        ...row,
-        _source_query: index + 1
-      });
+      const tagged: Record<string, unknown> = { ...row };
+      // Only tag rows when multiple sub-queries feed one question (group_id scenario)
+      if (plannedQueries.length > 1) {
+        tagged._sub_query = `${planned.purpose} (${index + 1}/${plannedQueries.length})`;
+      }
+      mergedRows.push(tagged);
     }
 
     queryDetails.push({
@@ -2865,6 +2867,22 @@ function mergeBatchAnalyses(
 
 function buildAnalystDataContext(payload: PreparedQuestionPayload): string {
   const parts: string[] = [];
+
+  // When multiple sub-queries feed one question, describe the structure upfront
+  const subQueryCount = payload.source_query_count ?? 1;
+  if (subQueryCount > 1) {
+    parts.push(`DATA STRUCTURE: This question was answered by ${subQueryCount} separate SQL queries whose results are merged below.`);
+    parts.push(`Each row has a _sub_query column indicating which query produced it.`);
+    // Extract per-sub-query row counts from preparation notes
+    const sourceNotes = payload.preparation_notes.filter((n) => /^Source query \d+\/\d+/.test(n) && /returned \d+ row/.test(n));
+    if (sourceNotes.length > 0) {
+      parts.push("Sub-query breakdown:");
+      for (const note of sourceNotes) {
+        parts.push(`  - ${note}`);
+      }
+    }
+    parts.push("");
+  }
 
   parts.push(`Rows fetched: ${payload.row_count_before_reduction}`);
   if (payload.row_count_before_reduction !== payload.prepared_row_count) {

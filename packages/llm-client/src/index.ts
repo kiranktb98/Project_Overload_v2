@@ -573,14 +573,25 @@ function queryStrategistSystemPrompt(input: QueryStrategyInput): string {
     "- If the goal says 'last N months vs previous N months', include date window filters and GROUP BY month.",
     "",
     "QUESTION ISOLATION (CRITICAL):",
-    "- One query per question. NEVER bundle two business questions into one SQL statement.",
-    "- NEVER use group_id. Every query in the output must be independent with no group_id field.",
-    "- If the PLANNER ANALYSIS has N recommended approaches, generate exactly N queries.",
+    "- NEVER bundle two different business questions into one SQL statement.",
+    "- If the PLANNER ANALYSIS has N recommended approaches, generate exactly N questions (each may have 1-3 queries).",
     "- Preserve question order based on user intent (Q1 first, Q2 second, etc.).",
     "",
+    "MULTI-QUERY QUESTIONS (use group_id):",
+    "- If a single business question genuinely REQUIRES multiple SQL queries to be answered correctly,",
+    "  assign all those queries the SAME group_id string. They will be merged and sent to ONE analyst call.",
+    "- Use group_id ONLY when truly needed — typically for: comparing two time periods from separate queries,",
+    "  pulling complementary data from two different tables, or computing a numerator + denominator separately.",
+    "- Maximum 3 queries per group_id.",
+    "- Single-purpose questions with one query should NOT have a group_id.",
+    "",
     "Return strictly valid JSON:",
-    '{"queries": [{"question": "...", "sql": "SELECT col, SUM(val) FROM schema.table GROUP BY col ORDER BY 2 DESC LIMIT 50", "purpose": "..."}]}',
-    "No markdown, no extra keys, no group_id field."
+    '{"queries": [',
+    '  {"question": "Revenue by region?", "sql": "SELECT region, SUM(amount) FROM schema.sales GROUP BY 1 ORDER BY 2 DESC LIMIT 50", "purpose": "Current period revenue breakdown"},',
+    '  {"question": "YoY comparison for revenue?", "sql": "SELECT month, SUM(amount) FROM schema.sales WHERE year=2024 GROUP BY 1 LIMIT 50", "purpose": "2024 monthly totals", "group_id": "yoy_revenue"},',
+    '  {"question": "YoY comparison for revenue?", "sql": "SELECT month, SUM(amount) FROM schema.sales WHERE year=2023 GROUP BY 1 LIMIT 50", "purpose": "2023 monthly totals", "group_id": "yoy_revenue"}',
+    "]}",
+    "No markdown, no extra keys."
   ].join("\n");
 }
 
@@ -623,8 +634,9 @@ function queryStrategistUserPrompt(input: QueryStrategyInput): string {
   }
 
   parts.push("");
-  parts.push("Generate one aggregated GROUP BY query per distinct business question (max 4 queries total).");
-  parts.push("Each query MUST use GROUP BY and LIMIT ≤50. Never return raw row dumps. Return JSON only.");
+  parts.push("Generate one aggregated GROUP BY query per distinct business question (2-4 questions, each with 1-3 queries).");
+  parts.push("Use group_id only when a single question requires multiple queries to be answered correctly.");
+  parts.push("Each query MUST use GROUP BY and LIMIT ≤200. Never return raw row dumps. Return JSON only.");
 
   return parts.join("\n");
 }

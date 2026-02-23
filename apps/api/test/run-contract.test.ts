@@ -115,7 +115,7 @@ describe("run pipeline", () => {
     expect(result.prepared_payloads[0].source_query_count).toBe(2);
   });
 
-  it("enforces evidence cap <= 50 rows per analyst batch after preparation", async () => {
+  it("enforces evidence cap <= 200 rows per analyst batch after preparation", async () => {
     const analyst = spyAnalyst();
     const strategist = fixedStrategist([
       { question: "Large dataset question", sql: "SELECT * FROM public.sales", purpose: "Stress test" }
@@ -132,10 +132,9 @@ describe("run pipeline", () => {
       catalog_summary: "public.sales"
     });
 
-    // With ANALYST_ROW_CAP=50, large datasets are batched into multiple calls;
-    // each individual call receives at most 50 rows
+    // With ANALYST_ROW_CAP=200, each analyst call receives at most 200 rows
     expect(analyst.calls.length).toBeGreaterThan(0);
-    expect(analyst.calls.every((c) => c.row_count <= 50)).toBe(true);
+    expect(analyst.calls.every((c) => c.row_count <= 200)).toBe(true);
   });
 
   it("flags timeline gaps for requested month comparisons before analysis", async () => {
