@@ -751,30 +751,30 @@ export function renderChatPage(): string {
         background: linear-gradient(180deg, rgba(6, 17, 44, 0.99), rgba(5, 14, 36, 0.99));
       }
 
-      .queries-btn-bar {
-        display: flex;
-        justify-content: center;
-        margin-bottom: 11px;
-      }
-
       .queries-bar-btn {
-        display: none;
+        display: inline-flex;
         align-items: center;
-        gap: 6px;
-        border: 1px solid rgba(93, 143, 232, 0.3);
-        background: rgba(11, 27, 63, 0.92);
-        color: #8aacdf;
-        border-radius: 999px;
-        padding: 6px 16px;
+        gap: 5px;
+        border: 1px solid rgba(93, 143, 232, 0.22);
+        background: rgba(11, 27, 63, 0.7);
+        color: #6b90c4;
+        border-radius: 7px;
+        padding: 4px 11px;
         font-family: "JetBrains Mono", monospace;
-        font-size: 0.7rem;
+        font-size: 0.67rem;
         cursor: pointer;
-        transition: background 0.15s, color 0.15s;
+        transition: background 0.15s, color 0.15s, border-color 0.15s;
+        white-space: nowrap;
+        flex-shrink: 0;
       }
       .queries-bar-btn:hover {
-        background: rgba(36, 61, 132, 0.55);
+        background: rgba(36, 61, 132, 0.5);
         color: #c0d8f8;
-        border-color: rgba(93, 143, 232, 0.55);
+        border-color: rgba(93, 143, 232, 0.5);
+      }
+      .queries-bar-btn.has-queries {
+        color: #8aacdf;
+        border-color: rgba(93, 143, 232, 0.35);
       }
 
       .queries-modal-backdrop {
@@ -804,8 +804,8 @@ export function renderChatPage(): string {
         background: linear-gradient(160deg, #050f2c 0%, #030a1f 100%);
         border: 1px solid rgba(36, 61, 132, 0.6);
         border-radius: 16px;
-        width: min(780px, 95vw);
-        max-height: 80vh;
+        width: min(1100px, 96vw);
+        max-height: 85vh;
         display: flex;
         flex-direction: column;
         overflow: hidden;
@@ -842,26 +842,94 @@ export function renderChatPage(): string {
 
       .queries-modal-body {
         overflow-y: auto;
-        padding: 16px 18px;
-        display: flex;
-        flex-direction: column;
-        gap: 20px;
+        overflow-x: auto;
+        padding: 0;
       }
 
-      .queries-run-section {
-        display: flex;
-        flex-direction: column;
-        gap: 10px;
+      /* Queries table */
+      .queries-table {
+        width: 100%;
+        border-collapse: collapse;
+        font-size: 0.76rem;
       }
 
-      .queries-run-header {
-        font-size: 0.72rem;
+      .queries-table thead th {
+        background: rgba(22, 44, 100, 0.6);
+        color: #7aaee8;
+        font-size: 0.67rem;
         font-weight: 600;
+        text-transform: uppercase;
+        letter-spacing: 0.05em;
+        padding: 9px 14px;
+        border-bottom: 1px solid rgba(36, 61, 132, 0.5);
+        text-align: left;
+        white-space: nowrap;
+        position: sticky;
+        top: 0;
+      }
+
+      .queries-table tbody td {
+        padding: 11px 14px;
+        vertical-align: top;
+        border-bottom: 1px solid rgba(36, 61, 132, 0.18);
+        color: #9fbdd8;
+      }
+
+      .queries-table tbody tr:last-child td { border-bottom: none; }
+
+      .queries-table .qt-id {
+        width: 36px;
+        min-width: 36px;
+        color: #5580a8;
+        font-weight: 700;
+        text-align: center;
+        font-size: 0.75rem;
+      }
+
+      .queries-table .qt-why { min-width: 200px; max-width: 300px; }
+
+      .qt-question {
+        color: #aec6f0;
+        font-weight: 600;
+        margin-bottom: 4px;
+        line-height: 1.4;
+      }
+
+      .qt-purpose {
+        color: #6b90c4;
+        font-size: 0.71rem;
+        line-height: 1.4;
+      }
+
+      .queries-table .qt-sql { min-width: 280px; max-width: 380px; }
+
+      .qt-sql-code {
+        background: rgba(0, 0, 0, 0.4);
+        border: 1px solid rgba(36, 61, 132, 0.35);
+        border-radius: 6px;
+        padding: 7px 10px;
+        overflow-x: auto;
+        font-size: 0.68rem;
+        color: #b0cce8;
+        white-space: pre;
+        margin: 0;
+        max-height: 130px;
+      }
+
+      .queries-table .qt-output { min-width: 220px; }
+
+      .qt-run-group td {
+        background: rgba(36, 61, 132, 0.15);
+        padding: 6px 14px;
+        border-bottom: 1px solid rgba(36, 61, 132, 0.3) !important;
+      }
+
+      .qt-run-label {
+        font-size: 0.66rem;
+        font-weight: 700;
         color: #5580a8;
         text-transform: uppercase;
-        letter-spacing: 0.06em;
-        padding-bottom: 4px;
-        border-bottom: 1px solid rgba(36, 61, 132, 0.3);
+        letter-spacing: 0.07em;
       }
 
       .composer form {
@@ -1066,15 +1134,13 @@ export function renderChatPage(): string {
               </div>
             </div>
             <div class="chat-head-right">
+              <button id="queries-bar-btn" class="queries-bar-btn" type="button">Queries</button>
               <span class="status" id="status" style="display:none"></span>
             </div>
           </header>
           <section class="messages" id="messages"></section>
           <section class="composer">
             <div id="decision-panel" class="decision-panel hidden"></div>
-            <div class="queries-btn-bar">
-              <button id="queries-bar-btn" class="queries-bar-btn" type="button">&#9654; Queries run in this chat</button>
-            </div>
             <form id="composer-form">
               <textarea id="composer-input" rows="2" placeholder="Describe the report you want, e.g. weekly refund analysis by product category"></textarea>
               <button id="composer-send" type="submit">Send</button>
@@ -2048,41 +2114,149 @@ export function renderChatPage(): string {
         }
 
         function updateQueriesBtn() {
+          if (!queriesBarBtnEl) { return; }
           const chat = getActiveChat();
-          if (!chat || !queriesBarBtnEl) { return; }
-          const runs = chat.messages.filter(function (m) { return Array.isArray(m.prepared_payloads) && m.prepared_payloads.length > 0; });
+          const runs = chat ? chat.messages.filter(function (m) { return Array.isArray(m.prepared_payloads) && m.prepared_payloads.length > 0; }) : [];
           const totalQuestions = runs.reduce(function (sum, m) { return sum + m.prepared_payloads.length; }, 0);
           if (totalQuestions === 0) {
-            queriesBarBtnEl.style.display = "none";
+            queriesBarBtnEl.textContent = "Queries";
+            queriesBarBtnEl.classList.remove("has-queries");
           } else {
-            queriesBarBtnEl.style.display = "inline-flex";
-            queriesBarBtnEl.textContent = "\u25BA " + totalQuestions + " " + (totalQuestions === 1 ? "query" : "queries") + " run in this chat";
+            queriesBarBtnEl.textContent = "\u25BA " + totalQuestions + " " + (totalQuestions === 1 ? "query" : "queries");
+            queriesBarBtnEl.classList.add("has-queries");
           }
         }
 
         function openQueriesModal() {
-          const chat = getActiveChat();
-          if (!chat || !queriesModalBodyEl) { return; }
+          if (!queriesModalBodyEl) { return; }
           queriesModalBodyEl.innerHTML = "";
-          const runs = chat.messages.filter(function (m) { return Array.isArray(m.prepared_payloads) && m.prepared_payloads.length > 0; });
-          if (runs.length === 0) { return; }
+          const chat = getActiveChat();
+          const runs = chat ? chat.messages.filter(function (m) { return Array.isArray(m.prepared_payloads) && m.prepared_payloads.length > 0; }) : [];
           const totalQ = runs.reduce(function (sum, m) { return sum + m.prepared_payloads.length; }, 0);
           if (queriesModalTitleEl) {
-            queriesModalTitleEl.textContent = "Queries run in this chat \u00B7 " + totalQ + " total";
+            queriesModalTitleEl.textContent = "Queries" + (totalQ > 0 ? " \u00B7 " + totalQ + " total" : "");
           }
+
+          if (totalQ === 0) {
+            const empty = document.createElement("div");
+            empty.style.cssText = "padding:36px 18px;color:#5580a8;font-size:0.78rem;text-align:center;";
+            empty.textContent = "No queries have been run in this chat yet.";
+            queriesModalBodyEl.appendChild(empty);
+            queriesModalEl.classList.add("open");
+            queriesModalBackdropEl.style.display = "block";
+            return;
+          }
+
+          const table = document.createElement("table");
+          table.className = "queries-table";
+
+          const thead = document.createElement("thead");
+          const headerRow = document.createElement("tr");
+          ["#", "Question / Why it ran", "SQL Query", "Sample Output"].forEach(function (h) {
+            const th = document.createElement("th");
+            th.textContent = h;
+            headerRow.appendChild(th);
+          });
+          thead.appendChild(headerRow);
+          table.appendChild(thead);
+
+          const tbody = document.createElement("tbody");
+          var globalIdx = 1;
+
           for (var ri = 0; ri < runs.length; ri++) {
             var entry = runs[ri];
-            var section = document.createElement("div");
-            section.className = "queries-run-section";
-            var header = document.createElement("div");
-            header.className = "queries-run-header";
-            header.textContent = "Run " + (ri + 1) + " \u00B7 " + entry.prepared_payloads.length + " " + (entry.prepared_payloads.length === 1 ? "question" : "questions");
-            section.appendChild(header);
-            for (var qi = 0; qi < entry.prepared_payloads.length; qi++) {
-              section.appendChild(buildQueryCard(entry.prepared_payloads[qi]));
+            if (runs.length > 1) {
+              const groupRow = document.createElement("tr");
+              groupRow.className = "qt-run-group";
+              const groupTd = document.createElement("td");
+              groupTd.colSpan = 4;
+              groupTd.className = "qt-run-label";
+              groupTd.textContent = "Run " + (ri + 1) + " \u00B7 " + entry.prepared_payloads.length + " " + (entry.prepared_payloads.length === 1 ? "query" : "queries");
+              groupRow.appendChild(groupTd);
+              tbody.appendChild(groupRow);
             }
-            queriesModalBodyEl.appendChild(section);
+            for (var qi = 0; qi < entry.prepared_payloads.length; qi++) {
+              var p = entry.prepared_payloads[qi];
+              const row = document.createElement("tr");
+
+              // # column
+              const tdId = document.createElement("td");
+              tdId.className = "qt-id";
+              tdId.textContent = String(globalIdx++);
+              row.appendChild(tdId);
+
+              // Question / Why it ran
+              const tdWhy = document.createElement("td");
+              tdWhy.className = "qt-why";
+              const qTitle = document.createElement("div");
+              qTitle.className = "qt-question";
+              qTitle.textContent = p.question || "";
+              tdWhy.appendChild(qTitle);
+              if (p.purpose) {
+                const qPurpose = document.createElement("div");
+                qPurpose.className = "qt-purpose";
+                qPurpose.textContent = p.purpose;
+                tdWhy.appendChild(qPurpose);
+              }
+              row.appendChild(tdWhy);
+
+              // SQL Query
+              const tdSql = document.createElement("td");
+              tdSql.className = "qt-sql";
+              const sqls = p.preparation_sqls || [];
+              if (sqls.length > 0) {
+                const pre = document.createElement("pre");
+                pre.className = "qt-sql-code";
+                pre.textContent = sqls[0].trim();
+                tdSql.appendChild(pre);
+              } else {
+                tdSql.style.color = "#4a6080";
+                tdSql.textContent = "\u2014";
+              }
+              row.appendChild(tdSql);
+
+              // Sample Output
+              const tdOutput = document.createElement("td");
+              tdOutput.className = "qt-output";
+              const sampleRows = p.sample_rows || [];
+              if (sampleRows.length > 0) {
+                const cols = Object.keys(sampleRows[0]);
+                const miniTable = document.createElement("table");
+                miniTable.className = "qc-sample-table";
+                const mThead = document.createElement("thead");
+                const mHr = document.createElement("tr");
+                cols.forEach(function (col) {
+                  const th = document.createElement("th");
+                  th.textContent = col;
+                  mHr.appendChild(th);
+                });
+                mThead.appendChild(mHr);
+                miniTable.appendChild(mThead);
+                const mTbody = document.createElement("tbody");
+                sampleRows.forEach(function (rowData) {
+                  const tr = document.createElement("tr");
+                  cols.forEach(function (col) {
+                    const td = document.createElement("td");
+                    const val = rowData[col];
+                    td.textContent = val == null ? "" : String(val);
+                    tr.appendChild(td);
+                  });
+                  mTbody.appendChild(tr);
+                });
+                miniTable.appendChild(mTbody);
+                tdOutput.appendChild(miniTable);
+              } else {
+                tdOutput.style.color = "#4a6080";
+                tdOutput.textContent = "\u2014";
+              }
+              row.appendChild(tdOutput);
+
+              tbody.appendChild(row);
+            }
           }
+
+          table.appendChild(tbody);
+          queriesModalBodyEl.appendChild(table);
           queriesModalEl.classList.add("open");
           queriesModalBackdropEl.style.display = "block";
         }
