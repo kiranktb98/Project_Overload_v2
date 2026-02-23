@@ -377,6 +377,18 @@ export function buildWebApp(options: WebAppDependencies = {}) {
     });
   });
 
+  app.get("/api/run-status/:runId", async (request, reply) => {
+    const { runId } = request.params as { runId: string };
+    try {
+      const status = await apiClient.getRunStatus(runId);
+      return reply.code(200).send(status);
+    } catch (error) {
+      return reply.code(502).send({
+        message: error instanceof Error ? error.message : "Failed to fetch run status"
+      });
+    }
+  });
+
   app.get("/api/runs/:runId/pdf", async (request, reply) => {
     const { runId } = request.params as { runId: string };
 
@@ -626,6 +638,10 @@ function shouldBypassConversationForAction(actionContext: string, state: unknown
   if (parsedState.pending_metric_confirmations.length > 0) {
     return true;
   }
+  // Run submitted but not yet complete — no need to pass through the LLM
+  if (parsedState.pending_run_id) {
+    return true;
+  }
 
   if (
     parsedState.prep_pending ||
@@ -689,31 +705,38 @@ function syncDecisionStateFromAssistantMessage(state: unknown, assistantMessage:
   }
 
   const lower = assistantMessage.toLowerCase();
+
+  // ── Prep-pending triggers (show "Run Data Preparation" button) ──
   const prepSignal = /\brun data preparation\b/.test(lower);
   const prepContext = /\b(scope|ready|locked|go ahead|choose|click|hit)\b/.test(lower);
-  if (prepSignal && prepContext && !nextState.prep_complete) {
-    nextState.prep_pending = true;
-    nextState.scope_pending = false;
-    return nextState;
+
+  // Broader scope-confirmation phrases the LLM naturally uses
+  const scopeConfirmedSignal =
+    /\bscope is (locked|confirmed|set|ready|finalized)\b/.test(lower) ||
+    /\b(locked in|all set|we'?re (all )?set|good to go)\b/.test(lower) ||
+    /\b(scope confirmed|confirmed scope|scope.{0,10}locked)\b/.test(lower) ||
+    /\bkick.{0,20}(analysis|preparation|things off)\b/.test(lower) ||
+    /\bready to prepare data\b/.test(lower) ||
+    /\bdraft is ready\b/.test(lower) ||
+    /\brun data preparation\b/.test(lower);
+
+  if ((prepSignal && prepContext) || scopeConfirmedSignal) {
+    if (!nextState.prep_complete) {
+      nextState.prep_pending = true;
+      nextState.scope_pending = false;
+      return nextState;
+    }
   }
 
-  const analysisSignal = /\bfinish scoping and run analysis\b/.test(lower);
+  // ── Scope-pending triggers (show "Finish scoping and run analysis" button) ──
+  const analysisSignal =
+    /\bfinish scoping and run analysis\b/.test(lower) ||
+    /\b(run report|execute report|generate report)\b/.test(lower);
+
   if (analysisSignal && nextState.prep_complete) {
     nextState.scope_pending = true;
     nextState.prep_pending = false;
     return nextState;
-  }
-
-  const runReportSignal = /\b(run report|execute report|generate report)\b/.test(lower);
-  const scopeLockedSignal = /\bscope is locked\b/.test(lower) || /\bdraft is ready\b/.test(lower);
-  if (runReportSignal || scopeLockedSignal) {
-    if (nextState.prep_complete) {
-      nextState.scope_pending = true;
-      nextState.prep_pending = false;
-    } else {
-      nextState.prep_pending = true;
-      nextState.scope_pending = false;
-    }
   }
 
   return nextState;
@@ -760,6 +783,7 @@ function normalizeWorkflowDecisionState(state: unknown) {
     parsed.prepared_payloads.length > 0 &&
     !parsed.scope_pending &&
     !parsed.prep_pending &&
+    !parsed.pending_run_id &&
     !parsed.awaiting_post_run_refinement &&
     !parsed.refinement_active &&
     !parsed.awaiting_pdf_confirmation &&

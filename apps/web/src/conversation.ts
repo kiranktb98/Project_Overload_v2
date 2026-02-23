@@ -391,8 +391,14 @@ function conversationalSystemPrompt(input: ConversationTurnInput): string {
     "Data preparation and analysis run question-by-question behind the scenes. Reflect that clearly in your responses when relevant.",
     "If no action was taken, you're just having a conversation. Answer naturally using the catalog and business context below.",
     "",
+    "SCOPE CONFIRMATION SIGNAL (critical):",
+    "- When you have finished confirming the report scope and the user should proceed to data preparation,",
+    "  you MUST include the exact phrase 'scope is locked' in your response — the interface uses this to",
+    "  display the action button. Without it, the button will not appear.",
+    "  Example ending: 'Scope is locked — here is the confirmed plan: ...'",
+    "",
     "BUTTON NAMES (never invent names that differ from these):",
-    "- When data preparation is pending: button is 'Run Data Preparation' (ACTION CONTEXT: 'Ready to prepare data').",
+    "- When data preparation is pending: button is 'Run Data Preparation'.",
     "- When analysis run is pending (after prep completes): button is 'Finish scoping and run analysis'.",
     "- IMPORTANT: When any pending decision is active, do NOT name any button — they are already visible to the user. Just describe what will happen next.",
     "",
@@ -627,6 +633,7 @@ function createTitleStateSkeleton() {
     schedule_pending: false,
     pending_schedule: null,
     last_concise_summary: null,
+    pending_run_id: null,
     last_token_usage: null
   };
 }

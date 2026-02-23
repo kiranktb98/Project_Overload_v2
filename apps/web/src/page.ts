@@ -1123,6 +1123,7 @@ export function renderChatPage(): string {
         const composerStateRef = { busy: false, locked: false };
         const decisionRef = { value: null };
         const serverSyncRef = { timer: null, inFlight: false, queued: false };
+        let activeRunPollId = null;   // prevents duplicate polling loops for async runs
         const defaultInputPlaceholder =
           "Describe the report you want, e.g. weekly refund analysis by product category";
 
@@ -1225,6 +1226,7 @@ export function renderChatPage(): string {
             text: trimmed,
             download_url: typeof raw.download_url === "string" ? raw.download_url : null,
             exec_brief_html: typeof raw.exec_brief_html === "string" ? raw.exec_brief_html : null,
+            prepared_payloads: Array.isArray(raw.prepared_payloads) ? raw.prepared_payloads : null,
             at: typeof raw.at === "string" ? raw.at : nowIso()
           };
         }
@@ -1306,7 +1308,8 @@ export function renderChatPage(): string {
             if (!response.ok) {
               return [];
             }
-            const payload = await response.json();
+            let payload;
+            try { payload = JSON.parse(await response.text()); } catch { return []; }
             const sessions = Array.isArray(payload && payload.sessions) ? payload.sessions : [];
             return sessions
               .map((entry) => normalizeStoredChat(entry))
@@ -1858,6 +1861,108 @@ export function renderChatPage(): string {
           syncComposerAvailability();
           renderDecisionPanel();
           renderStatus();
+          // Start polling if there is a pending async run and we aren't already polling it.
+          if (state && state.pending_run_id && activeRunPollId !== state.pending_run_id) {
+            startRunPolling(state.pending_run_id);
+          }
+        }
+
+        function buildRunCompleteMessage(execBrief, runId) {
+          if (!execBrief) { return "Report executed. Run ID: " + runId + "."; }
+          const lines = ["Report executed. Run ID: " + runId + "."];
+          if (Array.isArray(execBrief.what_changed) && execBrief.what_changed.length > 0) {
+            lines.push("\n**What changed:** " + execBrief.what_changed.slice(0, 3).join(" · "));
+          }
+          if (Array.isArray(execBrief.so_what) && execBrief.so_what.length > 0) {
+            lines.push("**So what:** " + execBrief.so_what.slice(0, 2).join(" · "));
+          }
+          if (Array.isArray(execBrief.what_to_do) && execBrief.what_to_do.length > 0) {
+            lines.push("**Actions:** " + execBrief.what_to_do.slice(0, 2).join(" · "));
+          }
+          lines.push("\nBefore PDF, choose one path: ask follow-up refinement questions (max 2), generate PDF now, or start a new conversation.");
+          return lines.join("\n");
+        }
+
+        function startRunPolling(runId) {
+          activeRunPollId = runId;
+          setBusy(true);
+          composerStateRef.locked = true;
+          syncComposerAvailability();
+
+          const POLL_INTERVAL_MS = 3000;
+          const POLL_TIMEOUT_MS = 900000;   // 15 min hard ceiling
+          const startedAt = Date.now();
+
+          function poll() {
+            if (activeRunPollId !== runId) { return; }   // cancelled (e.g. chat switched)
+
+            if (Date.now() - startedAt > POLL_TIMEOUT_MS) {
+              activeRunPollId = null;
+              setBusy(false);
+              composerStateRef.locked = false;
+              syncComposerAvailability();
+              appendMessage("assistant",
+                "Report generation timed out. Please try running again.",
+                null, null, { trackForNaming: false }
+              );
+              return;
+            }
+
+            fetch("/api/run-status/" + encodeURIComponent(runId))
+              .then(function(r) { return r.text(); })
+              .then(function(raw) {
+                var s;
+                try { s = JSON.parse(raw); } catch { return setTimeout(poll, POLL_INTERVAL_MS); }
+
+                if (s && s.status === "succeeded") {
+                  activeRunPollId = null;
+                  stateRef.value = Object.assign({}, stateRef.value, {
+                    pending_run_id: null,
+                    last_run_id: runId,
+                    awaiting_post_run_refinement: true,
+                    awaiting_pdf_confirmation: false,
+                    refinement_active: false,
+                    refinement_questions_remaining: 2,
+                    pdf_download_url: s.pdf_path ? "/api/runs/" + runId + "/pdf" : null,
+                    prepared_payloads: Array.isArray(s.prepared_payloads) ? s.prepared_payloads : []
+                  });
+                  setActiveChatState(stateRef.value);
+                  refreshDecisionFromState(stateRef.value);
+                  var msg = buildRunCompleteMessage(s.exec_brief, runId);
+                  appendMessage("assistant", msg,
+                    s.pdf_path ? "/api/runs/" + runId + "/pdf" : null,
+                    s.exec_brief_html || null,
+                    { trackForNaming: false,
+                      prepared_payloads: Array.isArray(s.prepared_payloads) ? s.prepared_payloads : [] }
+                  );
+                  setBusy(false);
+                  composerStateRef.locked = false;
+                  syncComposerAvailability();
+                  updateQueriesBtn();
+                  try { inputEl.focus(); } catch {}
+
+                } else if (s && s.status === "failed") {
+                  activeRunPollId = null;
+                  stateRef.value = Object.assign({}, stateRef.value, { pending_run_id: null });
+                  setActiveChatState(stateRef.value);
+                  appendMessage("assistant",
+                    "Report generation failed: " + (s.error || "Unknown error") + ". Please try running again.",
+                    null, null, { trackForNaming: false }
+                  );
+                  setBusy(false);
+                  composerStateRef.locked = false;
+                  syncComposerAvailability();
+                  refreshDecisionFromState(stateRef.value);
+
+                } else {
+                  // pending or running — keep polling
+                  setTimeout(poll, POLL_INTERVAL_MS);
+                }
+              })
+              .catch(function() { setTimeout(poll, POLL_INTERVAL_MS); });   // transient error, retry
+          }
+
+          setTimeout(poll, POLL_INTERVAL_MS);   // first poll after 3s
         }
 
         /* â”€â”€ Messages â”€â”€ */
@@ -2162,7 +2267,13 @@ export function renderChatPage(): string {
               })
             });
 
-            const payload = await response.json();
+            let payload;
+            try {
+              payload = JSON.parse(await response.text());
+            } catch {
+              appendMessage("assistant", "Server error — please try again in a moment.", null, null, { trackForNaming: false });
+              return;
+            }
             if (!response.ok) {
               const errorText = payload && typeof payload.message === "string" ? payload.message : "Chat request failed";
               appendMessage("assistant", "Error: " + errorText);
@@ -2192,7 +2303,8 @@ export function renderChatPage(): string {
         async function loadRuntimeStatus() {
           try {
             const response = await fetch("/api/chat/runtime", { method: "GET" });
-            const payload = await response.json();
+            let payload;
+            try { payload = JSON.parse(await response.text()); } catch { runtimeStatusRef.mode = "provider unavailable"; renderStatus(); return; }
             if (!response.ok) {
               runtimeStatusRef.mode = "provider unavailable";
               renderStatus();
@@ -2274,7 +2386,8 @@ export function renderChatPage(): string {
 
           try {
             const response = await fetch("/api/db/context", { method: "GET" });
-            const payload = await response.json();
+            let payload;
+            try { payload = JSON.parse(await response.text()); } catch { return; }
             if (response.ok && payload && payload.connected === true) {
               chat.state = createStateFromDbContext(payload);
               if (chat.messages.length <= 1) {
@@ -2326,7 +2439,8 @@ export function renderChatPage(): string {
               headers: { "content-type": "application/json" },
               body: JSON.stringify({ messages })
             });
-            const payload = await response.json();
+            let payload;
+            try { payload = JSON.parse(await response.text()); } catch { return; }
             if (!response.ok || !payload || typeof payload.title !== "string") {
               return;
             }

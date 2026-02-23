@@ -187,6 +187,7 @@ export const ChatStateSchema = z.object({
     .nullable()
     .default(null),
   last_concise_summary: z.string().nullable().default(null),
+  pending_run_id: z.string().nullable().default(null),
   last_token_usage: z
     .object({
       input_tokens: z.number().int().min(0),
@@ -244,16 +245,8 @@ export interface WebApiClient {
     prepared_payloads: PreparedPayloadRecord[];
     token_usage?: TokenUsageRecord;
   }>;
-  runContract(contractId: string): Promise<{
-    run_id: string;
-    exec_brief: ExecBriefRecord;
-    exec_brief_html?: string;
-    planner_summary?: string;
-    concise_summary?: string;
-    prepared_payloads?: PreparedPayloadRecord[];
-    token_usage?: TokenUsageRecord;
-    pdf_path?: string;
-  }>;
+  submitRun(contractId: string): Promise<{ run_id: string; status: string }>;
+  getRunStatus(runId: string): Promise<z.output<typeof RunStatusResponseSchema>>;
   downloadRunPdf(runId: string): Promise<Response>;
   askRunQuestion(runId: string, question: string): Promise<{
     answer: string;
@@ -361,17 +354,24 @@ const KpiCheckResultSchema = z.object({
   alert_message: z.string()
 });
 
-const RunContractResponseSchema = z.object({
-  run_id: z.string().min(1),
-  exec_brief: ExecBriefSchema,
-  exec_brief_html: z.string().optional(),
-  planner_summary: z.string().optional(),
-  concise_summary: z.string().optional(),
-  prepared_payloads: z.array(PreparedPayloadSchema).optional(),
-  kpi_results: z.array(KpiCheckResultSchema).optional(),
-  token_usage: TokenUsageSchema.optional(),
-  pdf_path: z.string().min(1).optional()
-});
+const RunStatusResponseSchema = z.discriminatedUnion("status", [
+  z.object({ status: z.literal("pending"), run_id: z.string() }),
+  z.object({ status: z.literal("running"), run_id: z.string() }),
+  z.object({
+    status: z.literal("succeeded"),
+    run_id: z.string().min(1),
+    exec_brief: ExecBriefSchema,
+    exec_brief_html: z.string().optional(),
+    prepared_payloads: z.array(PreparedPayloadSchema).default([]),
+    kpi_results: z.array(KpiCheckResultSchema).default([]),
+    pdf_path: z.string().optional()
+  }),
+  z.object({
+    status: z.literal("failed"),
+    run_id: z.string(),
+    error: z.string().optional()
+  })
+]);
 
 const PrepareContractResponseSchema = z.object({
   contract_id: z.string().min(1),
@@ -519,6 +519,7 @@ export function createInitialChatState(): ChatState {
     schedule_pending: false,
     pending_schedule: null,
     last_concise_summary: null,
+    pending_run_id: null,
     last_token_usage: null
   };
 }
@@ -602,6 +603,7 @@ export function parseChatState(value: unknown): ChatState {
     schedule_pending: parsed.data.schedule_pending ?? false,
     pending_schedule: parsed.data.pending_schedule ?? null,
     last_concise_summary: parsed.data.last_concise_summary ?? null,
+    pending_run_id: parsed.data.pending_run_id ?? null,
     last_token_usage: parsed.data.last_token_usage ?? null
   };
 }
@@ -895,45 +897,25 @@ export function createWebApiClient(options: CreateWebApiClientOptions): WebApiCl
 
       return parseJsonResponse(response, PrepareContractResponseSchema);
     },
-    async runContract(contractId) {
-      const path = `/report-contracts/${encodeURIComponent(contractId)}/run`;
-      const maxAttempts = 3;
-      for (let attempt = 0; attempt < maxAttempts; attempt += 1) {
-        let response: Response;
-        try {
-          response = await requestWithRetry(
-            path,
-            {
-              method: "POST",
-              headers: { "content-type": "application/json" },
-              body: "{}"
-            },
-            { retries: 1, timeout_ms: RUN_TIMEOUT_MS }
-          );
-        } catch (error) {
-          if (attempt >= maxAttempts - 1 || !isRetryableRunExecutionError(error)) {
-            throw error;
-          }
-          await sleep(350 * (attempt + 1));
-          continue;
-        }
-
-        if ((response.status >= 500 || response.status === 429) && attempt < maxAttempts - 1) {
-          await sleep(350 * (attempt + 1));
-          continue;
-        }
-
-        try {
-          return await parseJsonResponse(response, RunContractResponseSchema);
-        } catch (error) {
-          if (attempt >= maxAttempts - 1 || !isRetryableRunExecutionError(error)) {
-            throw error;
-          }
-          await sleep(350 * (attempt + 1));
-        }
-      }
-
-      throw new Error("Run execution failed after retry attempts.");
+    async submitRun(contractId) {
+      const response = await requestWithRetry(
+        `/report-contracts/${encodeURIComponent(contractId)}/run`,
+        {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: "{}"
+        },
+        { retries: 0, timeout_ms: 15_000 }
+      );
+      return parseJsonResponse(response, z.object({ run_id: z.string().min(1), status: z.string() }));
+    },
+    async getRunStatus(runId) {
+      const response = await requestWithRetry(
+        `/report-runs/${encodeURIComponent(runId)}`,
+        { method: "GET" },
+        { retries: 1, timeout_ms: 10_000 }
+      );
+      return parseJsonResponse(response, RunStatusResponseSchema);
     },
     async downloadRunPdf(runId) {
       const response = await requestWithRetry(
@@ -4464,74 +4446,25 @@ async function executeRun(state: ChatState, apiClient: WebApiClient): Promise<Ch
     }
   }
 
-  let run: Awaited<ReturnType<WebApiClient["runContract"]>>;
+  let submitted: Awaited<ReturnType<WebApiClient["submitRun"]>>;
   try {
-    run = await apiClient.runContract(nextState.contract_id!);
+    submitted = await apiClient.submitRun(nextState.contract_id!);
   } catch (error) {
     const message = formatRunExecutionFailure(error);
     nextState.scope_pending = true;
     return {
-      assistant_message: `Run execution did not complete yet. ${message}`,
+      assistant_message: `Run could not be submitted. ${message}`,
       state: nextState
     };
   }
-  nextState.last_run_id = run.run_id;
-  nextState.last_exec_brief = run.exec_brief;
-  nextState.planner_summary = run.planner_summary ?? null;
-  nextState.last_concise_summary = run.concise_summary ?? null;
-  nextState.prepared_payloads = run.prepared_payloads ?? nextState.prepared_payloads;
-  nextState.awaiting_pdf_confirmation = false;
-  nextState.awaiting_post_run_refinement = true;
-  nextState.refinement_active = false;
-  nextState.refinement_questions_remaining = 2;
-  if (run.token_usage) {
-    nextState.last_token_usage = run.token_usage;
-  }
 
-  const brief = run.exec_brief;
-  const briefLines: string[] = [];
-
-  if (run.planner_summary) {
-    briefLines.push(`**Planning:** ${run.planner_summary}`);
-    briefLines.push("");
-  }
-
-  briefLines.push(
-    `What changed: ${brief.what_changed.join("; ") || "nothing notable"}`,
-    `Why: ${brief.why.join("; ") || "unknown"}`,
-    `So what: ${brief.so_what.join("; ") || "no impact noted"}`,
-    `Recommended: ${brief.what_to_do.join("; ") || "no action needed"}`
-  );
-
-  const payloadDiagnostics = (run.prepared_payloads ?? [])
-    .slice(0, 6)
-    .map((payload) => formatPreparedPayloadSummary(payload));
-  const diagnosticsBlock = payloadDiagnostics.length > 0
-    ? ["Data prep validation:", payloadDiagnostics.join("\n\n")].join("\n")
-    : "";
-
-  const tokenUsageLine = run.token_usage
-    ? `Tokens used - input: ${run.token_usage.input_tokens}, output: ${run.token_usage.output_tokens}, total: ${run.token_usage.total_tokens}.`
-    : "";
-  const metricDefinitionLine = nextState.metric_definitions
-    .filter((entry) => entry.confirmed)
-    .slice(0, 5)
-    .map((entry) => `${entry.display_name}: ${entry.definition}`)
-    .join(" | ");
+  nextState.pending_run_id = submitted.run_id;
 
   return {
-    assistant_message: [
-      `Report executed. Run ID: ${run.run_id}.`,
-      run.concise_summary ?? "",
-      metricDefinitionLine ? `Calculation choices used: ${metricDefinitionLine}` : "",
-      briefLines.join("\n"),
-      diagnosticsBlock,
-      tokenUsageLine,
-      "Before PDF, choose one path: ask follow-up refinement questions (max 2), generate PDF now, or start a new conversation."
-    ].filter((line) => line.length > 0).join("\n\n"),
-    state: nextState,
-    exec_brief_html: run.exec_brief_html,
-    prepared_payloads: run.prepared_payloads
+    assistant_message:
+      "I'm generating your report — this usually takes 2–4 minutes. " +
+      "The results will appear here once it's ready.",
+    state: nextState
   };
 }
 
@@ -7148,11 +7081,5 @@ function formatRunExecutionFailure(error: unknown): string {
   return message;
 }
 
-function isRetryableRunExecutionError(error: unknown): boolean {
-  const message = error instanceof Error ? error.message : String(error);
-  return /fetch failed|network|socket|timed out|timeout|econn|enotfound|aborted|service returned an html error page|service returned a non-json response|api request failed with status (5\d\d|429)|\b502\b|\b503\b|\b504\b/i.test(
-    message
-  );
-}
 
 

@@ -81,24 +81,29 @@ describe("api semantic and run flow", () => {
       url: "/report-contracts/contract_weekly_ceo/run"
     });
 
-    expect(runContract.statusCode).toBe(200);
+    expect(runContract.statusCode).toBe(202);
+    const { run_id } = runContract.json();
+    expect(typeof run_id).toBe("string");
 
-    const body = runContract.json();
-    expect(typeof body.pdf_path).toBe("string");
-    expect(typeof body.concise_summary).toBe("string");
-    expect(Array.isArray(body.prepared_payloads)).toBe(true);
-    expect(body.token_usage).toBeDefined();
-    expect(body.exec_brief.what_changed.length).toBeGreaterThan(0);
-    expect(body.exec_brief.why.length).toBeGreaterThan(0);
-    expect(body.exec_brief.so_what.length).toBeGreaterThan(0);
-    expect(body.exec_brief.what_to_do.length).toBeGreaterThan(0);
-    expect(Array.isArray(body.exec_brief.appendix_refs)).toBe(true);
-    expect(body.delivery).toBeDefined();
-    expect(typeof body.delivery.status).toBe("string");
+    // Poll until the background pipeline writes the result.
+    let pollBody: Record<string, unknown> | undefined;
+    for (let i = 0; i < 40; i++) {
+      await new Promise((r) => setTimeout(r, 100));
+      const poll = await app.inject({ method: "GET", url: `/report-runs/${run_id}` });
+      if (poll.json().status === "succeeded") { pollBody = poll.json(); break; }
+    }
+    expect(pollBody).toBeDefined();
+    expect(typeof pollBody!.pdf_path).toBe("string");
+    expect(Array.isArray(pollBody!.prepared_payloads)).toBe(true);
+    expect((pollBody!.exec_brief as Record<string, unknown[]>).what_changed.length).toBeGreaterThan(0);
+    expect((pollBody!.exec_brief as Record<string, unknown[]>).why.length).toBeGreaterThan(0);
+    expect((pollBody!.exec_brief as Record<string, unknown[]>).so_what.length).toBeGreaterThan(0);
+    expect((pollBody!.exec_brief as Record<string, unknown[]>).what_to_do.length).toBeGreaterThan(0);
+    expect(Array.isArray((pollBody!.exec_brief as Record<string, unknown[]>).appendix_refs)).toBe(true);
 
     const runPdf = await app.inject({
       method: "GET",
-      url: `/report-runs/${body.run_id}/pdf`
+      url: `/report-runs/${run_id}/pdf`
     });
 
     expect(runPdf.statusCode).toBe(200);
@@ -120,7 +125,7 @@ describe("api semantic and run flow", () => {
 
     const qa = await app.inject({
       method: "POST",
-      url: `/report-runs/${body.run_id}/qa`,
+      url: `/report-runs/${run_id}/qa`,
       payload: {
         question: "What changed?"
       }
@@ -130,7 +135,7 @@ describe("api semantic and run flow", () => {
 
     const saveRun = await app.inject({
       method: "POST",
-      url: `/report-runs/${body.run_id}/save`
+      url: `/report-runs/${run_id}/save`
     });
     expect(saveRun.statusCode).toBe(200);
     expect(saveRun.json().saved).toBe(true);
@@ -209,12 +214,20 @@ describe("api semantic and run flow", () => {
         method: "POST",
         url: "/report-contracts/contract_pdf_html_fallback/run"
       });
-      expect(runContract.statusCode).toBe(200);
-      const body = runContract.json();
+      expect(runContract.statusCode).toBe(202);
+      const { run_id } = runContract.json();
+
+      // Poll until the background pipeline writes the result.
+      for (let i = 0; i < 40; i++) {
+        await new Promise((r) => setTimeout(r, 100));
+        const poll = await app.inject({ method: "GET", url: `/report-runs/${run_id}` });
+        const s = poll.json().status;
+        if (s === "succeeded" || s === "failed") break;
+      }
 
       const runPdf = await app.inject({
         method: "GET",
-        url: `/report-runs/${body.run_id}/pdf`
+        url: `/report-runs/${run_id}/pdf`
       });
 
       expect(runPdf.statusCode).toBe(200);
@@ -280,10 +293,19 @@ describe("api semantic and run flow", () => {
       }
     });
 
-    expect(runContract.statusCode).toBe(200);
-    const body = runContract.json();
-    expect(body.run_id).toBeDefined();
-    expect(body.exec_brief.what_changed.length).toBeGreaterThan(0);
+    expect(runContract.statusCode).toBe(202);
+    const { run_id } = runContract.json();
+    expect(run_id).toBeDefined();
+
+    // Poll until the background pipeline writes the result.
+    let pollBody: Record<string, unknown> | undefined;
+    for (let i = 0; i < 40; i++) {
+      await new Promise((r) => setTimeout(r, 100));
+      const poll = await app.inject({ method: "GET", url: `/report-runs/${run_id}` });
+      if (poll.json().status === "succeeded") { pollBody = poll.json(); break; }
+    }
+    expect(pollBody).toBeDefined();
+    expect((pollBody!.exec_brief as Record<string, unknown[]>).what_changed.length).toBeGreaterThan(0);
 
     await app.close();
   });

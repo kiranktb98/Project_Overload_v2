@@ -333,6 +333,7 @@ export async function prepareReportContractData(input: {
 
 export async function runReportContractPipeline(input: {
   contract: ReportContract;
+  run_id?: string;
   tenant_id?: string;
   trigger?: "manual" | "scheduled" | "retry";
   attempt?: number;
@@ -477,7 +478,7 @@ export async function runReportContractPipeline(input: {
   }));
 
   const run = ReportRunSchema.parse({
-    id: randomUUID(),
+    id: input.run_id ?? randomUUID(),
     tenant_id: tenantId,
     contract_id: input.contract.id,
     status: "succeeded",
