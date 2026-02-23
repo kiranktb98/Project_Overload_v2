@@ -1226,6 +1226,7 @@ export function renderChatPage(): string {
             text: trimmed,
             download_url: typeof raw.download_url === "string" ? raw.download_url : null,
             exec_brief_html: typeof raw.exec_brief_html === "string" ? raw.exec_brief_html : null,
+            prepared_payloads: Array.isArray(raw.prepared_payloads) ? raw.prepared_payloads : null,
             at: typeof raw.at === "string" ? raw.at : nowIso()
           };
         }
