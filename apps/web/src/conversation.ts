@@ -633,6 +633,7 @@ function createTitleStateSkeleton() {
     schedule_pending: false,
     pending_schedule: null,
     last_concise_summary: null,
+    pending_run_id: null,
     last_token_usage: null
   };
 }

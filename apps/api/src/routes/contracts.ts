@@ -8,6 +8,7 @@ import {
   ReportContractSchema,
   ReportContractDeliverySchema,
   ReportGuardrailsSchema,
+  ReportRunSchema,
   type SqlDialect
 } from "@project-overload/shared";
 import type { DataPlane } from "@project-overload/dataplane";
@@ -223,69 +224,96 @@ export function registerContractRoutes(
       });
     }
 
-    try {
-      const catalogSummary = buildCatalogSummary(connectionManager);
-      const sqlDialect = resolveSqlDialect(connectionManager);
+    // Pre-generate a stable run ID and create a "pending" record immediately.
+    // The pipeline will upsert it to "succeeded" (or the catch block to "failed").
+    const runId = randomUUID();
+    const startedAt = new Date().toISOString();
 
-      const result = await runReportContractPipeline({
-        contract,
+    await store.createReportRun(
+      ReportRunSchema.parse({
+        id: runId,
         tenant_id: context.tenant_id,
+        contract_id: id,
+        status: "pending",
         trigger,
         attempt,
         retry_of_run_id: retryOfRunId,
-        store,
-        data_plane: dataPlane,
-        analyst_client: analystClient,
-        query_strategist: queryStrategist,
-        report_composer: reportComposer,
-        planner_client: plannerClient,
-        catalog_summary: catalogSummary,
-        sql_dialect: sqlDialect
-      });
-      const delivery = await deliverReportRun({
-        contract,
-        run: result.run,
-        exec_brief: result.exec_brief
-      });
-      const runWithDelivery = {
-        ...result.run,
-        delivery
-      };
-      await store.createReportRun(runWithDelivery, context);
-      await store.appendAuditLog(
-        "report_delivery_attempt",
-        {
-          contract_id: id,
-          run_id: result.run.id,
-          status: delivery.status,
-          provider: delivery.provider,
-          recipients: delivery.recipients,
-          error: delivery.error
-        },
-        context
-      );
+        started_at: startedAt,
+        finished_at: null,
+        query_plan: {},
+        exec_brief: {}
+      }),
+      context
+    );
 
-      return reply.code(200).send({
-        run_id: result.run.id,
-        contract_id: id,
-        exec_brief: result.exec_brief,
-        exec_brief_html: result.html,
-        planner_summary: result.planner_summary,
-        concise_summary: result.concise_summary,
-        prepared_payloads: result.prepared_payloads,
-        kpi_results: result.kpi_results,
-        token_usage: result.token_usage,
-        lifecycle_status: contract.lifecycle_status ?? "draft",
-        contract_version: contract.contract_version ?? 1,
-        trigger,
-        attempt,
-        delivery,
-        pdf_path: `/report-runs/${result.run.id}/pdf`
-      });
-    } catch (error) {
-      const message = error instanceof Error ? error.message : "Report pipeline failed";
-      return reply.code(500).send({ message: `Report run failed: ${message}` });
-    }
+    // Fire pipeline in the background — no await so the HTTP response returns instantly.
+    void (async () => {
+      try {
+        const catalogSummary = buildCatalogSummary(connectionManager);
+        const sqlDialect = resolveSqlDialect(connectionManager);
+
+        const result = await runReportContractPipeline({
+          run_id: runId,
+          contract,
+          tenant_id: context.tenant_id,
+          trigger,
+          attempt,
+          retry_of_run_id: retryOfRunId,
+          store,
+          data_plane: dataPlane,
+          analyst_client: analystClient,
+          query_strategist: queryStrategist,
+          report_composer: reportComposer,
+          planner_client: plannerClient,
+          catalog_summary: catalogSummary,
+          sql_dialect: sqlDialect
+        });
+
+        // Pipeline already upserted the run with status:"succeeded" internally.
+        // Upsert once more to attach delivery info.
+        const delivery = await deliverReportRun({
+          contract,
+          run: result.run,
+          exec_brief: result.exec_brief
+        });
+        await store.createReportRun({ ...result.run, delivery }, context);
+        await store.appendAuditLog(
+          "report_delivery_attempt",
+          {
+            contract_id: id,
+            run_id: runId,
+            status: delivery.status,
+            provider: delivery.provider,
+            recipients: delivery.recipients,
+            error: delivery.error
+          },
+          context
+        );
+      } catch (error) {
+        const message = error instanceof Error ? error.message : "Pipeline failed";
+        // Upsert the pending record as "failed" so the poll endpoint surfaces the error.
+        await store.createReportRun(
+          ReportRunSchema.parse({
+            id: runId,
+            tenant_id: context.tenant_id,
+            contract_id: id,
+            status: "failed",
+            trigger,
+            attempt,
+            retry_of_run_id: retryOfRunId,
+            started_at: startedAt,
+            finished_at: new Date().toISOString(),
+            query_plan: { error: message },
+            exec_brief: { error: message }
+          }),
+          context
+        ).catch(() => {
+          // ignore store errors in error handler
+        });
+      }
+    })();
+
+    return reply.code(202).send({ run_id: runId, status: "pending" });
   });
 
   app.post("/report-contracts/:id/prepare", async (request, reply) => {
@@ -358,7 +386,30 @@ export function registerContractRoutes(
       return reply.code(404).send({ message: "Report run not found" });
     }
 
-    return reply.code(200).send(run);
+    if (run.status === "succeeded") {
+      const qp = run.query_plan as Record<string, unknown>;
+      return reply.code(200).send({
+        status: "succeeded",
+        run_id: run.id,
+        exec_brief: run.exec_brief,
+        exec_brief_html: run.report_html ?? "",
+        prepared_payloads: Array.isArray(qp.prepared_payloads) ? qp.prepared_payloads : [],
+        kpi_results: Array.isArray(qp.kpi_results) ? qp.kpi_results : [],
+        pdf_path: `/report-runs/${run.id}/pdf`
+      });
+    }
+
+    if (run.status === "failed") {
+      const qp = run.query_plan as Record<string, unknown>;
+      return reply.code(200).send({
+        status: "failed",
+        run_id: run.id,
+        error: typeof qp.error === "string" ? qp.error : "Report run failed"
+      });
+    }
+
+    // pending or running
+    return reply.code(200).send({ status: run.status, run_id: run.id });
   });
 
   app.post("/report-runs/:runId/qa", async (request, reply) => {

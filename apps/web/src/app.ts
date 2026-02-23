@@ -377,6 +377,18 @@ export function buildWebApp(options: WebAppDependencies = {}) {
     });
   });
 
+  app.get("/api/run-status/:runId", async (request, reply) => {
+    const { runId } = request.params as { runId: string };
+    try {
+      const status = await apiClient.getRunStatus(runId);
+      return reply.code(200).send(status);
+    } catch (error) {
+      return reply.code(502).send({
+        message: error instanceof Error ? error.message : "Failed to fetch run status"
+      });
+    }
+  });
+
   app.get("/api/runs/:runId/pdf", async (request, reply) => {
     const { runId } = request.params as { runId: string };
 
@@ -626,6 +638,10 @@ function shouldBypassConversationForAction(actionContext: string, state: unknown
   if (parsedState.pending_metric_confirmations.length > 0) {
     return true;
   }
+  // Run submitted but not yet complete — no need to pass through the LLM
+  if (parsedState.pending_run_id) {
+    return true;
+  }
 
   if (
     parsedState.prep_pending ||
@@ -767,6 +783,7 @@ function normalizeWorkflowDecisionState(state: unknown) {
     parsed.prepared_payloads.length > 0 &&
     !parsed.scope_pending &&
     !parsed.prep_pending &&
+    !parsed.pending_run_id &&
     !parsed.awaiting_post_run_refinement &&
     !parsed.refinement_active &&
     !parsed.awaiting_pdf_confirmation &&

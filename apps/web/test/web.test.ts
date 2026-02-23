@@ -2319,27 +2319,9 @@ describe("web chat interface", () => {
       if (url.endsWith("/report-contracts/contract_run_test/run") && method === "POST") {
         return new Response(JSON.stringify({
           run_id: "run_web_test",
-          exec_brief: {
-            what_changed: ["Revenue up 12%"],
-            why: ["Higher order frequency"],
-            so_what: ["Growth target is on track"],
-            what_to_do: ["Increase top-performing channel budget"],
-            confidence: { score: 0.84, rationale: "Coverage includes all top regions." },
-            appendix_refs: ["evidence_contract_web_test_1"],
-            deltas_vs_last_run: ["NA revenue +8%"],
-            generated_at: "2026-01-01T00:00:00.000Z"
-          },
-          concise_summary: "Test Report summary",
-          prepared_payloads: [],
-          token_usage: {
-            input_tokens: 260,
-            output_tokens: 80,
-            total_tokens: 340,
-            by_agent: {}
-          },
-          pdf_path: "/report-runs/run_web_test/pdf"
+          status: "pending"
         }), {
-          status: 200,
+          status: 202,
           headers: { "content-type": "application/json" }
         });
       }
@@ -2394,9 +2376,8 @@ describe("web chat interface", () => {
     });
 
     expect(response.statusCode).toBe(200);
-    expect(response.json().assistant_message).toContain("Report executed. Run ID: run_web_test.");
-    expect(response.json().state.awaiting_post_run_refinement).toBe(true);
-    expect(response.json().state.awaiting_pdf_confirmation).toBe(false);
+    expect(response.json().assistant_message).toContain("generating your report");
+    expect(response.json().state.pending_run_id).toBe("run_web_test");
     expect(conversationCalls).toBe(0);
 
     await app.close();
@@ -2411,27 +2392,9 @@ describe("web chat interface", () => {
       if (url.endsWith("/report-contracts/contract_run_test/run") && method === "POST") {
         return new Response(JSON.stringify({
           run_id: "run_web_test",
-          exec_brief: {
-            what_changed: ["Revenue up 12%"],
-            why: ["Higher order frequency"],
-            so_what: ["Growth target is on track"],
-            what_to_do: ["Increase top-performing channel budget"],
-            confidence: { score: 0.84, rationale: "Coverage includes all top regions." },
-            appendix_refs: ["evidence_contract_web_test_1"],
-            deltas_vs_last_run: ["NA revenue +8%"],
-            generated_at: "2026-01-01T00:00:00.000Z"
-          },
-          concise_summary: "Test Report summary",
-          prepared_payloads: [],
-          token_usage: {
-            input_tokens: 260,
-            output_tokens: 80,
-            total_tokens: 340,
-            by_agent: {}
-          },
-          pdf_path: "/report-runs/run_web_test/pdf"
+          status: "pending"
         }), {
-          status: 200,
+          status: 202,
           headers: { "content-type": "application/json" }
         });
       }
@@ -2489,9 +2452,9 @@ describe("web chat interface", () => {
     });
 
     expect(response.statusCode).toBe(200);
-    expect(response.json().assistant_message).toContain("Report executed. Run ID: run_web_test.");
+    expect(response.json().assistant_message).toContain("generating your report");
     expect(response.json().assistant_message).not.toContain("execution didn't go through");
-    expect(response.json().state.awaiting_post_run_refinement).toBe(true);
+    expect(response.json().state.pending_run_id).toBe("run_web_test");
     expect(conversationCalls).toBe(0);
 
     await app.close();
@@ -3486,22 +3449,9 @@ describe("web chat interface", () => {
 
       if (url.endsWith("/report-contracts/contract_drift/run") && method === "POST") {
         return new Response(
-          JSON.stringify({
-            run_id: "run_drift",
-            exec_brief: {
-              what_changed: ["Refund volume increased in top 2 cities"],
-              why: ["Support backlog rose"],
-              so_what: ["Margin pressure likely next cycle"],
-              what_to_do: ["Prioritize issue triage"],
-              confidence: { score: 0.84, rationale: "Coverage is sufficient." },
-              appendix_refs: ["evidence_contract_drift_1"],
-              deltas_vs_last_run: [],
-              generated_at: "2026-01-01T00:00:00.000Z"
-            },
-            concise_summary: "Run complete"
-          }),
+          JSON.stringify({ run_id: "run_drift", status: "pending" }),
           {
-            status: 200,
+            status: 202,
             headers: { "content-type": "application/json" }
           }
         );
@@ -3561,9 +3511,9 @@ describe("web chat interface", () => {
     });
 
     expect(response.statusCode).toBe(200);
-    expect(response.json().assistant_message).toContain("Report executed. Run ID: run_drift.");
+    expect(response.json().assistant_message).toContain("generating your report");
     expect(response.json().state.scope_pending).toBe(false);
-    expect(response.json().state.awaiting_post_run_refinement).toBe(true);
+    expect(response.json().state.pending_run_id).toBe("run_drift");
     expect(requests.some((entry) => entry.endsWith("POST http://api.local/report-contracts/contract_drift/run"))).toBe(true);
 
     await app.close();
@@ -3578,26 +3528,9 @@ describe("web chat interface", () => {
       if (url.endsWith("/report-contracts/contract_refine/run") && method === "POST") {
         return new Response(JSON.stringify({
           run_id: "run_refine",
-          exec_brief: {
-            what_changed: ["Refund rate increased in two regions"],
-            why: ["More delayed shipments"],
-            so_what: ["Margin pressure is likely next month"],
-            what_to_do: ["Tighten carrier SLA monitoring"],
-            confidence: { score: 0.82, rationale: "Coverage is sufficient." },
-            appendix_refs: ["evidence_contract_refine_1"],
-            deltas_vs_last_run: [],
-            generated_at: "2026-01-01T00:00:00.000Z"
-          },
-          concise_summary: "Refinement test report",
-          prepared_payloads: [],
-          token_usage: {
-            input_tokens: 100,
-            output_tokens: 30,
-            total_tokens: 130,
-            by_agent: {}
-          }
+          status: "pending"
         }), {
-          status: 200,
+          status: 202,
           headers: { "content-type": "application/json" }
         });
       }
@@ -3660,12 +3593,21 @@ describe("web chat interface", () => {
     });
 
     expect(analyzed.statusCode).toBe(200);
-    expect(analyzed.json().state.awaiting_post_run_refinement).toBe(true);
+    expect(analyzed.json().state.pending_run_id).toBe("run_refine");
+
+    // Simulate browser polling completing: bridge state as if run succeeded
+    const postPollStateRefine = {
+      ...analyzed.json().state,
+      pending_run_id: null,
+      last_run_id: "run_refine",
+      awaiting_post_run_refinement: true,
+      awaiting_pdf_confirmation: false
+    };
 
     const refineStart = await app.inject({
       method: "POST",
       url: "/api/chat",
-      payload: { message: "__ui_refine_report__", state: analyzed.json().state }
+      payload: { message: "__ui_refine_report__", state: postPollStateRefine }
     });
     expect(refineStart.statusCode).toBe(200);
     expect(refineStart.json().state.refinement_active).toBe(true);
@@ -3748,37 +3690,9 @@ describe("web chat interface", () => {
       if (url.endsWith("/report-contracts/contract_web_test/run") && method === "POST") {
         return new Response(JSON.stringify({
           run_id: "run_web_test",
-          exec_brief: {
-            what_changed: ["Revenue up 12%"],
-            why: ["Higher order frequency"],
-            so_what: ["Growth target is on track"],
-            what_to_do: ["Increase top-performing channel budget"],
-            confidence: { score: 0.84, rationale: "Coverage includes all top regions." },
-            appendix_refs: ["evidence_contract_web_test_1"],
-            deltas_vs_last_run: ["NA revenue +8%"],
-            generated_at: "2026-01-01T00:00:00.000Z"
-          },
-          concise_summary: "Test Report summary\n- 📈 Revenue up 12%",
-          prepared_payloads: [
-            {
-              question_id: "q_1",
-              question: "Revenue trend",
-              purpose: "Trend analysis",
-              row_count_before_reduction: 500,
-              prepared_row_count: 200,
-              preparation_notes: ["Applied aggregation"],
-              warnings: []
-            }
-          ],
-          token_usage: {
-            input_tokens: 260,
-            output_tokens: 80,
-            total_tokens: 340,
-            by_agent: {}
-          },
-          pdf_path: "/report-runs/run_web_test/pdf"
+          status: "pending"
         }), {
-          status: 200,
+          status: 202,
           headers: { "content-type": "application/json" }
         });
       }
@@ -3983,14 +3897,34 @@ describe("web chat interface", () => {
       payload: { message: "__ui_finish_scoping_run_analysis__", state: prepared.json().state }
     });
     expect(analyzed.statusCode).toBe(200);
-    expect(analyzed.json().state.awaiting_post_run_refinement).toBe(true);
-    expect(analyzed.json().state.awaiting_pdf_confirmation).toBe(false);
-    expect(analyzed.json().assistant_message).toContain("Report executed");
+    expect(analyzed.json().state.pending_run_id).toBe("run_web_test");
+    expect(analyzed.json().assistant_message).toContain("generating your report");
+
+    // Simulate browser polling completing: bridge state as if run succeeded
+    const postPollState = {
+      ...analyzed.json().state,
+      pending_run_id: null,
+      last_run_id: "run_web_test",
+      awaiting_post_run_refinement: true,
+      awaiting_pdf_confirmation: false,
+      pdf_download_url: "/api/runs/run_web_test/pdf",
+      prepared_payloads: [
+        {
+          question_id: "q_1",
+          question: "Revenue trend",
+          purpose: "Trend analysis",
+          row_count_before_reduction: 500,
+          prepared_row_count: 200,
+          preparation_notes: ["Applied aggregation"],
+          warnings: []
+        }
+      ]
+    };
 
     const qa = await app.inject({
       method: "POST",
       url: "/api/chat",
-      payload: { message: "what changed?", state: analyzed.json().state }
+      payload: { message: "what changed?", state: postPollState }
     });
     expect(qa.statusCode).toBe(200);
     expect(qa.json().assistant_message).toContain("Revenue trend");
@@ -4000,7 +3934,7 @@ describe("web chat interface", () => {
     const confirmPdf = await app.inject({
       method: "POST",
       url: "/api/chat",
-      payload: { message: "__ui_generate_pdf_yes__", state: analyzed.json().state }
+      payload: { message: "__ui_generate_pdf_yes__", state: postPollState }
     });
     expect(confirmPdf.statusCode).toBe(200);
     expect(confirmPdf.json().pdf_download_url).toBe("/api/runs/run_web_test/pdf");
@@ -4054,58 +3988,9 @@ describe("web chat interface", () => {
       if (url.endsWith("/report-contracts/contract_diag/run") && method === "POST") {
         return new Response(JSON.stringify({
           run_id: "run_diag",
-          exec_brief: {
-            what_changed: ["Refunds increased in top 2 cities"],
-            why: ["Ticket backlog rose"],
-            so_what: ["Support load is increasing faster than demand"],
-            what_to_do: ["Prioritize issue type triage"],
-            confidence: { score: 0.88, rationale: "Coverage validated." },
-            appendix_refs: ["evidence_contract_diag_1"],
-            deltas_vs_last_run: [],
-            generated_at: "2026-01-01T00:00:00.000Z"
-          },
-          concise_summary: "Diagnostic summary",
-          prepared_payloads: [
-            {
-              question_id: "q_1",
-              question_number: 1,
-              question: "Refund trend",
-              purpose: "Trend",
-              row_count_before_reduction: 620,
-              prepared_row_count: 120,
-              source_query_count: 2,
-              validation: {
-                expected_months: 6,
-                observed_months: 4,
-                missing_months: ["2025-09", "2025-10"],
-                monthly_row_counts: [
-                  { month: "2025-09", row_count: 0 },
-                  { month: "2025-10", row_count: 0 },
-                  { month: "2025-11", row_count: 28 },
-                  { month: "2025-12", row_count: 31 },
-                  { month: "2026-01", row_count: 34 },
-                  { month: "2026-02", row_count: 12 }
-                ],
-                metric_column: "refund_amount",
-                monthly_metric_totals: [
-                  { month: "2025-11", total: 10400 },
-                  { month: "2025-12", total: 11250 },
-                  { month: "2026-01", total: 12100 },
-                  { month: "2026-02", total: 3900 }
-                ]
-              },
-              preparation_notes: ["Source query 1 quality score: 92/100"],
-              warnings: []
-            }
-          ],
-          token_usage: {
-            input_tokens: 300,
-            output_tokens: 140,
-            total_tokens: 440,
-            by_agent: {}
-          }
+          status: "pending"
         }), {
-          status: 200,
+          status: 202,
           headers: { "content-type": "application/json" }
         });
       }
@@ -4154,9 +4039,8 @@ describe("web chat interface", () => {
 
     expect(response.statusCode).toBe(200);
     const body = response.json();
-    expect(body.assistant_message).toContain("Data prep validation:");
-    expect(body.assistant_message).toContain("Validation timeline: GAP (4/6 months, 67%) | missing: 2025-09, 2025-10");
-    expect(body.assistant_message).toContain("MoM refund_amount");
+    expect(body.assistant_message).toContain("generating your report");
+    expect(body.state.pending_run_id).toBe("run_diag");
 
     await app.close();
   });
@@ -4249,7 +4133,7 @@ describe("web chat interface", () => {
     });
 
     expect(response.statusCode).toBe(200);
-    expect(response.json().assistant_message).toContain("Run execution did not complete yet.");
+    expect(response.json().assistant_message).toContain("Run could not be submitted.");
     expect(response.json().assistant_message).toContain("invalid format");
     expect(response.json().assistant_message).not.toContain("Unexpected token");
     expect(response.json().state.scope_pending).toBe(true);
@@ -4266,30 +4150,9 @@ describe("web chat interface", () => {
       if (url.endsWith("/report-contracts/contract_run_retry/run") && method === "POST") {
         runCalls += 1;
         return new Response(
-          JSON.stringify({
-            run_id: "run_retry_ok",
-            exec_brief: {
-              what_changed: ["Revenue up 9%"],
-              why: ["Higher conversion in top channels"],
-              so_what: ["Pipeline targets remain on track"],
-              what_to_do: ["Scale the winning channel mix"],
-              confidence: { score: 0.82, rationale: "Coverage includes top segments." },
-              appendix_refs: ["evidence_contract_retry_1"],
-              deltas_vs_last_run: ["Revenue +3% vs last run"],
-              generated_at: "2026-01-01T00:00:00.000Z"
-            },
-            concise_summary: "Retry path summary",
-            prepared_payloads: [],
-            token_usage: {
-              input_tokens: 210,
-              output_tokens: 75,
-              total_tokens: 285,
-              by_agent: {}
-            },
-            pdf_path: "/report-runs/run_retry_ok/pdf"
-          }),
+          JSON.stringify({ run_id: "run_retry_ok", status: "pending" }),
           {
-            status: 200,
+            status: 202,
             headers: { "content-type": "application/json" }
           }
         );
@@ -4338,9 +4201,9 @@ describe("web chat interface", () => {
 
     expect(response.statusCode).toBe(200);
     expect(runCalls).toBe(1);
-    expect(response.json().assistant_message).toContain("Report executed. Run ID: run_retry_ok.");
+    expect(response.json().assistant_message).toContain("generating your report");
     expect(response.json().state.scope_pending).toBe(false);
-    expect(response.json().state.awaiting_post_run_refinement).toBe(true);
+    expect(response.json().state.pending_run_id).toBe("run_retry_ok");
 
     await app.close();
   });
