@@ -531,12 +531,12 @@ function queryStrategistSystemPrompt(input: QueryStrategyInput): string {
   const dialect = normalizeSqlDialect(input.sql_dialect);
   const dialectUpper = dialect.toUpperCase();
   const mode = input.insight_mode === "data"
-    ? "DATA QUALITY mode: Write queries to assess data completeness, null rates, duplicate rates, value distributions, outliers, and anomalies."
-    : "BUSINESS INSIGHTS mode: Write queries that produce aggregated, summarized data for business analysis. Use GROUP BY, SUM, COUNT, AVG, JOINs across tables. Focus on trends, comparisons, breakdowns, and actionable patterns.";
+    ? "DATA QUALITY mode: Write aggregated queries to assess completeness, null rates, duplicate rates, value distributions, outliers, and anomalies. Use COUNT, COUNT(DISTINCT), AVG. GROUP BY dimension columns. LIMIT 50."
+    : "BUSINESS INSIGHTS mode: Every query MUST return pre-aggregated summary data via GROUP BY. Return compact summary tables of ≤50 rows — never raw record dumps. Think: monthly totals, top-N by metric, breakdown by city/product/channel. Use SUM, COUNT, AVG with GROUP BY. LIMIT 50 always.";
 
   return [
     `You are a SQL query strategist for a ${dialectUpper} database.`,
-    "Your job is to generate 2-4 focused SQL queries that answer the user's report goal.",
+    "Your job is to generate one focused SQL query PER distinct business question that the user's report needs to answer.",
     "",
     `MODE: ${mode}`,
     "",
@@ -556,31 +556,31 @@ function queryStrategistSystemPrompt(input: QueryStrategyInput): string {
     "    - customer_id : integer",
     "    - order_date : date",
     "    - total_amount : numeric",
+    "    - status : text",
     "",
-    "CORRECT: SELECT order_date, SUM(total_amount) FROM public.orders GROUP BY order_date",
-    "WRONG:   SELECT o.created_at, SUM(o.revenue) FROM orders o GROUP BY o.created_at",
-    "  (wrong because: 'created_at' and 'revenue' don't exist, 'orders' is not fully qualified)",
+    "CORRECT: SELECT DATE_TRUNC('month', order_date) AS month, COUNT(*) AS order_count, SUM(total_amount) AS revenue FROM public.orders WHERE status = 'completed' GROUP BY 1 ORDER BY 1 LIMIT 50",
+    "WRONG:   SELECT * FROM orders WHERE created_at > '2024-01-01' LIMIT 200",
+    "  (wrong because: 'created_at' doesn't exist, 'orders' not fully qualified, SELECT * returns raw rows)",
     "",
     "═══ QUERY RULES ═══",
     `- Each query MUST be exactly ONE valid ${dialectUpper} SELECT statement.`,
     "- NO semicolons, NO multiple statements.",
-    "- Include LIMIT only when needed; prefer aggregated queries over raw row dumps.",
-    "- Write SUMMARIZED data (aggregates, top-N, distributions), not raw row dumps.",
-    "- Each query answers a DIFFERENT question.",
+    "- Every query MUST use GROUP BY and LIMIT ≤50. Raw row dumps (SELECT * or unfiltered LIMIT 1000+) are forbidden.",
+    "- Use SUM(), COUNT(), AVG(), percentile or window functions — always aggregate, never dump raw records.",
+    "- Each query answers exactly ONE distinct business question.",
     "- Use JOINs across tables when it adds insight — but only join on columns that actually exist.",
     "- When the goal mentions time comparisons (YoY, MoM, QoQ), use date/timestamp columns from the catalog.",
-    "- If the goal says 'last N months vs previous N months', include both windows explicitly.",
+    "- If the goal says 'last N months vs previous N months', include date window filters and GROUP BY month.",
     "",
-    "QUESTION ISOLATION:",
-    "- Keep one concrete business question per query.",
-    "- Avoid bundling multiple business questions into one SQL statement.",
-    "- Preserve question order deterministically (Q1, Q2, Q3) based on user intent.",
-    "- Use group_id only when multiple SQL queries are required to answer one single question.",
-    "- Do not share one SQL output across unrelated questions.",
+    "QUESTION ISOLATION (CRITICAL):",
+    "- One query per question. NEVER bundle two business questions into one SQL statement.",
+    "- NEVER use group_id. Every query in the output must be independent with no group_id field.",
+    "- If the PLANNER ANALYSIS has N recommended approaches, generate exactly N queries.",
+    "- Preserve question order based on user intent (Q1 first, Q2 second, etc.).",
     "",
     "Return strictly valid JSON:",
-    '{"queries": [{"question": "...", "sql": "SELECT ...", "purpose": "...", "group_id": "optional"}]}',
-    "No markdown, no extra keys."
+    '{"queries": [{"question": "...", "sql": "SELECT col, SUM(val) FROM schema.table GROUP BY col ORDER BY 2 DESC LIMIT 50", "purpose": "..."}]}',
+    "No markdown, no extra keys, no group_id field."
   ].join("\n");
 }
 
@@ -623,7 +623,8 @@ function queryStrategistUserPrompt(input: QueryStrategyInput): string {
   }
 
   parts.push("");
-  parts.push("Generate 2-4 SQL queries using ONLY the tables and columns listed above. Return JSON only.");
+  parts.push("Generate one aggregated GROUP BY query per distinct business question (max 4 queries total).");
+  parts.push("Each query MUST use GROUP BY and LIMIT ≤50. Never return raw row dumps. Return JSON only.");
 
   return parts.join("\n");
 }

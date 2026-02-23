@@ -704,6 +704,47 @@ export function renderChatPage(): string {
         border-radius: 2px;
       }
 
+      .qc-sample-rows {
+        margin-top: 10px;
+      }
+
+      .qc-sample-rows-label {
+        color: #5580a8;
+        font-size: 0.7rem;
+        margin-bottom: 4px;
+      }
+
+      .qc-sample-table {
+        width: 100%;
+        border-collapse: collapse;
+        font-size: 0.69rem;
+        overflow-x: auto;
+        display: block;
+        white-space: nowrap;
+      }
+
+      .qc-sample-table th {
+        background: rgba(36, 61, 132, 0.35);
+        color: #7aaee8;
+        padding: 3px 8px;
+        text-align: left;
+        border-bottom: 1px solid rgba(36, 61, 132, 0.4);
+        font-weight: 500;
+      }
+
+      .qc-sample-table td {
+        color: #9fbdd8;
+        padding: 2px 8px;
+        border-bottom: 1px solid rgba(36, 61, 132, 0.15);
+        max-width: 200px;
+        overflow: hidden;
+        text-overflow: ellipsis;
+      }
+
+      .qc-sample-table tr:last-child td {
+        border-bottom: none;
+      }
+
       .composer {
         border-top: 1px solid #173b77;
         padding: 11px 14px 13px;
@@ -1849,6 +1890,42 @@ export function renderChatPage(): string {
               dots.appendChild(dot);
             }
             card.appendChild(dots);
+          }
+
+          const sampleRows = payload.sample_rows || [];
+          if (sampleRows.length > 0) {
+            const cols = Object.keys(sampleRows[0]);
+            const sampleSection = document.createElement("div");
+            sampleSection.className = "qc-sample-rows";
+            const sampleLabel = document.createElement("div");
+            sampleLabel.className = "qc-sample-rows-label";
+            sampleLabel.textContent = "Sample output (" + sampleRows.length + " row" + (sampleRows.length !== 1 ? "s" : "") + "):";
+            sampleSection.appendChild(sampleLabel);
+            const table = document.createElement("table");
+            table.className = "qc-sample-table";
+            const thead = document.createElement("thead");
+            const headerRow = document.createElement("tr");
+            for (const col of cols) {
+              const th = document.createElement("th");
+              th.textContent = col;
+              headerRow.appendChild(th);
+            }
+            thead.appendChild(headerRow);
+            table.appendChild(thead);
+            const tbody = document.createElement("tbody");
+            for (const row of sampleRows) {
+              const tr = document.createElement("tr");
+              for (const col of cols) {
+                const td = document.createElement("td");
+                const val = row[col];
+                td.textContent = val == null ? "" : String(val);
+                tr.appendChild(td);
+              }
+              tbody.appendChild(tr);
+            }
+            table.appendChild(tbody);
+            sampleSection.appendChild(table);
+            card.appendChild(sampleSection);
           }
 
           return card;
