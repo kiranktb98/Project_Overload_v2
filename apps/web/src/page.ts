@@ -1306,7 +1306,8 @@ export function renderChatPage(): string {
             if (!response.ok) {
               return [];
             }
-            const payload = await response.json();
+            let payload;
+            try { payload = JSON.parse(await response.text()); } catch { return []; }
             const sessions = Array.isArray(payload && payload.sessions) ? payload.sessions : [];
             return sessions
               .map((entry) => normalizeStoredChat(entry))
@@ -2162,7 +2163,13 @@ export function renderChatPage(): string {
               })
             });
 
-            const payload = await response.json();
+            let payload;
+            try {
+              payload = JSON.parse(await response.text());
+            } catch {
+              appendMessage("assistant", "Server error — please try again in a moment.", null, null, { trackForNaming: false });
+              return;
+            }
             if (!response.ok) {
               const errorText = payload && typeof payload.message === "string" ? payload.message : "Chat request failed";
               appendMessage("assistant", "Error: " + errorText);
@@ -2192,7 +2199,8 @@ export function renderChatPage(): string {
         async function loadRuntimeStatus() {
           try {
             const response = await fetch("/api/chat/runtime", { method: "GET" });
-            const payload = await response.json();
+            let payload;
+            try { payload = JSON.parse(await response.text()); } catch { runtimeStatusRef.mode = "provider unavailable"; renderStatus(); return; }
             if (!response.ok) {
               runtimeStatusRef.mode = "provider unavailable";
               renderStatus();
@@ -2274,7 +2282,8 @@ export function renderChatPage(): string {
 
           try {
             const response = await fetch("/api/db/context", { method: "GET" });
-            const payload = await response.json();
+            let payload;
+            try { payload = JSON.parse(await response.text()); } catch { return; }
             if (response.ok && payload && payload.connected === true) {
               chat.state = createStateFromDbContext(payload);
               if (chat.messages.length <= 1) {
@@ -2326,7 +2335,8 @@ export function renderChatPage(): string {
               headers: { "content-type": "application/json" },
               body: JSON.stringify({ messages })
             });
-            const payload = await response.json();
+            let payload;
+            try { payload = JSON.parse(await response.text()); } catch { return; }
             if (!response.ok || !payload || typeof payload.title !== "string") {
               return;
             }

@@ -689,31 +689,38 @@ function syncDecisionStateFromAssistantMessage(state: unknown, assistantMessage:
   }
 
   const lower = assistantMessage.toLowerCase();
+
+  // ── Prep-pending triggers (show "Run Data Preparation" button) ──
   const prepSignal = /\brun data preparation\b/.test(lower);
   const prepContext = /\b(scope|ready|locked|go ahead|choose|click|hit)\b/.test(lower);
-  if (prepSignal && prepContext && !nextState.prep_complete) {
-    nextState.prep_pending = true;
-    nextState.scope_pending = false;
-    return nextState;
+
+  // Broader scope-confirmation phrases the LLM naturally uses
+  const scopeConfirmedSignal =
+    /\bscope is (locked|confirmed|set|ready|finalized)\b/.test(lower) ||
+    /\b(locked in|all set|we'?re (all )?set|good to go)\b/.test(lower) ||
+    /\b(scope confirmed|confirmed scope|scope.{0,10}locked)\b/.test(lower) ||
+    /\bkick.{0,20}(analysis|preparation|things off)\b/.test(lower) ||
+    /\bready to prepare data\b/.test(lower) ||
+    /\bdraft is ready\b/.test(lower) ||
+    /\brun data preparation\b/.test(lower);
+
+  if ((prepSignal && prepContext) || scopeConfirmedSignal) {
+    if (!nextState.prep_complete) {
+      nextState.prep_pending = true;
+      nextState.scope_pending = false;
+      return nextState;
+    }
   }
 
-  const analysisSignal = /\bfinish scoping and run analysis\b/.test(lower);
+  // ── Scope-pending triggers (show "Finish scoping and run analysis" button) ──
+  const analysisSignal =
+    /\bfinish scoping and run analysis\b/.test(lower) ||
+    /\b(run report|execute report|generate report)\b/.test(lower);
+
   if (analysisSignal && nextState.prep_complete) {
     nextState.scope_pending = true;
     nextState.prep_pending = false;
     return nextState;
-  }
-
-  const runReportSignal = /\b(run report|execute report|generate report)\b/.test(lower);
-  const scopeLockedSignal = /\bscope is locked\b/.test(lower) || /\bdraft is ready\b/.test(lower);
-  if (runReportSignal || scopeLockedSignal) {
-    if (nextState.prep_complete) {
-      nextState.scope_pending = true;
-      nextState.prep_pending = false;
-    } else {
-      nextState.prep_pending = true;
-      nextState.scope_pending = false;
-    }
   }
 
   return nextState;

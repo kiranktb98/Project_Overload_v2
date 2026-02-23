@@ -897,43 +897,16 @@ export function createWebApiClient(options: CreateWebApiClientOptions): WebApiCl
     },
     async runContract(contractId) {
       const path = `/report-contracts/${encodeURIComponent(contractId)}/run`;
-      const maxAttempts = 3;
-      for (let attempt = 0; attempt < maxAttempts; attempt += 1) {
-        let response: Response;
-        try {
-          response = await requestWithRetry(
-            path,
-            {
-              method: "POST",
-              headers: { "content-type": "application/json" },
-              body: "{}"
-            },
-            { retries: 1, timeout_ms: RUN_TIMEOUT_MS }
-          );
-        } catch (error) {
-          if (attempt >= maxAttempts - 1 || !isRetryableRunExecutionError(error)) {
-            throw error;
-          }
-          await sleep(350 * (attempt + 1));
-          continue;
-        }
-
-        if ((response.status >= 500 || response.status === 429) && attempt < maxAttempts - 1) {
-          await sleep(350 * (attempt + 1));
-          continue;
-        }
-
-        try {
-          return await parseJsonResponse(response, RunContractResponseSchema);
-        } catch (error) {
-          if (attempt >= maxAttempts - 1 || !isRetryableRunExecutionError(error)) {
-            throw error;
-          }
-          await sleep(350 * (attempt + 1));
-        }
-      }
-
-      throw new Error("Run execution failed after retry attempts.");
+      const response = await requestWithRetry(
+        path,
+        {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: "{}"
+        },
+        { retries: 0, timeout_ms: RUN_TIMEOUT_MS }
+      );
+      return parseJsonResponse(response, RunContractResponseSchema);
     },
     async downloadRunPdf(runId) {
       const response = await requestWithRetry(
@@ -7148,11 +7121,5 @@ function formatRunExecutionFailure(error: unknown): string {
   return message;
 }
 
-function isRetryableRunExecutionError(error: unknown): boolean {
-  const message = error instanceof Error ? error.message : String(error);
-  return /fetch failed|network|socket|timed out|timeout|econn|enotfound|aborted|service returned an html error page|service returned a non-json response|api request failed with status (5\d\d|429)|\b502\b|\b503\b|\b504\b/i.test(
-    message
-  );
-}
 
 

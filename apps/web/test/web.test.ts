@@ -4257,7 +4257,7 @@ describe("web chat interface", () => {
     await app.close();
   });
 
-  it("retries final analysis run when upstream returns transient html errors before succeeding", async () => {
+  it("completes final analysis run in a single attempt (no auto-retry)", async () => {
     let runCalls = 0;
     const fetchImpl: typeof fetch = async (input, init) => {
       const url = typeof input === "string" ? input : input instanceof URL ? input.toString() : input.url;
@@ -4265,13 +4265,6 @@ describe("web chat interface", () => {
 
       if (url.endsWith("/report-contracts/contract_run_retry/run") && method === "POST") {
         runCalls += 1;
-        if (runCalls < 3) {
-          return new Response("<!DOCTYPE html><html><body>502 Bad Gateway</body></html>", {
-            status: 502,
-            headers: { "content-type": "text/html" }
-          });
-        }
-
         return new Response(
           JSON.stringify({
             run_id: "run_retry_ok",
@@ -4344,7 +4337,7 @@ describe("web chat interface", () => {
     });
 
     expect(response.statusCode).toBe(200);
-    expect(runCalls).toBe(3);
+    expect(runCalls).toBe(1);
     expect(response.json().assistant_message).toContain("Report executed. Run ID: run_retry_ok.");
     expect(response.json().state.scope_pending).toBe(false);
     expect(response.json().state.awaiting_post_run_refinement).toBe(true);
