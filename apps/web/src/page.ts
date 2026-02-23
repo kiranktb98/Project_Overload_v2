@@ -1324,6 +1324,14 @@ export function renderChatPage(): string {
                 .slice(0, 12)
             : [];
 
+          // Strip pending_run_id on load — async runs don't survive page reloads.
+          // Any stored run ID would trigger an infinite polling loop if the server
+          // restarted and the run is no longer found (returns 502 → stale lock).
+          const rawState = raw.state === undefined ? null : cloneJson(raw.state);
+          if (rawState && rawState.pending_run_id) {
+            rawState.pending_run_id = null;
+          }
+
           return {
             id: raw.id,
             title: sanitizeTitle(raw.title),
@@ -1331,7 +1339,7 @@ export function renderChatPage(): string {
             naming_in_progress: false,
             created_at: typeof raw.created_at === "string" ? raw.created_at : nowIso(),
             updated_at: typeof raw.updated_at === "string" ? raw.updated_at : nowIso(),
-            state: raw.state === undefined ? null : cloneJson(raw.state),
+            state: rawState,
             user_messages: userMessages,
             db_bootstrapped: typeof raw.db_bootstrapped === "boolean" ? raw.db_bootstrapped : true,
             messages
