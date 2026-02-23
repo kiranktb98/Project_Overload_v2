@@ -1945,7 +1945,7 @@ export function renderChatPage(): string {
           if (!execBrief) { return "Report executed. Run ID: " + runId + "."; }
           const lines = ["Report executed. Run ID: " + runId + "."];
           if (Array.isArray(execBrief.what_changed) && execBrief.what_changed.length > 0) {
-            lines.push("\n**What changed:** " + execBrief.what_changed.slice(0, 3).join(" · "));
+            lines.push("\\n**What changed:** " + execBrief.what_changed.slice(0, 3).join(" · "));
           }
           if (Array.isArray(execBrief.so_what) && execBrief.so_what.length > 0) {
             lines.push("**So what:** " + execBrief.so_what.slice(0, 2).join(" · "));
@@ -1953,8 +1953,8 @@ export function renderChatPage(): string {
           if (Array.isArray(execBrief.what_to_do) && execBrief.what_to_do.length > 0) {
             lines.push("**Actions:** " + execBrief.what_to_do.slice(0, 2).join(" · "));
           }
-          lines.push("\nBefore PDF, choose one path: ask follow-up refinement questions (max 2), generate PDF now, or start a new conversation.");
-          return lines.join("\n");
+          lines.push("\\nBefore PDF, choose one path: ask follow-up refinement questions (max 2), generate PDF now, or start a new conversation.");
+          return lines.join("\\n");
         }
 
         function startRunPolling(runId) {
