@@ -142,9 +142,22 @@ export function renderChatPage(): string {
       }
 
       .platform-link .link-icon {
-        width: 14px;
-        text-align: center;
+        width: 16px;
+        height: 16px;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        flex-shrink: 0;
         color: #6f8ac1;
+      }
+      .platform-link .link-icon svg {
+        width: 16px;
+        height: 16px;
+        stroke: currentColor;
+        fill: none;
+        stroke-width: 1.8;
+        stroke-linecap: round;
+        stroke-linejoin: round;
       }
 
       .platform-link:hover {
@@ -1092,13 +1105,13 @@ export function renderChatPage(): string {
           </div>
           <div class="platform-section">Core Platform</div>
           <nav class="platform-nav">
-            <a class="platform-link active" href="/"><span class="link-icon">[]</span>Chat Explorer</a>
-            <a class="platform-link" href="/usage"><span class="link-icon">=</span>Usage Metrics</a>
+            <a class="platform-link active" href="/"><span class="link-icon"><svg viewBox="0 0 24 24"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg></span>Chat Explorer</a>
+            <a class="platform-link" href="/usage"><span class="link-icon"><svg viewBox="0 0 24 24"><path d="M18 20V10"/><path d="M12 20V4"/><path d="M6 20v-6"/></svg></span>Usage Metrics</a>
           </nav>
           <div class="platform-section">Infrastructure</div>
           <nav class="platform-nav">
-            <a class="platform-link" href="/connect"><span class="link-icon">DB</span>Data Sources</a>
-            <a class="platform-link" href="/config"><span class="link-icon">CFG</span>Global Config</a>
+            <a class="platform-link" href="/connect"><span class="link-icon"><svg viewBox="0 0 24 24"><ellipse cx="12" cy="5" rx="9" ry="3"/><path d="M21 12c0 1.66-4 3-9 3s-9-1.34-9-3"/><path d="M3 5v14c0 1.66 4 3 9 3s9-1.34 9-3V5"/></svg></span>Data Sources</a>
+            <a class="platform-link" href="/config"><span class="link-icon"><svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83-2.83l.06-.06A1.65 1.65 0 0 0 4.68 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 2.83-2.83l.06.06A1.65 1.65 0 0 0 9 4.68a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 2.83l-.06.06A1.65 1.65 0 0 0 19.4 9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg></span>Global Config</a>
           </nav>
           <div class="platform-footer">
             <div class="platform-user">
@@ -2149,10 +2162,21 @@ export function renderChatPage(): string {
           updateQueriesBtn();
         }
 
+        function collectPreparedPayloads(chat) {
+          if (!chat) { return []; }
+          var fromMessages = chat.messages.filter(function (m) { return Array.isArray(m.prepared_payloads) && m.prepared_payloads.length > 0; });
+          if (fromMessages.length > 0) { return fromMessages; }
+          // Fallback: messages don't carry payloads (old chats) but chat state does
+          if (chat.state && Array.isArray(chat.state.prepared_payloads) && chat.state.prepared_payloads.length > 0) {
+            return [{ prepared_payloads: chat.state.prepared_payloads }];
+          }
+          return [];
+        }
+
         function updateQueriesBtn() {
           if (!queriesBarBtnEl) { return; }
           const chat = getActiveChat();
-          const runs = chat ? chat.messages.filter(function (m) { return Array.isArray(m.prepared_payloads) && m.prepared_payloads.length > 0; }) : [];
+          const runs = collectPreparedPayloads(chat);
           const totalQuestions = runs.reduce(function (sum, m) { return sum + m.prepared_payloads.length; }, 0);
           if (totalQuestions === 0) {
             queriesBarBtnEl.textContent = "Queries";
@@ -2167,7 +2191,7 @@ export function renderChatPage(): string {
           if (!queriesModalBodyEl) { return; }
           queriesModalBodyEl.innerHTML = "";
           const chat = getActiveChat();
-          const runs = chat ? chat.messages.filter(function (m) { return Array.isArray(m.prepared_payloads) && m.prepared_payloads.length > 0; }) : [];
+          const runs = collectPreparedPayloads(chat);
           const totalQ = runs.reduce(function (sum, m) { return sum + m.prepared_payloads.length; }, 0);
           if (queriesModalTitleEl) {
             queriesModalTitleEl.textContent = "Queries" + (totalQ > 0 ? " \u00B7 " + totalQ + " total" : "");
