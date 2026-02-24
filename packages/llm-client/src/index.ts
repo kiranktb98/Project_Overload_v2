@@ -112,7 +112,7 @@ type UsageEventBuffer = {
 
 const DEFAULT_TIMEOUT_MS = 900_000;
 const DEFAULT_OPENAI_MODEL = "gpt-4.1-mini";
-const DEFAULT_OPENROUTER_MODEL = "anthropic/claude-sonnet-4.6";
+const DEFAULT_OPENROUTER_MODEL = "anthropic/claude-opus-4-6";
 const DEFAULT_OPENROUTER_BASE_URL = "https://openrouter.ai/api/v1";
 
 // ---------------------------------------------------------------------------
@@ -378,7 +378,7 @@ export function createQueryStrategistClientFromEnv(
       overrides.openrouterModel ??
       process.env.QUERY_STRATEGIST_MODEL ??
       process.env.DATA_PREPARATION_MODEL ??
-      "anthropic/claude-sonnet-4.6"
+      "anthropic/claude-opus-4-6"
   });
   return createQueryStrategistClient(options);
 }
@@ -531,67 +531,158 @@ function queryStrategistSystemPrompt(input: QueryStrategyInput): string {
   const dialect = normalizeSqlDialect(input.sql_dialect);
   const dialectUpper = dialect.toUpperCase();
   const mode = input.insight_mode === "data"
-    ? "DATA QUALITY mode: Write aggregated queries to assess completeness, null rates, duplicate rates, value distributions, outliers, and anomalies. Use COUNT, COUNT(DISTINCT), AVG. GROUP BY dimension columns. LIMIT 50."
-    : "BUSINESS INSIGHTS mode: Every query MUST return pre-aggregated summary data via GROUP BY. Return compact summary tables of ≤50 rows — never raw record dumps. Think: monthly totals, top-N by metric, breakdown by city/product/channel. Use SUM, COUNT, AVG with GROUP BY. LIMIT 50 always.";
+    ? "DATA QUALITY mode: Write aggregated queries to assess completeness, null rates, duplicate rates, value distributions, outliers, and anomalies. Use COUNT, COUNT(DISTINCT), AVG, MIN, MAX. GROUP BY dimension columns. LIMIT 50."
+    : "BUSINESS INSIGHTS mode: Every query MUST return pre-aggregated summary data via GROUP BY. Return compact summary tables of ≤50 rows — never raw record dumps. Think: monthly totals, top-N by metric, breakdown by category/region/product. Use SUM, COUNT, AVG with GROUP BY. LIMIT 50 always.";
+
+  // Dialect-specific syntax rules so the strategist writes executable SQL from the start
+  const dialectSyntax: Record<string, string[]> = {
+    postgres: [
+      `═══ ${dialectUpper} SYNTAX (write executable ${dialectUpper} SQL) ═══`,
+      "- Date grouping: DATE_TRUNC('month', col)",
+      "- Date extraction: EXTRACT(YEAR FROM col), EXTRACT(MONTH FROM col)",
+      "- Type casting: col::type or CAST(col AS type)",
+      "- String concat: 'a' || 'b'",
+      "- Null handling: COALESCE(col, default)",
+      "- Case-insensitive match: col ILIKE '%pattern%'",
+      "- Current time: NOW(), CURRENT_DATE",
+      "- Interval arithmetic: col + INTERVAL '30 days'",
+      "- Boolean: TRUE / FALSE"
+    ],
+    mysql: [
+      `═══ ${dialectUpper} SYNTAX (write executable ${dialectUpper} SQL) ═══`,
+      "- Date grouping: DATE_FORMAT(col, '%Y-%m') — NEVER use DATE_TRUNC (it does not exist in MySQL)",
+      "- Date extraction: YEAR(col), MONTH(col), DAY(col)",
+      "- Type casting: CAST(col AS type) — NEVER use :: (not valid in MySQL)",
+      "- String concat: CONCAT(a, b, c) — NEVER use || (it means OR in MySQL)",
+      "- Null handling: IFNULL(col, default) or COALESCE(col, default)",
+      "- Case-insensitive match: col LIKE '%pattern%' (case-insensitive by default)",
+      "- Current time: NOW(), CURDATE()",
+      "- Interval arithmetic: col + INTERVAL 30 DAY",
+      "- Boolean: 1 / 0 (not TRUE/FALSE)",
+      "- Reserved words must be backtick-escaped: `order`, `group`, `key`, `index`",
+      "- GROUP BY must list all non-aggregated SELECT columns (strict mode)"
+    ],
+    snowflake: [
+      `═══ ${dialectUpper} SYNTAX (write executable ${dialectUpper} SQL) ═══`,
+      "- Date grouping: DATE_TRUNC('MONTH', col) (granularity keyword in CAPS)",
+      "- Date extraction: EXTRACT(YEAR FROM col), DATE_PART('month', col)",
+      "- Type casting: col::type or CAST(col AS type)",
+      "- String concat: 'a' || 'b' or CONCAT(a, b)",
+      "- Null handling: COALESCE(col, default), NVL(col, default), IFNULL(col, default)",
+      "- Case-insensitive match: col ILIKE '%pattern%'",
+      "- Current time: CURRENT_TIMESTAMP(), CURRENT_DATE()",
+      "- Window filter: QUALIFY ROW_NUMBER() OVER (...) = 1",
+      "- Identifiers are uppercase by default; use double-quotes for case-sensitive names"
+    ],
+    bigquery: [
+      `═══ ${dialectUpper} SYNTAX (write executable ${dialectUpper} SQL) ═══`,
+      "- Date grouping: DATE_TRUNC(col, MONTH) — column comes FIRST, granularity second (opposite of Postgres!)",
+      "- Date extraction: EXTRACT(YEAR FROM col), EXTRACT(MONTH FROM col)",
+      "- Type casting: CAST(col AS type) or SAFE_CAST(col AS type) — NEVER use ::",
+      "- String concat: CONCAT(a, b) — NEVER use ||",
+      "- Null handling: IFNULL(col, default) or COALESCE(col, default)",
+      "- Case-insensitive match: LOWER(col) LIKE '%pattern%'",
+      "- Current time: CURRENT_TIMESTAMP(), CURRENT_DATE()",
+      "- Types: INT64, FLOAT64, STRING, BOOL, DATE, TIMESTAMP (not INTEGER, TEXT, etc.)",
+      "- Table references: `project.dataset.table` with backticks",
+      "- No implicit type coercion — always CAST explicitly"
+    ]
+  };
+
+  const syntaxRules = dialectSyntax[dialect] ?? [`═══ ${dialectUpper} SYNTAX ═══`, "Write valid " + dialectUpper + " SQL."];
 
   return [
-    `You are a SQL query strategist for a ${dialectUpper} database.`,
-    "Your job is to generate one focused SQL query PER distinct business question that the user's report needs to answer.",
+    `You are an expert SQL data preparation strategist. You write EXECUTABLE ${dialectUpper} SQL.`,
+    "Your job is to prepare COMPLETE, RICH datasets for an analyst to answer each business question.",
+    "Data preparation is the MOST CRITICAL part of the pipeline — the analyst can only work with what you provide.",
     "",
     `MODE: ${mode}`,
     "",
+    ...syntaxRules,
+    "",
+    "CRITICAL: Your SQL MUST be valid, executable " + dialectUpper + " syntax.",
+    "Do NOT write generic/PostgreSQL-style SQL and expect it to be fixed later.",
+    "Every function call, type cast, and operator must be correct for " + dialectUpper + ".",
+    "",
+    "═══ YOUR PRIMARY GOAL: THOROUGH DATA PREPARATION ═══",
+    "For each business question, prepare exactly the data the analyst needs — no more, no less.",
+    "Think of yourself as preparing a data packet for an analyst who has NO access to the database.",
+    "The analyst will only see the rows your queries return — so make every query count.",
+    "",
+    "For EACH business question, assess its complexity and decide how many queries are appropriate:",
+    "- Simple factual question? One well-crafted query is sufficient.",
+    "- Needs both a trend AND a breakdown? Two queries with the same group_id.",
+    "- Complex diagnostic needing multiple angles? Up to three queries with the same group_id.",
+    "",
+    "Don't over-fetch for simple questions, and don't under-prepare for complex ones.",
+    "",
+    "═══ DATA PREPARATION STRATEGY (group_id) ═══",
+    "Every business question gets a unique group_id string. ALL queries for that question share the SAME group_id.",
+    "Their results will be merged into ONE data packet sent to the analyst.",
+    "",
+    "Decide HOW MANY queries each question needs based on its complexity:",
+    "",
+    "1 QUERY — Simple, direct questions with a single answer:",
+    "  'What was total revenue last month?' → one SUM query is enough",
+    "  'How many active users do we have?' → one COUNT query is enough",
+    "  'What is the average order value?' → one AVG query is enough",
+    "",
+    "2 QUERIES — Questions needing a trend PLUS a breakdown or comparison:",
+    "  'How is revenue trending by category?' → Q1: monthly trend, Q2: category breakdown",
+    "  'Which products are growing fastest?' → Q1: current period by product, Q2: prior period by product",
+    "",
+    "3 QUERIES — Complex diagnostic questions that need multiple angles:",
+    "  'Why did revenue drop last quarter?' → Q1: monthly trend, Q2: category breakdown, Q3: prior year comparison",
+    "  'What's driving customer churn?' → Q1: churn rates over time, Q2: churn by segment, Q3: retention cohort data",
+    "",
+    "USE YOUR JUDGMENT. A simple question needs 1 query — don't over-fetch.",
+    "A complex diagnostic question may need 2-3 queries to give the analyst enough data.",
+    "The goal is to provide exactly the data the analyst needs — no more, no less.",
+    "",
+    "IMPORTANT: Even with 1 query, you MUST assign a group_id. Every query needs a group_id.",
+    "",
     "═══ CRITICAL: TABLE AND COLUMN NAMES ═══",
     "The DATABASE CATALOG section in the user message lists EVERY table and column available to you.",
-    "You MUST use ONLY the exact table names and column names from that catalog.",
+    "You MUST use ONLY the exact table names and column names from that catalog — zero exceptions.",
     "- Always use fully-qualified table names: schema.table (e.g., public.orders, NOT just orders).",
     "- When using aliases, the column references must still match the catalog column names exactly.",
     "- NEVER invent, guess, or assume column names that are not listed in the catalog.",
     "- If the catalog shows 'order_date', do NOT write 'date', 'created_at', 'purchase_date', etc.",
     "- If the catalog shows 'amount', do NOT write 'total', 'revenue', 'price', etc.",
-    "- If a column you want doesn't exist in the catalog, DO NOT use it. Adapt your query to use only available columns.",
-    "",
-    "EXAMPLE — Given catalog:",
-    "  TABLE: public.orders",
-    "    - id : integer",
-    "    - customer_id : integer",
-    "    - order_date : date",
-    "    - total_amount : numeric",
-    "    - status : text",
-    "",
-    "CORRECT: SELECT DATE_TRUNC('month', order_date) AS month, COUNT(*) AS order_count, SUM(total_amount) AS revenue FROM public.orders WHERE status = 'completed' GROUP BY 1 ORDER BY 1 LIMIT 50",
-    "WRONG:   SELECT * FROM orders WHERE created_at > '2024-01-01' LIMIT 200",
-    "  (wrong because: 'created_at' doesn't exist, 'orders' not fully qualified, SELECT * returns raw rows)",
+    "- If a column you need doesn't exist in the catalog, DO NOT use it. Adapt your query to use only available columns.",
+    "- Double-check EVERY column name in your SQL against the catalog before returning.",
     "",
     "═══ QUERY RULES ═══",
     `- Each query MUST be exactly ONE valid ${dialectUpper} SELECT statement.`,
-    "- NO semicolons, NO multiple statements.",
-    "- Every query MUST use GROUP BY and LIMIT ≤50. Raw row dumps (SELECT * or unfiltered LIMIT 1000+) are forbidden.",
+    "- NO semicolons, NO multiple statements, NO comments.",
+    "- Every query MUST use GROUP BY and LIMIT ≤50. Raw row dumps (SELECT * or LIMIT 1000+) are FORBIDDEN.",
     "- Use SUM(), COUNT(), AVG(), percentile or window functions — always aggregate, never dump raw records.",
-    "- Each query answers exactly ONE distinct business question.",
-    "- Use JOINs across tables when it adds insight — but only join on columns that actually exist.",
+    "- Use JOINs across tables when it adds insight — but only join on columns that actually exist in the catalog.",
     "- When the goal mentions time comparisons (YoY, MoM, QoQ), use date/timestamp columns from the catalog.",
-    "- If the goal says 'last N months vs previous N months', include date window filters and GROUP BY month.",
+    "- Always add ORDER BY to make results meaningful (ORDER BY metric DESC for rankings, ORDER BY date for trends).",
+    "- Use meaningful column aliases (AS revenue, AS order_count, AS month) so analysts can interpret results easily.",
     "",
-    "QUESTION ISOLATION (CRITICAL):",
-    "- NEVER bundle two different business questions into one SQL statement.",
-    "- If the PLANNER ANALYSIS has N recommended approaches, generate exactly N questions (each may have 1-3 queries).",
-    "- Preserve question order based on user intent (Q1 first, Q2 second, etc.).",
+    "═══ PLANNER INTEGRATION ═══",
+    "If a PLANNER ANALYSIS section is provided, it contains real data discoveries from exploratory queries.",
+    "ALWAYS use these discoveries to write better queries:",
+    "- Use discovered distinct values for WHERE filters (e.g., status values: 'shipped', 'cancelled').",
+    "- Use discovered date ranges to set appropriate time windows.",
+    "- Use discovered cardinalities to set appropriate GROUP BY granularity.",
+    "- If planner warns about nulls or empty columns, avoid those or handle with COALESCE.",
     "",
-    "MULTI-QUERY QUESTIONS (use group_id):",
-    "- If a single business question genuinely REQUIRES multiple SQL queries to be answered correctly,",
-    "  assign all those queries the SAME group_id string. They will be merged and sent to ONE analyst call.",
-    "- Use group_id ONLY when truly needed — typically for: comparing two time periods from separate queries,",
-    "  pulling complementary data from two different tables, or computing a numerator + denominator separately.",
-    "- Maximum 3 queries per group_id.",
-    "- Single-purpose questions with one query should NOT have a group_id.",
+    "═══ QUESTION ISOLATION ═══",
+    "- NEVER bundle two different business questions into one group_id.",
+    "- Each business question gets its OWN unique group_id with 1-3 queries.",
+    "- If the PLANNER ANALYSIS has N recommended approaches, generate exactly N questions.",
+    "- The question field on all queries within a group MUST be the same string.",
     "",
-    "Return strictly valid JSON:",
-    '{"queries": [',
-    '  {"question": "Revenue by region?", "sql": "SELECT region, SUM(amount) FROM schema.sales GROUP BY 1 ORDER BY 2 DESC LIMIT 50", "purpose": "Current period revenue breakdown"},',
-    '  {"question": "YoY comparison for revenue?", "sql": "SELECT month, SUM(amount) FROM schema.sales WHERE year=2024 GROUP BY 1 LIMIT 50", "purpose": "2024 monthly totals", "group_id": "yoy_revenue"},',
-    '  {"question": "YoY comparison for revenue?", "sql": "SELECT month, SUM(amount) FROM schema.sales WHERE year=2023 GROUP BY 1 LIMIT 50", "purpose": "2023 monthly totals", "group_id": "yoy_revenue"}',
-    "]}",
-    "No markdown, no extra keys."
+    "═══ METRIC DEFINITIONS ═══",
+    "If METRIC DEFINITIONS are provided in the report context, use the EXACT formulas described.",
+    "For example, if 'Total Revenue' is defined as 'SUM(order_amount) for completed orders',",
+    "your SQL must use SUM(order_amount) with WHERE status = 'completed' (or equivalent).",
+    "",
+    "Return strictly valid JSON. No markdown, no extra keys.",
+    '{"queries": [{"question":"...","sql":"...","purpose":"...","group_id":"..."}]}'
   ].join("\n");
 }
 
@@ -634,28 +725,112 @@ function queryStrategistUserPrompt(input: QueryStrategyInput): string {
   }
 
   parts.push("");
-  parts.push("Generate one aggregated GROUP BY query per distinct business question (2-4 questions, each with 1-3 queries).");
-  parts.push("Use group_id only when a single question requires multiple queries to be answered correctly.");
-  parts.push("Each query MUST use GROUP BY and LIMIT ≤200. Never return raw row dumps. Return JSON only.");
+  parts.push("═══ DATA PREPARATION INSTRUCTIONS ═══");
+  parts.push("Generate 2-4 business questions from the report goal.");
+  parts.push("For each question, decide how many SQL queries it needs (1, 2, or 3) based on complexity.");
+  parts.push("Simple questions need just 1 query. Complex diagnostic questions may need 2-3.");
+  parts.push("Think like a data engineer preparing complete datasets for an analyst who cannot query the database.");
+  parts.push("Every query MUST use GROUP BY and LIMIT ≤50. Never return raw row dumps.");
+  parts.push("Assign a unique group_id to EVERY query. Queries for the same question share the same group_id.");
+  parts.push("Return JSON only.");
 
   return parts.join("\n");
 }
 
 function dialectCompilerSystemPrompt(dialect: SqlDialect): string {
+  const dialectGuides: Record<string, string[]> = {
+    postgres: [
+      "TARGET: PostgreSQL",
+      "- DATE_TRUNC('month', col) for date grouping",
+      "- col::type for type casting (also CAST(col AS type))",
+      "- String concatenation with || operator",
+      "- ILIKE for case-insensitive string matching",
+      "- EXTRACT(EPOCH FROM interval) for interval math",
+      "- NOW() for current timestamp, CURRENT_DATE for current date",
+      "- String functions: LENGTH(), LOWER(), UPPER(), TRIM(), SUBSTRING()",
+      "- Array support: ANY(), array_agg()",
+      "- Window functions fully supported: ROW_NUMBER(), RANK(), LAG(), LEAD()",
+      "- Boolean type: TRUE/FALSE (not 1/0)",
+      "- LIMIT N OFFSET M syntax"
+    ],
+    mysql: [
+      "TARGET: MySQL",
+      "- DATE_FORMAT(col, '%Y-%m') for date grouping, NOT DATE_TRUNC",
+      "- YEAR(col), MONTH(col), DAY(col) for date extraction",
+      "- CAST(col AS type) for type casting — no :: operator",
+      "- CONCAT(a, b, c) for string concatenation — no || operator",
+      "- LIKE for pattern matching (case-insensitive by default with utf8_general_ci)",
+      "- NOW() for current timestamp, CURDATE() for current date",
+      "- IFNULL() instead of COALESCE() (COALESCE also works but IFNULL is idiomatic)",
+      "- String functions: CHAR_LENGTH(), LOWER(), UPPER(), TRIM(), SUBSTRING()",
+      "- GROUP BY must include all non-aggregated columns (strict mode)",
+      "- LIMIT N syntax (OFFSET requires ORDER BY)",
+      "- Use backticks for reserved word escaping: `order`, `group`",
+      "- No BOOLEAN type: use TINYINT(1), compare with 1/0 not TRUE/FALSE"
+    ],
+    snowflake: [
+      "TARGET: Snowflake",
+      "- DATE_TRUNC('MONTH', col) for date grouping (keyword in caps)",
+      "- col::type or CAST(col AS type) for type casting",
+      "- String concatenation with || operator",
+      "- ILIKE for case-insensitive matching",
+      "- Identifiers are UPPERCASE by default — use double quotes for case-sensitive names",
+      "- CURRENT_TIMESTAMP() for current timestamp",
+      "- FLATTEN() for semi-structured data",
+      "- TRY_CAST() for safe casting that returns NULL on failure",
+      "- QUALIFY clause for window function filtering",
+      "- LIMIT N syntax",
+      "- String functions: LENGTH(), LOWER(), UPPER(), TRIM(), SUBSTR()"
+    ],
+    bigquery: [
+      "TARGET: BigQuery",
+      "- DATE_TRUNC(col, MONTH) for date grouping — note column comes FIRST",
+      "- EXTRACT(MONTH FROM col) for date extraction",
+      "- CAST(col AS type) for type casting — no :: operator",
+      "- CONCAT(a, b) for string concatenation — no || operator",
+      "- Use backticks for project.dataset.table references: `project.dataset.table`",
+      "- CURRENT_TIMESTAMP() for current timestamp, CURRENT_DATE() for current date",
+      "- IFNULL() or COALESCE() for null handling",
+      "- SAFE_CAST() for safe casting that returns NULL on failure",
+      "- STRING_AGG() instead of array_agg()",
+      "- LIMIT N syntax (no OFFSET without ORDER BY)",
+      "- INT64, FLOAT64, STRING, BOOL, DATE, TIMESTAMP types",
+      "- No implicit type coercion — always CAST explicitly"
+    ]
+  };
+
+  const guide = dialectGuides[dialect] ?? [`TARGET: ${dialect.toUpperCase()}`];
+
   return [
-    `You are a strict SQL dialect compiler for ${dialect.toUpperCase()}.`,
-    "Convert or repair the source SQL to the target dialect while preserving business intent.",
+    `You are an expert SQL dialect compiler. Your job is to produce CORRECT, EXECUTABLE ${dialect.toUpperCase()} SQL.`,
+    "Convert or repair the source SQL to the target dialect while preserving the exact business intent.",
     "",
-    "Hard constraints:",
-    "- Exactly one SELECT statement (or WITH ... SELECT).",
+    "═══ DIALECT-SPECIFIC RULES ═══",
+    ...guide,
+    "",
+    "═══ COMPILATION RULES ═══",
+    "1. FUNCTION MAPPING: Replace functions that don't exist in the target dialect with equivalents.",
+    "   - DATE_TRUNC in PostgreSQL → DATE_FORMAT in MySQL, DATE_TRUNC (different arg order) in BigQuery",
+    "   - :: casting in PostgreSQL → CAST() in MySQL/BigQuery",
+    "   - || concatenation in PostgreSQL → CONCAT() in MySQL/BigQuery",
+    "2. TYPE MAPPING: Convert types to target dialect equivalents.",
+    "   - PostgreSQL NUMERIC → MySQL DECIMAL, BigQuery NUMERIC",
+    "   - PostgreSQL TEXT → MySQL VARCHAR(65535), BigQuery STRING",
+    "3. IDENTIFIER QUOTING: Use the correct quoting for the target dialect.",
+    "   - PostgreSQL: double quotes (\"column\")",
+    "   - MySQL: backticks (`column`)",
+    "   - BigQuery: backticks for tables (`project.dataset.table`)",
+    "4. PRESERVE the business logic, all column aliases, GROUP BY, ORDER BY, LIMIT, and WHERE clauses.",
+    "5. Use ONLY the provided allowlisted schemas/tables — do NOT rename tables.",
+    "",
+    "═══ HARD CONSTRAINTS ═══",
+    "- Output exactly one SELECT statement (or WITH ... SELECT).",
     "- No semicolons.",
     "- No comments.",
-    "- No write operations.",
-    "- No DDL or COPY.",
-    "- Use only provided allowlisted schemas/tables.",
+    "- No write operations, DDL, or COPY.",
     "",
     "Return strict JSON only:",
-    '{"sql":"SELECT ...","rationale":"short compilation note"}'
+    '{"sql":"SELECT ...","rationale":"short note on what was changed for dialect compatibility"}'
   ].join("\n");
 }
 
@@ -733,7 +908,7 @@ export function createPlannerClientFromEnv(
       overrides.openrouterModel ??
       process.env.DATA_PREPARATION_MODEL ??
       process.env.QUERY_STRATEGIST_MODEL ??
-      "anthropic/claude-sonnet-4.6"
+      "anthropic/claude-opus-4-6"
   });
   return createPlannerClient(options);
 }
@@ -852,29 +1027,37 @@ function wrapPlannerWithFallback(
 
 function plannerExploreSystemPrompt(): string {
   return [
-    "You are a data exploration planner for a PostgreSQL database.",
+    "You are a data exploration planner for a SQL database.",
     "Given a user's analysis goal and the database catalog, generate 3-6 lightweight",
     "exploratory SQL queries to understand the data BEFORE writing the main analysis queries.",
     "",
+    "Your discoveries will directly inform the Query Strategist, so focus on learning:",
+    "- What distinct values exist in key categorical columns (status, type, category fields)",
+    "- What date ranges the data covers (critical for time-based analysis)",
+    "- Table sizes and cardinalities (to judge data volume)",
+    "- Sample rows (to understand data format and relationships)",
+    "",
     "QUERY TYPES (use a mix relevant to the goal):",
-    '- "distinct": SELECT DISTINCT column_name FROM schema.table LIMIT 50',
-    "  Use for: categorical columns, status fields, types, categories",
-    '- "count": SELECT COUNT(*), COUNT(DISTINCT col) FROM schema.table LIMIT 1',
-    "  Use for: table sizes, cardinality",
+    '- "distinct": SELECT DISTINCT column_name FROM schema.table ORDER BY 1 LIMIT 50',
+    "  Use for: categorical columns, status fields, types, categories — helps the strategist write correct WHERE filters",
+    '- "count": SELECT COUNT(*) AS total_rows, COUNT(DISTINCT col) AS unique_values FROM schema.table LIMIT 1',
+    "  Use for: table sizes, cardinality — helps judge data volume",
     '- "sample": SELECT * FROM schema.table LIMIT 5',
-    "  Use for: understanding row shape, data format, example values",
-    '- "range": SELECT MIN(col), MAX(col) FROM schema.table LIMIT 1',
-    "  Use for: date ranges, numeric ranges, time boundaries",
+    "  Use for: understanding row shape, data format, example values, and column relationships",
+    '- "range": SELECT MIN(col) AS min_val, MAX(col) AS max_val FROM schema.table LIMIT 1',
+    "  Use for: date ranges, numeric ranges — critical for setting time windows in analysis queries",
     '- "schema": SELECT column_name, data_type FROM information_schema.columns WHERE table_schema=\'...\' AND table_name=\'...\' LIMIT 50',
     "  Use for: confirming column types when catalog seems ambiguous",
     "",
     "RULES:",
-    "- Use ONLY tables and columns from the provided catalog.",
+    "- Use ONLY tables and columns from the provided catalog — never guess column names.",
     "- Always use fully-qualified table names: schema.table.",
     "- Every query MUST be a single SELECT with LIMIT.",
     "- Keep queries fast: no JOINs, no subqueries, no complex aggregations.",
     "- Focus on columns relevant to the user's goal.",
-    "- Prioritize: status/type columns (DISTINCT), date columns (range), key measures (count/range).",
+    "- ALWAYS include at least one 'range' query on date/timestamp columns — this is essential.",
+    "- ALWAYS include at least one 'distinct' query on key categorical columns.",
+    "- Prioritize: date columns (range), status/type columns (distinct), key measures (count/range).",
     "",
     "Return strictly valid JSON:",
     '{"queries": [{"purpose": "...", "sql": "SELECT ...", "query_type": "distinct|count|sample|range|schema"}]}',
@@ -911,17 +1094,23 @@ function plannerPlanSystemPrompt(): string {
     "Your output must include:",
     "1. data_discoveries: What you learned about the data — distinct values found, date ranges,",
     "   row counts, null rates, cardinalities. Each discovery references a specific table.column.",
+    "   Be PRECISE: include actual values (e.g., 'status values: shipped, cancelled, refunded', 'date range: 2023-01-15 to 2024-12-31').",
     "2. recommended_approaches: 2-4 specific analysis questions with SQL approaches.",
-    "   Include concrete column names, JOIN conditions, filter values based on what you discovered.",
+    "   Each approach MUST include: concrete column names, specific JOIN conditions with ON clauses,",
+    "   exact filter values from discoveries, and suggested aggregation functions.",
+    "   Write approaches as if giving instructions to a SQL developer — not vague descriptions.",
     "3. data_warnings: Any issues found — high null rates, empty tables, unexpected values, low cardinality.",
+    "   Include the actual numbers (e.g., '45% null rate in customer_email column').",
     "4. plan_summary: A 2-3 sentence human-readable summary of the plan for the user.",
     "",
     "CRITICAL RULES:",
     "- Base your plan ENTIRELY on what the exploratory data shows — not assumptions.",
     "- Reference actual column values you discovered (e.g., \"status has values: shipped, cancelled, refunded\").",
     "- Your recommended approaches should include specific column names, JOIN conditions, and filter values.",
-    "- The Query Strategist will use your output to write the final SQL, so be precise and concrete.",
+    "- The Query Strategist will use your output to write the final SQL, so be as precise and concrete as possible.",
     "- If an exploratory query failed with an error, note it in data_warnings and avoid that table/column.",
+    "- Include date ranges in your discoveries so the strategist can write correct time filters.",
+    "- If the user goal involves trends or comparisons, suggest specific time groupings (monthly, weekly, quarterly).",
     "",
     "Return strictly valid JSON:",
     '{"data_discoveries": [{"table":"...","column":"...","finding":"..."}], "recommended_approaches": [{"question":"...","approach":"...","key_columns":["..."],"relevant_tables":["..."]}], "data_warnings": ["..."], "plan_summary": "..."}',
@@ -1064,18 +1253,19 @@ function reportComposerSystemPrompt(input: ReportComposerInput): string {
     "",
     "DESIGN RULES:",
     "- Return a COMPLETE HTML document with <!doctype html>, <head> with embedded CSS, and <body>.",
-    "- Use a clean, modern design with a professional color scheme.",
-    "- Include inline SVG charts where data supports it (bar charts, simple line charts, pie charts).",
-    "- Use HTML tables with good styling for data breakdowns.",
-    "- Make it visually appealing — use cards, subtle borders, clean typography.",
-    "- Each analysis section should have a clear heading, key finding callout, and supporting data.",
-    "- Include a summary section at the top with the most important 2-3 takeaways.",
-    "- End with a clear 'Recommended Actions' section.",
-    "- Add a 'Metric Definitions' section when metric_definitions are provided.",
-    "- Use the Sora or system font stack for clean rendering.",
-    "- The report must be printable and look good as a PDF.",
+    "- Use a clean, modern design with a professional color scheme (blues, grays, whites).",
+    "- Include inline SVG charts where data supports it (bar charts, simple line charts, pie charts). Make charts proportionally sized and well-labeled.",
+    "- Use HTML tables with good styling for data breakdowns — alternating row colors, proper alignment, bold headers.",
+    "- Make it visually appealing — use cards with subtle shadows, rounded corners, clean typography.",
+    "- Each analysis section should have: a clear heading, a key finding callout box (highlighted), and supporting data in tables or charts.",
+    "- Include an EXECUTIVE SUMMARY section at the top with the 2-3 most important takeaways as bold callout cards.",
+    "- End with a clear 'Recommended Actions' section with numbered, prioritized actions.",
+    "- Add a 'Metric Definitions' section when metric_definitions are provided — use a clean reference table format.",
+    "- Use the system font stack (system-ui, -apple-system, sans-serif) for clean rendering.",
+    "- The report must be printable and look good as a PDF — avoid dark backgrounds, use @media print friendly styles.",
     "- Do NOT mention confidence scores, confidence thresholds, or confidence percentages in customer-facing content.",
-    "- Do NOT use any external dependencies (no CDN links, no JavaScript).",
+    "- Do NOT use any external dependencies (no CDN links, no JavaScript libraries).",
+    "- All numbers should be properly formatted (commas for thousands, 2 decimal places for currency/percentages).",
     "- Return ONLY the HTML document, no markdown fences or explanations."
   ].join("\n");
 }
@@ -1189,14 +1379,22 @@ function analystSystemPrompt(input: AnalystInput): string {
     : "Provide a general analysis of the data.";
 
   const modeGuidance = input.insight_mode === "data"
-    ? "This is a DATA QUALITY analysis. Focus on: null values, missing data, inconsistencies, suspicious patterns, data type issues, outliers, and recommendations for data cleanup. Treat the data critically."
-    : "This is a BUSINESS analysis. The data is trustworthy. Focus on: trends, comparisons, notable changes, business implications, and actionable recommendations. Think like a business analyst presenting to the audience.";
+    ? "This is a DATA QUALITY analysis. Focus on: null values, missing data, inconsistencies, suspicious patterns, data type issues, outliers, and recommendations for data cleanup. Treat the data critically. Quantify issues (e.g., '23% of rows have null email')."
+    : "This is a BUSINESS analysis. The data is trustworthy. Focus on: trends, comparisons, notable changes, business implications, and actionable recommendations. Think like a senior business analyst presenting to executives. Always include specific numbers and percentages.";
 
   return [
-    "You are a data analyst. Analyze the provided dataset and return structured findings.",
+    "You are a senior data analyst. Analyze the provided dataset and return structured, evidence-based findings.",
     "",
     modeGuidance,
     questionContext,
+    "",
+    "ANALYSIS QUALITY STANDARDS:",
+    "- Every highlight MUST include a specific number, percentage, or comparison from the data.",
+    "- BAD: 'Revenue is growing' → GOOD: 'Revenue grew 23% from $1.2M to $1.5M between Q3 and Q4'",
+    "- BAD: 'Some products sell more' → GOOD: 'Top 3 products account for 67% of total revenue ($890K)'",
+    "- When analyzing trends, calculate period-over-period changes with actual values.",
+    "- When analyzing distributions, include top/bottom values and their proportions.",
+    "- If the data has time dimensions, identify the direction of change (growing, declining, stable).",
     "",
     "COMBINED DATA NOTE: If the rows contain a '_source_query' field, the data was merged from multiple SQL queries. Use this field to understand which rows came from which query and cross-reference the datasets in your analysis.",
     "DATA CONTEXT NOTE: If a DATA CONTEXT section is provided in the user message, treat it as authoritative pre-computed aggregates. Use the monthly totals to identify trends, the column statistics to understand distributions, and the preparation notes/warnings to calibrate your confidence. The sample rows are representative examples; the DATA CONTEXT captures the full dataset's shape.",
@@ -1204,10 +1402,11 @@ function analystSystemPrompt(input: AnalystInput): string {
     "Return strictly valid JSON matching this shape:",
     '{"request_id": "...", "batch_index": 0, "total_batches": 1, "highlights": ["..."], "risks": ["..."], "recommendations": ["..."], "confidence_score": 0.85, "appendix_refs": ["..."]}',
     "",
-    "- highlights: The most important findings (3-5 items).",
-    "- risks: Issues, concerns, or negative trends (1-3 items).",
-    "- recommendations: Specific actionable next steps (2-4 items).",
-    "- confidence_score: 0.0-1.0 based on data quality and coverage. Be rigorous and evidence-based.",
+    "- highlights: The most important findings with specific numbers (3-5 items). Each highlight should be a complete insight, not a vague observation.",
+    "- risks: Issues, concerns, or negative trends with quantified impact where possible (1-3 items).",
+    "- recommendations: Specific, actionable next steps tied to the findings (2-4 items). Each should clearly state what to do and why.",
+    "- confidence_score: 0.0-1.0 based on data quality, coverage, and sample size. Score below 0.7 if data has significant gaps or the sample is too small to draw conclusions.",
+    "- appendix_refs: Reference identifiers for any data tables or charts that support the findings.",
     "No markdown, no extra keys."
   ].join("\n");
 }
@@ -1233,17 +1432,18 @@ function analystUserPrompt(input: AnalystInput): string {
 
   if (input.data_context && input.data_context.trim().length > 0) {
     parts.push("", "═══ DATA CONTEXT (authoritative pre-computed aggregates) ═══");
+    parts.push("Use these pre-computed statistics as your primary data source. They cover the FULL dataset.");
     parts.push(input.data_context);
     parts.push("═══ END DATA CONTEXT ═══");
   }
 
-  parts.push("", "Sample rows (up to 30):", rowPreview);
+  parts.push("", "═══ SAMPLE ROWS (up to 30) ═══", rowPreview);
 
   if (packet.row_count > 30) {
-    parts.push(`... and ${packet.row_count - 30} more rows (aggregated statistics above reflect the full dataset).`);
+    parts.push(`... and ${packet.row_count - 30} more rows in the full dataset. Base your analysis on DATA CONTEXT aggregates, not just these samples.`);
   }
 
-  parts.push("", "Analyze and return JSON only.");
+  parts.push("", "Analyze the data thoroughly. Include specific numbers and percentages in every finding. Return JSON only.");
   return parts.join("\n");
 }
 

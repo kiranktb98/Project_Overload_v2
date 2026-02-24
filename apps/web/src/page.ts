@@ -1663,6 +1663,10 @@ export function renderChatPage(): string {
           if (!state || typeof state !== "object") {
             return null;
           }
+          // No decision buttons while an async run is in flight
+          if (state.pending_run_id) {
+            return null;
+          }
 
           const scopeQuestions = Array.isArray(state.scope_questions) ? state.scope_questions : [];
           const hasAnsweredScopeItems =
@@ -1962,6 +1966,7 @@ export function renderChatPage(): string {
           setBusy(true);
           composerStateRef.locked = true;
           syncComposerAvailability();
+          showThinking("running");
 
           const POLL_INTERVAL_MS = 3000;
           const POLL_TIMEOUT_MS = 900000;   // 15 min hard ceiling
@@ -1975,6 +1980,7 @@ export function renderChatPage(): string {
             }
             setActiveChatState(stateRef.value);
             appendMessage("assistant", reason, null, null, { trackForNaming: false });
+            hideThinking();
             setBusy(false);
             composerStateRef.locked = false;
             syncComposerAvailability();
@@ -2025,6 +2031,7 @@ export function renderChatPage(): string {
                     { trackForNaming: false,
                       prepared_payloads: Array.isArray(s.prepared_payloads) ? s.prepared_payloads : [] }
                   );
+                  hideThinking();
                   setBusy(false);
                   composerStateRef.locked = false;
                   syncComposerAvailability();
@@ -2039,6 +2046,7 @@ export function renderChatPage(): string {
                     "Report generation failed: " + (s.error || "Unknown error") + ". Please try running again.",
                     null, null, { trackForNaming: false }
                   );
+                  hideThinking();
                   setBusy(false);
                   composerStateRef.locked = false;
                   syncComposerAvailability();
@@ -2487,7 +2495,7 @@ export function renderChatPage(): string {
             refreshDecisionFromState(stateRef.value);
             appendMessage("assistant", payload.assistant_message, payload.pdf_download_url, payload.exec_brief_html, {
               trackForNaming: false,
-              prepared_payloads: Array.isArray(payload.prepared_payloads) ? payload.prepared_payloads : null
+              prepared_payloads: Array.isArray(payload.prepared_payloads) ? payload.prepared_payloads : (payload.state && Array.isArray(payload.state.prepared_payloads) ? payload.state.prepared_payloads : null)
             });
           } catch (error) {
             const errorText = error instanceof Error ? error.message : "Unknown error";

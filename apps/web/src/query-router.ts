@@ -159,7 +159,7 @@ type CreateQueryRouterClientOptions = {
 };
 
 const DEFAULT_TIMEOUT_MS = 900_000;
-const DEFAULT_OPENROUTER_MODEL = "anthropic/claude-sonnet-4.6";
+const DEFAULT_OPENROUTER_MODEL = "anthropic/claude-opus-4-6";
 const DEFAULT_OPENROUTER_BASE_URL = "https://openrouter.ai/api/v1";
 
 const QueryRoutingDecisionSchema = z
@@ -547,24 +547,41 @@ function queryRouterSystemPrompt(): string {
     "You are a routing and SQL drafting agent for a SQL analytics assistant.",
     "Use the SQL_DIALECT value provided in user context when drafting SQL.",
     "Decide if the user message should be handled as:",
-    "1) single_query: answerable with ONE safe SELECT query",
-    "2) deep_analysis: requires multiple questions, comparisons, diagnostics, or multiple queries",
-    "3) none: no execution route (chit-chat or insufficient context).",
+    "1) single_query: answerable with ONE safe SELECT query — a simple, focused question about one metric, one list, or one count",
+    "2) deep_analysis: requires multiple questions, comparisons, trend analysis, diagnostics, root cause analysis, or produces a multi-section report",
+    "3) none: no execution route (chit-chat, greetings, off-topic, or insufficient context to execute)",
     "",
-    "Hard rules for single_query:",
-    "- Return exactly one SELECT statement in sql.",
-    "- No semicolons.",
-    "- No comments.",
-    "- No write operations.",
-    "- Use ONLY tables/columns from provided catalog.",
-    "- Prefer aggregated outputs over raw row dumps.",
+    "═══ ROUTING DECISION GUIDE ═══",
     "",
-    "Routing guidance:",
-    "- Route to deep_analysis when question asks multiple asks/comparisons/trend + drivers/causes/top issues.",
-    "- Route to single_query when user asks one concrete metric/number/list that one SQL can answer.",
+    "Route to SINGLE_QUERY when the user asks:",
+    "- One specific number: 'How many orders last month?', 'What is our total revenue?'",
+    "- One list/ranking: 'Top 10 products by revenue', 'Show me all active customers'",
+    "- One aggregation: 'Average order value this quarter'",
+    "- One simple breakdown: 'Revenue by region' (single GROUP BY, one metric)",
+    "",
+    "Route to DEEP_ANALYSIS when the user asks:",
+    "- Multiple questions in one message: 'Show revenue trends AND top products AND customer retention'",
+    "- Comparisons across time: 'Compare this quarter vs last quarter', 'YoY growth analysis'",
+    "- Root cause or diagnostic: 'Why did revenue drop?', 'What's driving the increase?'",
+    "- Comprehensive reports: 'Give me a full business overview', 'Analyze our sales performance'",
+    "- Questions with 'analyze', 'report', 'deep dive', 'comprehensive', 'breakdown across multiple dimensions'",
+    "- Anything that would need 2+ separate SQL queries to answer properly",
+    "",
+    "Route to NONE when:",
+    "- The message is a greeting, small talk, or off-topic",
+    "- There is no database context or the user hasn't specified what to analyze",
+    "- The message is about configuration, not analysis (e.g., 'change my timezone')",
+    "",
+    "Hard rules for single_query SQL:",
+    "- Return exactly one SELECT statement in the sql field.",
+    "- Use ONLY tables and columns from the provided CATALOG_SUMMARY — never invent column names.",
+    "- Always use fully-qualified table names (schema.table).",
+    "- Prefer aggregated outputs (GROUP BY + aggregate functions) over raw row dumps.",
+    "- Always include LIMIT (≤200 for listings, ≤50 for aggregations).",
+    "- No semicolons, no comments, no write operations.",
     "",
     "Return strict JSON only with this shape:",
-    "{\"route\":\"single_query|deep_analysis|none\",\"sql\":\"optional\",\"reason\":\"...\",\"confidence\":0.0}",
+    "{\"route\":\"single_query|deep_analysis|none\",\"sql\":\"optional — required only for single_query\",\"reason\":\"brief explanation of routing choice\",\"confidence\":0.0}",
     "No markdown and no extra keys."
   ].join("\n");
 }
@@ -598,19 +615,33 @@ function queryRouterUserPrompt(input: QueryRoutingInput): string {
 }
 
 function dialectCompilerSystemPrompt(dialect: SqlDialect): string {
+  const dialectGuides: Record<string, string> = {
+    postgres: "PostgreSQL: DATE_TRUNC('month',col) for dates, :: for casting, || for concat, ILIKE for case-insensitive match, NOW(), LIMIT N.",
+    mysql: "MySQL: DATE_FORMAT(col,'%Y-%m') for dates (NOT DATE_TRUNC), CAST() for types (no ::), CONCAT() for strings (no ||), backticks for reserved words, IFNULL(), NOW(), LIMIT N.",
+    snowflake: "Snowflake: DATE_TRUNC('MONTH',col), :: or CAST() for types, || for concat, ILIKE, QUALIFY for window filters, identifiers uppercase by default.",
+    bigquery: "BigQuery: DATE_TRUNC(col,MONTH) (col first!), CAST() for types (no ::), CONCAT() for strings (no ||), backticks for table refs, SAFE_CAST(), INT64/FLOAT64/STRING types."
+  };
+
   return [
-    `You are a strict SQL dialect compiler for ${dialect.toUpperCase()}.`,
-    "Convert or repair source SQL to target dialect while preserving intent.",
+    `You are an expert SQL dialect compiler for ${dialect.toUpperCase()}.`,
+    "Convert or repair source SQL to the target dialect while preserving the exact business intent.",
+    "",
+    dialectGuides[dialect] ?? "",
+    "",
+    "Key transformations to check:",
+    "- Replace DATE_TRUNC/DATE_FORMAT with the correct target function and argument order.",
+    "- Replace :: type casts with CAST() if target doesn't support ::.",
+    "- Replace || string concat with CONCAT() if target requires it.",
+    "- Convert type names (TEXT→STRING, NUMERIC→DECIMAL, etc.).",
+    "- Preserve all column aliases, GROUP BY, ORDER BY, LIMIT, and WHERE clauses.",
     "",
     "Hard constraints:",
     "- Exactly one SELECT statement (or WITH ... SELECT).",
-    "- No semicolons.",
-    "- No comments.",
-    "- No write operations or DDL.",
+    "- No semicolons, no comments, no write operations or DDL.",
     "- Use only provided allowlisted schemas/tables.",
     "",
     "Return strict JSON only:",
-    '{"sql":"SELECT ...","rationale":"short compilation note"}'
+    '{"sql":"SELECT ...","rationale":"short note on dialect changes made"}'
   ].join("\n");
 }
 

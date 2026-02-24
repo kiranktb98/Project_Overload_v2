@@ -231,6 +231,7 @@ export function renderGlobalConfigPage(): string {
         background: linear-gradient(180deg, rgba(4, 11, 33, 0.98), rgba(2, 8, 26, 0.99));
         box-shadow: var(--shadow);
         padding: 16px 20px 20px;
+        overflow-y: auto;
       }
 
       .content-head {
@@ -244,6 +245,11 @@ export function renderGlobalConfigPage(): string {
       h1 {
         margin: 0;
         font-size: 1.08rem;
+      }
+
+      h2 {
+        margin: 0 0 8px;
+        font-size: 0.92rem;
       }
 
       .sub {
@@ -267,6 +273,20 @@ export function renderGlobalConfigPage(): string {
         border-radius: 14px;
         background: linear-gradient(160deg, rgba(8, 22, 56, 0.96), rgba(6, 18, 46, 0.96));
         padding: 14px;
+        margin-bottom: 16px;
+      }
+
+      .section-header {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        margin-bottom: 10px;
+      }
+
+      .section-hint {
+        font-size: 0.76rem;
+        color: var(--ink-soft);
+        margin-bottom: 10px;
       }
 
       label {
@@ -276,9 +296,8 @@ export function renderGlobalConfigPage(): string {
         margin-bottom: 8px;
       }
 
-      textarea {
+      textarea, input[type="text"] {
         width: 100%;
-        min-height: 180px;
         border-radius: 12px;
         border: 1px solid #2f4d95;
         padding: 12px;
@@ -289,7 +308,9 @@ export function renderGlobalConfigPage(): string {
         font-size: 0.8rem;
       }
 
-      textarea:focus {
+      textarea { min-height: 180px; }
+
+      textarea:focus, input[type="text"]:focus {
         outline: none;
         border-color: #5d7eff;
         box-shadow: 0 0 0 4px rgba(90, 112, 236, 0.2);
@@ -301,7 +322,7 @@ export function renderGlobalConfigPage(): string {
         gap: 8px;
       }
 
-      button {
+      .btn-primary {
         border: 1px solid rgba(128, 144, 255, 0.48);
         border-radius: 12px;
         padding: 10px 14px;
@@ -311,12 +332,152 @@ export function renderGlobalConfigPage(): string {
         font-family: "Space Grotesk", sans-serif;
         font-weight: 700;
         box-shadow: 0 10px 22px var(--glow);
+        font-size: 0.84rem;
       }
+
+      .btn-secondary {
+        border: 1px solid #2f4d95;
+        border-radius: 12px;
+        padding: 8px 12px;
+        color: #cfddff;
+        cursor: pointer;
+        background: rgba(15, 33, 79, 0.92);
+        font-family: "Space Grotesk", sans-serif;
+        font-weight: 600;
+        font-size: 0.78rem;
+      }
+
+      .btn-danger {
+        border: 1px solid #6b2f2f;
+        border-radius: 10px;
+        padding: 6px 10px;
+        color: #ffa0a0;
+        cursor: pointer;
+        background: rgba(80, 20, 20, 0.8);
+        font-family: "Space Grotesk", sans-serif;
+        font-weight: 600;
+        font-size: 0.72rem;
+      }
+
+      .btn-secondary:hover { border-color: #5d7eff; }
+      .btn-danger:hover { border-color: #ff5555; background: rgba(100, 20, 20, 0.9); }
 
       .status {
         margin-top: 10px;
         font-size: 0.78rem;
         color: var(--ink-soft);
+      }
+
+      /* Metric Definitions Table */
+      .metric-table {
+        width: 100%;
+        border-collapse: collapse;
+        margin-bottom: 10px;
+      }
+
+      .metric-table th {
+        text-align: left;
+        font-size: 0.68rem;
+        text-transform: uppercase;
+        letter-spacing: 0.12em;
+        color: var(--ink-soft);
+        padding: 8px 10px;
+        border-bottom: 1px solid #1f3f82;
+      }
+
+      .metric-table td {
+        padding: 8px 10px;
+        font-size: 0.82rem;
+        border-bottom: 1px solid rgba(31, 63, 130, 0.4);
+        vertical-align: top;
+      }
+
+      .metric-table tr:hover td {
+        background: rgba(24, 49, 112, 0.25);
+      }
+
+      .metric-key {
+        font-family: "JetBrains Mono", monospace;
+        font-size: 0.75rem;
+        color: #8eb3ff;
+      }
+
+      .metric-type {
+        font-family: "JetBrains Mono", monospace;
+        font-size: 0.68rem;
+        padding: 3px 8px;
+        border-radius: 6px;
+        border: 1px solid #29498e;
+        background: rgba(10, 29, 70, 0.88);
+        color: var(--ink-soft);
+      }
+
+      .metric-cols {
+        font-family: "JetBrains Mono", monospace;
+        font-size: 0.72rem;
+        color: #8eb3ff;
+      }
+
+      .empty-state {
+        padding: 20px;
+        text-align: center;
+        color: var(--ink-soft);
+        font-size: 0.84rem;
+      }
+
+      /* Add Metric Form */
+      .metric-form {
+        display: none;
+        border: 1px solid #2a4d99;
+        border-radius: 12px;
+        padding: 14px;
+        margin-top: 10px;
+        background: rgba(6, 16, 42, 0.95);
+      }
+
+      .metric-form.visible { display: block; }
+
+      .form-row {
+        display: grid;
+        grid-template-columns: 1fr 1fr;
+        gap: 10px;
+        margin-bottom: 10px;
+      }
+
+      .form-group {
+        display: flex;
+        flex-direction: column;
+        gap: 4px;
+      }
+
+      .form-group label {
+        font-size: 0.68rem;
+        margin-bottom: 2px;
+      }
+
+      .form-group input, .form-group select {
+        border-radius: 10px;
+        border: 1px solid #2f4d95;
+        padding: 8px 10px;
+        background: rgba(9, 24, 58, 0.94);
+        color: #edf3ff;
+        font-family: "JetBrains Mono", monospace;
+        font-size: 0.78rem;
+      }
+
+      .form-group input:focus, .form-group select:focus {
+        outline: none;
+        border-color: #5d7eff;
+      }
+
+      .form-group select {
+        appearance: auto;
+      }
+
+      .form-actions {
+        display: flex;
+        gap: 8px;
+        margin-top: 6px;
       }
 
       @media (max-width: 1080px) {
@@ -368,18 +529,84 @@ export function renderGlobalConfigPage(): string {
           <div class="content-head">
             <div>
               <h1>Global Config</h1>
-              <p class="sub">Business context lives here and is used across chat planning and report generation.</p>
+              <p class="sub">Business context and metric definitions used across chat planning and report generation.</p>
             </div>
             <span class="badge">Workspace Config</span>
           </div>
 
+          <!-- Business Context Section -->
           <section class="section">
             <label for="business-context">Business Context</label>
             <textarea id="business-context" placeholder="Describe what this business does, key revenue model, and core operational constraints."></textarea>
             <div class="actions">
-              <button id="save-config" type="button">Save Global Config</button>
+              <button class="btn-primary" id="save-context" type="button">Save Business Context</button>
             </div>
-            <div class="status" id="status">Loading current config...</div>
+            <div class="status" id="context-status">Loading current config...</div>
+          </section>
+
+          <!-- Metric Definitions Section -->
+          <section class="section">
+            <div class="section-header">
+              <h2>Metric Definitions</h2>
+              <button class="btn-secondary" id="add-metric-btn" type="button">+ Add Metric</button>
+            </div>
+            <p class="section-hint">Define how key business metrics should be calculated. These definitions are passed to all query agents to ensure consistent, accurate analysis.</p>
+
+            <table class="metric-table" id="metric-table">
+              <thead>
+                <tr>
+                  <th>Key</th>
+                  <th>Display Name</th>
+                  <th>Definition</th>
+                  <th>Type</th>
+                  <th>Source Columns</th>
+                  <th></th>
+                </tr>
+              </thead>
+              <tbody id="metric-tbody">
+                <tr><td colspan="6" class="empty-state">No metric definitions yet. Click "+ Add Metric" to create one.</td></tr>
+              </tbody>
+            </table>
+
+            <!-- Add/Edit Metric Form -->
+            <div class="metric-form" id="metric-form">
+              <div class="form-row">
+                <div class="form-group">
+                  <label for="mf-key">Metric Key</label>
+                  <input type="text" id="mf-key" placeholder="e.g. total_revenue" />
+                </div>
+                <div class="form-group">
+                  <label for="mf-name">Display Name</label>
+                  <input type="text" id="mf-name" placeholder="e.g. Total Revenue" />
+                </div>
+              </div>
+              <div class="form-group" style="margin-bottom:10px">
+                <label for="mf-def">Definition (how to calculate this metric)</label>
+                <input type="text" id="mf-def" placeholder="e.g. SUM(order_amount) for all completed orders" />
+              </div>
+              <div class="form-row">
+                <div class="form-group">
+                  <label for="mf-type">Source Type</label>
+                  <select id="mf-type">
+                    <option value="column">Column (direct from a column)</option>
+                    <option value="derived">Derived (computed/formula)</option>
+                  </select>
+                </div>
+                <div class="form-group">
+                  <label for="mf-cols">Source Columns (comma-separated)</label>
+                  <input type="text" id="mf-cols" placeholder="e.g. orders.amount, orders.status" />
+                </div>
+              </div>
+              <div class="form-actions">
+                <button class="btn-primary" id="mf-save" type="button">Save Metric</button>
+                <button class="btn-secondary" id="mf-cancel" type="button">Cancel</button>
+              </div>
+            </div>
+
+            <div class="actions" style="margin-top:12px">
+              <button class="btn-primary" id="save-metrics" type="button">Save Metric Definitions</button>
+            </div>
+            <div class="status" id="metrics-status"></div>
           </section>
         </main>
       </div>
@@ -387,45 +614,180 @@ export function renderGlobalConfigPage(): string {
 
     <script>
       (() => {
-        const textarea = document.getElementById("business-context");
-        const statusEl = document.getElementById("status");
-        const saveBtn = document.getElementById("save-config");
+        /* ── Business Context ── */
+        const ctxTextarea = document.getElementById("business-context");
+        const ctxStatus = document.getElementById("context-status");
+        const ctxSaveBtn = document.getElementById("save-context");
 
-        async function loadConfig() {
-          const response = await fetch("/api/db/context");
-          const payload = await response.json();
-          if (!response.ok) {
-            statusEl.textContent = "No active data source yet. Connect a source in Data Sources, then save business context.";
-            return;
+        async function loadBusinessContext() {
+          try {
+            const res = await fetch("/api/db/context");
+            const data = await res.json();
+            if (!res.ok) {
+              ctxStatus.textContent = "No active data source yet. Connect a source in Data Sources first.";
+              return;
+            }
+            ctxTextarea.value = typeof data.business_context === "string" ? data.business_context : "";
+            ctxStatus.textContent = "Loaded.";
+          } catch {
+            ctxStatus.textContent = "Failed to load business context.";
           }
-          textarea.value = typeof payload.business_context === "string" ? payload.business_context : "";
-          statusEl.textContent = "Loaded.";
         }
 
-        async function saveConfig() {
-          statusEl.textContent = "Saving...";
-          const response = await fetch("/api/db/business-context", {
-            method: "POST",
-            headers: { "content-type": "application/json" },
-            body: JSON.stringify({ business_context: String(textarea.value || "") })
-          });
-          const payload = await response.json();
-          if (!response.ok) {
-            statusEl.textContent = payload && typeof payload.message === "string" ? payload.message : "Failed to save.";
-            return;
+        async function saveBusinessContext() {
+          ctxStatus.textContent = "Saving...";
+          try {
+            const res = await fetch("/api/db/business-context", {
+              method: "POST",
+              headers: { "content-type": "application/json" },
+              body: JSON.stringify({ business_context: String(ctxTextarea.value || "") })
+            });
+            const data = await res.json();
+            ctxStatus.textContent = res.ok ? "Saved." : (data.message || "Failed to save.");
+          } catch {
+            ctxStatus.textContent = "Failed to save.";
           }
-          statusEl.textContent = "Saved.";
         }
 
-        saveBtn.addEventListener("click", () => {
-          saveConfig().catch(() => {
-            statusEl.textContent = "Failed to save.";
-          });
+        ctxSaveBtn.addEventListener("click", () => saveBusinessContext());
+
+        /* ── Metric Definitions ── */
+        let metrics = [];
+        let editingIndex = -1;
+
+        const metricsTbody = document.getElementById("metric-tbody");
+        const metricsStatus = document.getElementById("metrics-status");
+        const addBtn = document.getElementById("add-metric-btn");
+        const saveMetricsBtn = document.getElementById("save-metrics");
+        const form = document.getElementById("metric-form");
+        const mfKey = document.getElementById("mf-key");
+        const mfName = document.getElementById("mf-name");
+        const mfDef = document.getElementById("mf-def");
+        const mfType = document.getElementById("mf-type");
+        const mfCols = document.getElementById("mf-cols");
+        const mfSave = document.getElementById("mf-save");
+        const mfCancel = document.getElementById("mf-cancel");
+
+        function esc(s) { const d = document.createElement("div"); d.textContent = s; return d.innerHTML; }
+
+        function renderMetrics() {
+          if (metrics.length === 0) {
+            metricsTbody.innerHTML = '<tr><td colspan="6" class="empty-state">No metric definitions yet. Click "+ Add Metric" to create one.</td></tr>';
+            return;
+          }
+          metricsTbody.innerHTML = metrics.map(function(m, i) {
+            var cols = (m.source_columns || []).join(", ") || "-";
+            return '<tr>'
+              + '<td class="metric-key">' + esc(m.metric_key) + '</td>'
+              + '<td>' + esc(m.display_name) + '</td>'
+              + '<td>' + esc(m.definition) + '</td>'
+              + '<td><span class="metric-type">' + esc(m.source_type || "derived") + '</span></td>'
+              + '<td class="metric-cols">' + esc(cols) + '</td>'
+              + '<td><button class="btn-secondary" data-edit="' + i + '">Edit</button> <button class="btn-danger" data-del="' + i + '">Del</button></td>'
+              + '</tr>';
+          }).join("");
+        }
+
+        metricsTbody.addEventListener("click", function(e) {
+          var btn = e.target.closest("[data-edit]");
+          if (btn) { openEditForm(parseInt(btn.dataset.edit, 10)); return; }
+          var del = e.target.closest("[data-del]");
+          if (del) { metrics.splice(parseInt(del.dataset.del, 10), 1); renderMetrics(); return; }
         });
 
-        loadConfig().catch(() => {
-          statusEl.textContent = "Failed to load config.";
-        });
+        function openAddForm() {
+          editingIndex = -1;
+          mfKey.value = "";
+          mfName.value = "";
+          mfDef.value = "";
+          mfType.value = "derived";
+          mfCols.value = "";
+          form.classList.add("visible");
+          mfKey.focus();
+        }
+
+        function openEditForm(idx) {
+          var m = metrics[idx];
+          if (!m) return;
+          editingIndex = idx;
+          mfKey.value = m.metric_key;
+          mfName.value = m.display_name;
+          mfDef.value = m.definition;
+          mfType.value = m.source_type || "derived";
+          mfCols.value = (m.source_columns || []).join(", ");
+          form.classList.add("visible");
+          mfKey.focus();
+        }
+
+        function closeForm() {
+          form.classList.remove("visible");
+          editingIndex = -1;
+        }
+
+        function saveFormMetric() {
+          var key = mfKey.value.trim();
+          var name = mfName.value.trim();
+          var def = mfDef.value.trim();
+          if (!key || !name || !def) {
+            metricsStatus.textContent = "Metric key, display name, and definition are required.";
+            return;
+          }
+          var cols = mfCols.value.split(",").map(function(s) { return s.trim(); }).filter(function(s) { return s.length > 0; });
+          var entry = {
+            metric_key: key,
+            display_name: name,
+            definition: def,
+            source_type: mfType.value,
+            source_columns: cols
+          };
+          if (editingIndex >= 0) {
+            metrics[editingIndex] = entry;
+          } else {
+            metrics.push(entry);
+          }
+          renderMetrics();
+          closeForm();
+          metricsStatus.textContent = "Metric added locally. Click \\"Save Metric Definitions\\" to persist.";
+        }
+
+        addBtn.addEventListener("click", openAddForm);
+        mfSave.addEventListener("click", saveFormMetric);
+        mfCancel.addEventListener("click", closeForm);
+
+        async function loadMetrics() {
+          try {
+            var res = await fetch("/api/config/global");
+            var data = await res.json();
+            if (res.ok && Array.isArray(data.metric_definitions)) {
+              metrics = data.metric_definitions;
+              renderMetrics();
+              metricsStatus.textContent = metrics.length > 0 ? metrics.length + " metric(s) loaded." : "";
+            }
+          } catch {
+            metricsStatus.textContent = "Failed to load metric definitions.";
+          }
+        }
+
+        async function saveMetrics() {
+          metricsStatus.textContent = "Saving...";
+          try {
+            var res = await fetch("/api/config/global", {
+              method: "PUT",
+              headers: { "content-type": "application/json" },
+              body: JSON.stringify({ metric_definitions: metrics })
+            });
+            var data = await res.json();
+            metricsStatus.textContent = res.ok ? "Saved " + metrics.length + " metric definition(s)." : (data.message || "Failed to save.");
+          } catch {
+            metricsStatus.textContent = "Failed to save metric definitions.";
+          }
+        }
+
+        saveMetricsBtn.addEventListener("click", () => saveMetrics());
+
+        /* ── Init ── */
+        loadBusinessContext();
+        loadMetrics();
       })();
     </script>
   </body>
