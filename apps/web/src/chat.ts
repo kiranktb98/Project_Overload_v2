@@ -4462,7 +4462,7 @@ async function executeRun(state: ChatState, apiClient: WebApiClient): Promise<Ch
 
   return {
     assistant_message:
-      "I'm generating your report — this usually takes 2–4 minutes. " +
+      "I'm generating your report — this usually takes 10–15 minutes. " +
       "The results will appear here once it's ready.",
     state: nextState
   };

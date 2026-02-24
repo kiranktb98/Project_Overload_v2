@@ -559,6 +559,28 @@ export function buildWebApp(options: WebAppDependencies = {}) {
     });
   });
 
+  // ── Global Config (metric definitions) ──
+  app.get("/api/config/global", async (_request, reply) => {
+    return proxyToApi({
+      fetch_impl: options.fetch_impl,
+      api_base_url: apiBaseUrl,
+      method: "GET",
+      path: "/config/global",
+      reply
+    });
+  });
+
+  app.put("/api/config/global", async (request, reply) => {
+    return proxyToApi({
+      fetch_impl: options.fetch_impl,
+      api_base_url: apiBaseUrl,
+      method: "PUT",
+      path: "/config/global",
+      body: request.body,
+      reply
+    });
+  });
+
   return app;
 }
 

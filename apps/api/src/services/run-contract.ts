@@ -5,7 +5,10 @@ import {
   type ExecBrief,
   ReportRunSchema,
   type ReportContract,
-  type ReportRun
+  type ReportRun,
+  GlobalConfigSchema,
+  GLOBAL_CONFIG_STATE_KEY,
+  type MetricDefinition
 } from "@project-overload/shared";
 import { renderExecBriefHtml } from "@project-overload/report-render";
 import type { DataPlane } from "@project-overload/dataplane";
@@ -268,6 +271,17 @@ export async function prepareReportContractData(input: {
   );
   collectClientUsage(input.planner_client, tokenUsage);
 
+  // Load global metric definitions to enrich the query strategist context
+  const globalMetricDefs = await loadGlobalMetricDefinitions(input.store, storeContext);
+  const allMetricDefs = buildRunMetricDefinitions(input.contract, globalMetricDefs);
+  const metricDefsContext = allMetricDefs.length > 0
+    ? "\nMETRIC DEFINITIONS (use these exact formulas):\n" +
+      allMetricDefs.map((m) =>
+        `- ${m.display_name} (${m.metric_key}): ${m.definition}` +
+        (m.source_columns.length > 0 ? ` [columns: ${m.source_columns.join(", ")}]` : "")
+      ).join("\n")
+    : "";
+
   const strategy = await input.query_strategist.planQueries({
     catalog_summary: input.catalog_summary || "No catalog available.",
     report_goal: [
@@ -275,7 +289,7 @@ export async function prepareReportContractData(input: {
       `Mode: ${insightMode}`,
       `Audience: ${input.contract.audience}`,
       `Contract SQL: ${input.contract.sql_template}`
-    ].join(" | "),
+    ].join(" | ") + metricDefsContext,
     audience: input.contract.audience,
     insight_mode: insightMode,
     metric_ids: input.contract.metric_ids,
@@ -441,7 +455,8 @@ export async function runReportContractPipeline(input: {
       }];
 
   const conciseSummary = buildConciseSummary(input.contract.name, analyses);
-  const metricDefinitions = buildRunMetricDefinitions(input.contract);
+  const globalMetricDefs = await loadGlobalMetricDefinitions(input.store, storeContext);
+  const metricDefinitions = buildRunMetricDefinitions(input.contract, globalMetricDefs);
   const kpiResults = checkKpiWatchlist(
     (input.contract.kpi_watchlist ?? []) as KpiWatchlistItem[],
     preparation.prepared_payloads
@@ -2274,7 +2289,24 @@ function sanitizeLlmSql(rawSql: string, fallbackLimit: number): string {
   return sql;
 }
 
-function buildRunMetricDefinitions(contract: ReportContract): Array<{
+async function loadGlobalMetricDefinitions(
+  store: MetadataStore,
+  context: { tenant_id: string }
+): Promise<MetricDefinition[]> {
+  try {
+    const raw = await store.getSystemState(GLOBAL_CONFIG_STATE_KEY, context);
+    if (!raw) return [];
+    const config = GlobalConfigSchema.parse(raw);
+    return config.metric_definitions;
+  } catch {
+    return [];
+  }
+}
+
+function buildRunMetricDefinitions(
+  contract: ReportContract,
+  globalMetricDefs: MetricDefinition[] = []
+): Array<{
   metric_key: string;
   display_name: string;
   definition: string;
@@ -2285,7 +2317,17 @@ function buildRunMetricDefinitions(contract: ReportContract): Array<{
     ? contract.metric_definitions
     : [];
 
-  const normalized = fromContract
+  // Merge: contract-level definitions override global ones with the same key
+  const merged = [...globalMetricDefs, ...fromContract];
+  const deduped = new Map<string, typeof merged[number]>();
+  for (const metric of merged) {
+    const key = String(metric.metric_key ?? "").trim().toLowerCase();
+    if (key.length > 0) {
+      deduped.set(key, metric);
+    }
+  }
+
+  const normalized = Array.from(deduped.values())
     .map((metric) => {
       const sourceType: "column" | "derived" =
         metric.source_type === "column" ? "column" : "derived";

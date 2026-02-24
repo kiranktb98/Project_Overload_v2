@@ -249,7 +249,7 @@ export function registerContractRoutes(
     // Fire pipeline in the background — no await so the HTTP response returns instantly.
     void (async () => {
       try {
-        const catalogSummary = buildCatalogSummary(connectionManager);
+        const catalogSummary = buildCatalogSummary(connectionManager, contract.guardrails.allowed_relations);
         const sqlDialect = resolveSqlDialect(connectionManager);
 
         const result = await runReportContractPipeline({
@@ -326,7 +326,7 @@ export function registerContractRoutes(
     }
 
     try {
-      const catalogSummary = buildCatalogSummary(connectionManager);
+      const catalogSummary = buildCatalogSummary(connectionManager, contract.guardrails.allowed_relations);
       const sqlDialect = resolveSqlDialect(connectionManager);
       const result = await prepareReportContractData({
         contract,
@@ -717,17 +717,28 @@ function toReportContract(body: unknown, tenantId: string) {
   });
 }
 
-function buildCatalogSummary(connectionManager: RuntimeConnectionManager): string {
+function buildCatalogSummary(connectionManager: RuntimeConnectionManager, allowedRelations?: string[]): string {
   const catalog = connectionManager.getCatalog();
   if (!catalog || !catalog.tables || catalog.tables.length === 0) {
     return "No catalog available.";
+  }
+
+  // Filter catalog to only include allowlisted tables when provided.
+  // This prevents the LLM from referencing tables that will fail preflight checks.
+  let candidateTables = catalog.tables.slice(0, 40);
+  if (allowedRelations && allowedRelations.length > 0) {
+    const allowed = new Set(allowedRelations.map((r) => r.toLowerCase()));
+    const filtered = candidateTables.filter((t) => allowed.has(t.qualified_name.toLowerCase()));
+    if (filtered.length > 0) {
+      candidateTables = filtered;
+    }
   }
 
   const sections: string[] = [];
   sections.push(`BUSINESS_ID: ${catalog.business_id}`);
   sections.push("");
 
-  for (const table of catalog.tables.slice(0, 20)) {
+  for (const table of candidateTables.slice(0, 20)) {
     const tableId = table.table_id ? ` [${table.table_id}]` : "";
     const rowInfo = table.row_count_estimate > 0 ? ` (~${table.row_count_estimate} rows)` : "";
     const header = `TABLE: ${table.qualified_name}${tableId}${rowInfo}`;
