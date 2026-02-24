@@ -137,6 +137,7 @@ export function createAnalystClientFromEnv(overrides: Partial<CreateAnalystClien
   const provider = parseProvider(overrides.provider ?? process.env.LLM_PROVIDER);
 
   if (provider === "stub") {
+    console.log("[analyst] LLM_PROVIDER=stub, using stub client");
     return createStubAnalystClient();
   }
 
@@ -171,6 +172,7 @@ export function createAnalystClient(options: CreateAnalystClientOptions): Analys
 
   if (options.provider === "openai") {
     if (!options.openaiApiKey) {
+      console.warn("[analyst] provider=openai but missing API key, using stub");
       return stub;
     }
 
@@ -182,11 +184,13 @@ export function createAnalystClient(options: CreateAnalystClientOptions): Analys
       usageBuffer
     });
 
+    console.log("[analyst] Created remote client (provider=openai, timeout=%dms, fallback=%s)", timeoutMs, fallbackToStub);
     return fallbackToStub ? wrapAnalystWithFallback(remote, stub) : remote;
   }
 
   if (options.provider === "openrouter") {
     if (!options.openrouterApiKey) {
+      console.warn("[analyst] provider=openrouter but missing API key, using stub");
       return stub;
     }
 
@@ -198,9 +202,11 @@ export function createAnalystClient(options: CreateAnalystClientOptions): Analys
       usageBuffer
     });
 
+    console.log("[analyst] Created remote client (provider=openrouter, model=%s, timeout=%dms, fallback=%s)", options.openrouterModel, timeoutMs, fallbackToStub);
     return fallbackToStub ? wrapAnalystWithFallback(remote, stub) : remote;
   }
 
+  console.warn("[analyst] Unsupported provider=%s, using stub", options.provider);
   return stub;
 }
 
@@ -391,6 +397,7 @@ export function createQueryStrategistClientFromEnv(
 ): QueryStrategistClient {
   const provider = parseProvider(overrides.provider ?? process.env.LLM_PROVIDER);
   if (provider === "stub") {
+    console.log("[query-strategist] LLM_PROVIDER=stub, using stub client");
     return createStubQueryStrategistClient();
   }
 
@@ -421,8 +428,11 @@ export function createQueryStrategistClient(options: CreateAnalystClientOptions)
   };
 
   if (options.provider !== "openrouter" || !options.openrouterApiKey) {
+    console.warn("[query-strategist] Missing openrouter config (provider=%s, hasKey=%s), using stub", options.provider, Boolean(options.openrouterApiKey));
     return stub;
   }
+
+  console.log("[query-strategist] Created remote client (model=%s, timeout=%dms, fallback=%s)", options.openrouterModel, timeoutMs, fallbackToStub);
 
   const remote: QueryStrategistClient = {
     provider: "openrouter",
@@ -923,6 +933,7 @@ export function createPlannerClientFromEnv(
 ): PlannerClient {
   const provider = parseProvider(overrides.provider ?? process.env.LLM_PROVIDER);
   if (provider === "stub") {
+    console.log("[planner] LLM_PROVIDER=stub, using stub client");
     return createStubPlannerClient();
   }
 
@@ -945,8 +956,11 @@ export function createPlannerClient(options: CreateAnalystClientOptions): Planne
   const usageBuffer = createUsageEventBuffer();
 
   if (options.provider !== "openrouter" || !options.openrouterApiKey) {
+    console.warn("[planner] Missing openrouter config (provider=%s, hasKey=%s), using stub", options.provider, Boolean(options.openrouterApiKey));
     return stub;
   }
+
+  console.log("[planner] Created remote client (model=%s, timeout=%dms, fallback=%s)", options.openrouterModel, timeoutMs, fallbackToStub);
 
   const remote: PlannerClient = {
     provider: "openrouter",
@@ -1186,6 +1200,7 @@ export function createReportComposerClientFromEnv(
 ): ReportComposerClient {
   const provider = parseProvider(overrides.provider ?? process.env.LLM_PROVIDER);
   if (provider === "stub") {
+    console.log("[report-composer] LLM_PROVIDER=stub, using stub client");
     return createStubReportComposerClient();
   }
 
@@ -1201,8 +1216,11 @@ export function createReportComposerClient(options: CreateAnalystClientOptions):
   const usageBuffer = createUsageEventBuffer();
 
   if (options.provider !== "openrouter" || !options.openrouterApiKey) {
+    console.warn("[report-composer] Missing openrouter config (provider=%s, hasKey=%s), using stub", options.provider, Boolean(options.openrouterApiKey));
     return stub;
   }
+
+  console.log("[report-composer] Created remote client (model=%s, timeout=%dms, fallback=%s)", options.openrouterModel, timeoutMs, fallbackToStub);
 
   const remote: ReportComposerClient = {
     provider: "openrouter",

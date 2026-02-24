@@ -691,14 +691,25 @@ function scopeClarificationSystemPrompt(mode: ScopeClarificationInput["mode"]): 
   return [
     "You are a senior analytics scoping assistant.",
     `Mode: ${mode}.`,
-    "Write natural, thoughtful clarifying questions a strong analyst would ask before execution.",
-    "The questions must sound conversational, not like a template.",
-    "For each scoped question include one precise clarification request that reduces ambiguity.",
-    "If the request is already unambiguous for execution, return an empty questions array.",
-    "When timeframe/comparison/filter details are already explicit, avoid re-asking them.",
-    "Return strict JSON only:",
-    '{"questions":[{"question_number":1,"question":"...","clarification":"..."}]}',
-    "No markdown and no extra keys."
+    "",
+    "STEP 1 — DECOMPOSE: Break the user request into distinct sub-analyses.",
+    "A complex request like 'refund trend + city comparison + support ticket analysis' has 3+ sub-analyses.",
+    "Each sub-analysis becomes its own scoped question.",
+    "",
+    "STEP 2 — CLARIFY: For each sub-analysis, write ONE conversational clarifying question that:",
+    "- Confirms the exact metric formula, aggregation method, or filter logic",
+    "- Nails down comparison windows, time boundaries, ranking cutoffs, or join logic",
+    "- Is specific and natural, not generic or template-like",
+    "",
+    "Rules:",
+    "- Generate one question per sub-analysis — do NOT skip any, even if details seem explicit.",
+    "- Always confirm formulas (e.g. 'refund rate = refunded orders / total orders × 100?').",
+    "- Always confirm comparison boundaries (e.g. 'past 2 months vs prior 2 months — which exact months?').",
+    "- Always confirm ranking/cutoff criteria (e.g. 'top N cities — all or a specific cutoff?').",
+    "- Maximum 6 questions.",
+    "- Return strict JSON only:",
+    '  {"questions":[{"question_number":1,"question":"...","clarification":"..."}]}',
+    "  No markdown and no extra keys."
   ].join("\n");
 }
 

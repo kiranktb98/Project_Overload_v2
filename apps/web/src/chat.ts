@@ -1528,6 +1528,7 @@ export async function handleChatTurn(input: {
 
     if (isScopeContinueChoice(command)) {
       nextState.prep_pending = false;
+      nextState.scope_clarification_pending = true;
       return {
         assistant_message: "Sounds good. Continue scoping and tell me what to refine before we prepare data.",
         state: nextState
@@ -1550,6 +1551,7 @@ export async function handleChatTurn(input: {
 
     if (isScopeContinueChoice(command)) {
       nextState.scope_pending = false;
+      nextState.scope_clarification_pending = true;
       return {
         assistant_message: "Sounds good. Continue scoping and tell me what to refine before we run.",
         state: nextState

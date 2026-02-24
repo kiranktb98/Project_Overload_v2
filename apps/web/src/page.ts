@@ -1854,7 +1854,8 @@ export function renderChatPage(): string {
           if (
             hasAnsweredScopeItems &&
             state.prep_complete !== true &&
-            state.prep_pending !== true
+            state.prep_pending !== true &&
+            state.scope_clarification_pending !== true
           ) {
             return {
               kind: "prep",
