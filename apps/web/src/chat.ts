@@ -6640,6 +6640,13 @@ function buildContractPayload(state: ChatState): ReportContractRecord {
     metric_definitions: metricDefinitions,
     dimension_ids: draft.dimension_ids,
     insight_mode: draft.insight_mode ?? "business",
+    scope_clarifications: state.scope_questions
+      .filter((q) => q.answer && q.answer.trim().length > 0)
+      .map((q) => ({
+        question_number: q.question_number,
+        question: q.question,
+        answer: q.answer!.trim()
+      })),
     guardrails: {
       evidence_row_cap: 200,
       max_batches: 5,

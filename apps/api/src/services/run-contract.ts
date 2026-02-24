@@ -282,6 +282,15 @@ export async function prepareReportContractData(input: {
       ).join("\n")
     : "";
 
+  // Build scope clarifications context if available
+  const scopeClarifications = input.contract.scope_clarifications ?? [];
+  const scopeContext = scopeClarifications.length > 0
+    ? "\n\nSCOPED QUESTIONS (you MUST generate queries for EACH of these):\n" +
+      scopeClarifications.map((sc) =>
+        `Q${sc.question_number}: ${sc.question}\n   Clarification: ${sc.answer}`
+      ).join("\n")
+    : "";
+
   const strategy = await input.query_strategist.planQueries({
     catalog_summary: input.catalog_summary || "No catalog available.",
     report_goal: [
@@ -289,7 +298,7 @@ export async function prepareReportContractData(input: {
       `Mode: ${insightMode}`,
       `Audience: ${input.contract.audience}`,
       `Contract SQL: ${input.contract.sql_template}`
-    ].join(" | ") + metricDefsContext,
+    ].join(" | ") + metricDefsContext + scopeContext,
     audience: input.contract.audience,
     insight_mode: insightMode,
     metric_ids: input.contract.metric_ids,

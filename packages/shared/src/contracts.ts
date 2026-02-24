@@ -58,6 +58,15 @@ export const ReportContractSchema = z.object({
   approved_at: z.string().datetime().nullable().optional(),
   locked_by: z.string().min(1).nullable().optional(),
   locked_at: z.string().datetime().nullable().optional(),
+  scope_clarifications: z
+    .array(
+      z.object({
+        question_number: z.number().int().min(1),
+        question: z.string().min(1),
+        answer: z.string().min(1)
+      })
+    )
+    .default([]),
   kpi_watchlist: z.array(KpiWatchlistItemSchema).default([]),
   guardrails: ReportGuardrailsSchema
 });

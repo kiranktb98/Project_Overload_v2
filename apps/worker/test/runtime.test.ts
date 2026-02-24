@@ -202,6 +202,7 @@ function createContract(contractId: string, scheduleCron: string | null): Report
     approved_at: "2026-01-01T00:00:00.000Z",
     locked_by: "test",
     locked_at: "2026-01-01T00:00:00.000Z",
+    scope_clarifications: [],
     kpi_watchlist: [],
     guardrails: {
       evidence_row_cap: 200,
