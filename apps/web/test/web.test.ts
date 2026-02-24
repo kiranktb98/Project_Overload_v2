@@ -2460,7 +2460,7 @@ describe("web chat interface", () => {
     await app.close();
   });
 
-  it("requires per-question clarifications before enabling data preparation", async () => {
+  it("answers all scope questions in one message when LLM resolver is unavailable", async () => {
     const router: QueryRouterClient = {
       provider: "openrouter",
       mode: "provider",
@@ -2570,33 +2570,22 @@ describe("web chat interface", () => {
     expect(first.json().state.scope_clarification_pending).toBe(true);
     expect(first.json().state.scope_questions.length).toBeGreaterThanOrEqual(2);
 
+    // Without an LLM resolver, the safety net assigns the full message
+    // to all unanswered questions so the user is never stuck
     const second = await app.inject({
       method: "POST",
       url: "/api/chat",
       payload: {
-        message: "Q1: Use order_date and last 6 full calendar months.",
+        message: "Use order_date and last 6 full calendar months. Compare against the previous 6 full months and include refunded status only.",
         state: first.json().state
       }
     });
 
     expect(second.statusCode).toBe(200);
-    expect(second.json().state.scope_clarification_pending).toBe(true);
-    expect(second.json().state.prep_pending).toBe(false);
-
-    const third = await app.inject({
-      method: "POST",
-      url: "/api/chat",
-      payload: {
-        message: "Q2: Compare against the previous 6 full months and include refunded status only.",
-        state: second.json().state
-      }
-    });
-
-    expect(third.statusCode).toBe(200);
-    expect(third.json().state.scope_clarification_pending).toBe(false);
-    expect(third.json().state.prep_pending).toBe(true);
-    expect(third.json().assistant_message).toContain("Scope clarifications captured for all questions.");
-    expect(third.json().assistant_message).toContain("Ready to prepare data for:");
+    expect(second.json().state.scope_clarification_pending).toBe(false);
+    expect(second.json().state.prep_pending).toBe(true);
+    expect(second.json().assistant_message).toContain("Scope clarifications captured for all questions.");
+    expect(second.json().assistant_message).toContain("Ready to prepare data for:");
 
     await app.close();
   });

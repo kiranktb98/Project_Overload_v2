@@ -3043,12 +3043,19 @@ async function applyScopeClarificationAnswersWithLlm(
   }
 
   if (!queryRouter?.resolve_scope_answers) {
-    const fallback = applyScopeClarificationAnswers(state, rawMessage);
+    console.warn("[scope-resolver] No LLM resolver available — assigning full message to all unanswered questions");
+    let count = 0;
+    for (const entry of state.scope_questions) {
+      if (!entry.answer || entry.answer.trim().length === 0) {
+        entry.answer = rawMessage.trim();
+        count += 1;
+      }
+    }
     applyMetricDefinitionAnswersFromScope(state);
-    return fallback;
+    return { answered_count: count, all_answered: true };
   }
 
-  let llmAnsweredCount = 0;
+  let answeredCount = 0;
 
   try {
     const response = await queryRouter.resolve_scope_answers({
@@ -3072,35 +3079,33 @@ async function applyScopeClarificationAnswersWithLlm(
       if (!target) {
         continue;
       }
-      const normalized = normalizeScopeAnswer(assignment.answer ?? "");
+      const normalized = (assignment.answer ?? "").replace(/\s+/g, " ").trim();
       if (normalized.length === 0) {
         continue;
       }
       if (!target.answer || target.answer.trim().length === 0) {
-        llmAnsweredCount += 1;
+        answeredCount += 1;
       }
       target.answer = normalized;
     }
   } catch (error) {
-    console.error("[scope-resolver] LLM call failed, using deterministic fallback:", error instanceof Error ? error.message : error);
+    console.error("[scope-resolver] LLM call failed:", error instanceof Error ? error.message : error);
   }
 
-  // Always run deterministic parser as second pass for any remaining unanswered questions
-  const hasUnanswered = state.scope_questions.some(
-    (entry) => !entry.answer || entry.answer.trim().length === 0
-  );
-  if (hasUnanswered) {
-    const deterministicResult = applyScopeClarificationAnswers(state, rawMessage);
-    llmAnsweredCount += deterministicResult.answered_count;
+  // Safety net: if any questions are still unanswered after the LLM pass
+  // (either it returned partial results or failed), assign the full user
+  // message so the user is never stuck in a re-ask loop.
+  for (const entry of state.scope_questions) {
+    if (!entry.answer || entry.answer.trim().length === 0) {
+      entry.answer = rawMessage.trim();
+      answeredCount += 1;
+    }
   }
 
   applyMetricDefinitionAnswersFromScope(state);
-  const allAnswered = state.scope_questions.every(
-    (entry) => Boolean(entry.answer && entry.answer.trim().length > 0)
-  );
   return {
-    answered_count: llmAnsweredCount,
-    all_answered: allAnswered
+    answered_count: answeredCount,
+    all_answered: true
   };
 }
 
