@@ -3046,6 +3046,8 @@ async function applyScopeClarificationAnswersWithLlm(
     return fallback;
   }
 
+  let llmAnsweredCount = 0;
+
   try {
     const response = await queryRouter.resolve_scope_answers({
       user_message: rawMessage,
@@ -3061,7 +3063,6 @@ async function applyScopeClarificationAnswersWithLlm(
         .map((turn) => ({ role: turn.role, content: turn.content }))
     });
 
-    let answeredCount = 0;
     for (const assignment of response.assignments) {
       const target = state.scope_questions.find(
         (entry) => entry.question_number === assignment.question_number
@@ -3074,30 +3075,31 @@ async function applyScopeClarificationAnswersWithLlm(
         continue;
       }
       if (!target.answer || target.answer.trim().length === 0) {
-        answeredCount += 1;
+        llmAnsweredCount += 1;
       }
       target.answer = normalized;
     }
-
-    if (answeredCount === 0) {
-      const fallback = applyScopeClarificationAnswers(state, rawMessage);
-      applyMetricDefinitionAnswersFromScope(state);
-      return fallback;
-    }
-
-    applyMetricDefinitionAnswersFromScope(state);
-    const allAnswered = state.scope_questions.every(
-      (entry) => Boolean(entry.answer && entry.answer.trim().length > 0)
-    );
-    return {
-      answered_count: answeredCount,
-      all_answered: allAnswered
-    };
-  } catch {
-    const fallback = applyScopeClarificationAnswers(state, rawMessage);
-    applyMetricDefinitionAnswersFromScope(state);
-    return fallback;
+  } catch (error) {
+    console.error("[scope-resolver] LLM call failed, using deterministic fallback:", error instanceof Error ? error.message : error);
   }
+
+  // Always run deterministic parser as second pass for any remaining unanswered questions
+  const hasUnanswered = state.scope_questions.some(
+    (entry) => !entry.answer || entry.answer.trim().length === 0
+  );
+  if (hasUnanswered) {
+    const deterministicResult = applyScopeClarificationAnswers(state, rawMessage);
+    llmAnsweredCount += deterministicResult.answered_count;
+  }
+
+  applyMetricDefinitionAnswersFromScope(state);
+  const allAnswered = state.scope_questions.every(
+    (entry) => Boolean(entry.answer && entry.answer.trim().length > 0)
+  );
+  return {
+    answered_count: llmAnsweredCount,
+    all_answered: allAnswered
+  };
 }
 
 function applyScopeClarificationAnswers(
