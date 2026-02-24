@@ -257,7 +257,8 @@ function wrapAnalystWithFallback(remote: AnalystClient, fallback: AnalystClient)
     async analyzeBatch(input: AnalystInput): Promise<BatchAnalysis> {
       try {
         return await remote.analyzeBatch(input);
-      } catch {
+      } catch (error) {
+        console.error("[analyst] LLM call failed, falling back to stub:", error instanceof Error ? error.message : error);
         return fallback.analyzeBatch(input);
       }
     },
@@ -288,6 +289,20 @@ function parseBatchAnalysisPayload(payload: unknown): BatchAnalysis {
 // Query Strategist Client
 // ---------------------------------------------------------------------------
 
+/** Parse scoped questions from report_goal text (format: Q1: question\n   Clarification: answer) */
+function parseScopedQuestions(reportGoal: string): Array<{ question: string; answer: string }> {
+  const results: Array<{ question: string; answer: string }> = [];
+  const pattern = /Q\d+:\s*(.+?)(?:\n\s*Clarification:\s*(.+?))?(?=\nQ\d+:|$)/gs;
+  let match;
+  while ((match = pattern.exec(reportGoal)) !== null) {
+    results.push({
+      question: match[1].trim(),
+      answer: (match[2] ?? "").trim()
+    });
+  }
+  return results;
+}
+
 export function createStubQueryStrategistClient(): QueryStrategistClient {
   return {
     provider: "stub",
@@ -296,50 +311,55 @@ export function createStubQueryStrategistClient(): QueryStrategistClient {
         ? input.allowed_relations
         : ["public.unknown_table"];
       const mainTable = tables[0];
+      const dimensions = input.dimension_ids.length > 0
+        ? input.dimension_ids.map((d) => d.replace(/^dim_/, ""))
+        : [];
 
       if (input.insight_mode === "data") {
         return {
           queries: [
             {
               question: "What is the data quality and completeness?",
-              sql: `SELECT * FROM ${mainTable} LIMIT 200`,
-              purpose: "Assess data completeness, null rates, and value distributions"
+              sql: `SELECT COUNT(*) AS total_rows, COUNT(DISTINCT *) AS distinct_rows FROM ${mainTable} LIMIT 50`,
+              purpose: "Assess data completeness and row counts"
             }
           ]
         };
       }
 
+      // Try to extract scoped questions from report_goal
+      const scopedQuestions = parseScopedQuestions(input.report_goal);
       const queries: QueryStrategyOutput["queries"] = [];
 
-      if (input.metric_ids.length > 0 && input.dimension_ids.length > 0) {
-        // Case 1 demo: group metric + dimension queries for combined analysis
-        queries.push({
-          question: `What are the key trends for ${input.metric_ids.join(", ")}?`,
-          sql: `SELECT * FROM ${mainTable} LIMIT 200`,
-          purpose: "Identify primary metric trends and patterns",
-          group_id: "overview"
-        });
-        queries.push({
-          question: `How do metrics break down by ${input.dimension_ids.join(", ")}?`,
-          sql: `SELECT * FROM ${mainTable} LIMIT 200`,
-          purpose: "Analyze dimensional breakdown",
-          group_id: "overview"
-        });
-      } else {
-        // Case 2: standalone queries
-        if (input.metric_ids.length > 0) {
+      if (scopedQuestions.length > 0) {
+        // Generate one aggregation query per scoped question
+        for (let i = 0; i < scopedQuestions.length; i++) {
+          const sq = scopedQuestions[i];
+          const groupCols = dimensions.length > 0 ? dimensions.join(", ") : "*";
+          const groupBy = dimensions.length > 0 ? `GROUP BY ${dimensions.join(", ")}` : "";
           queries.push({
-            question: `What are the key trends for ${input.metric_ids.join(", ")}?`,
-            sql: `SELECT * FROM ${mainTable} LIMIT 200`,
-            purpose: "Identify primary metric trends and patterns"
+            question: sq.question,
+            sql: `SELECT ${groupCols}, COUNT(*) AS count FROM ${mainTable} ${groupBy} ORDER BY count DESC LIMIT 50`,
+            purpose: sq.answer.length > 0 ? `Clarification: ${sq.answer}` : "Aggregated summary for scoped question",
+            group_id: `scope_q${i + 1}`
           });
         }
-
-        if (input.dimension_ids.length > 0) {
+      } else if (input.metric_ids.length > 0 || dimensions.length > 0) {
+        // Fallback: generate aggregation queries based on metrics/dimensions
+        if (input.metric_ids.length > 0) {
+          const groupBy = dimensions.length > 0 ? `GROUP BY ${dimensions.join(", ")}` : "";
+          const selectCols = dimensions.length > 0 ? `${dimensions.join(", ")}, ` : "";
           queries.push({
-            question: `How do metrics break down by ${input.dimension_ids.join(", ")}?`,
-            sql: `SELECT * FROM ${mainTable} LIMIT 200`,
-            purpose: "Analyze dimensional breakdown"
+            question: `What are the key trends for ${input.metric_ids.join(", ")}?`,
+            sql: `SELECT ${selectCols}COUNT(*) AS count FROM ${mainTable} ${groupBy} ORDER BY count DESC LIMIT 50`,
+            purpose: "Summarized metric trends"
+          });
+        }
+        if (dimensions.length > 0) {
+          queries.push({
+            question: `How do metrics break down by ${dimensions.join(", ")}?`,
+            sql: `SELECT ${dimensions.join(", ")}, COUNT(*) AS count FROM ${mainTable} GROUP BY ${dimensions.join(", ")} ORDER BY count DESC LIMIT 50`,
+            purpose: "Dimensional breakdown summary"
           });
         }
       }
@@ -347,8 +367,8 @@ export function createStubQueryStrategistClient(): QueryStrategistClient {
       if (queries.length === 0) {
         queries.push({
           question: "What are the key business insights from this data?",
-          sql: `SELECT * FROM ${mainTable} LIMIT 200`,
-          purpose: "General business overview"
+          sql: `SELECT COUNT(*) AS total_rows FROM ${mainTable} LIMIT 50`,
+          purpose: "General business overview — aggregated summary"
         });
       }
 
@@ -494,7 +514,8 @@ function wrapStrategistWithFallback(
     async planQueries(input: QueryStrategyInput): Promise<QueryStrategyOutput> {
       try {
         return await remote.planQueries(input);
-      } catch {
+      } catch (error) {
+        console.error("[query-strategist] LLM call failed, falling back to stub:", error instanceof Error ? error.message : error);
         return fallback.planQueries(input);
       }
     },
@@ -510,7 +531,8 @@ function wrapStrategistWithFallback(
 
       try {
         return await remote.compileSql(input);
-      } catch {
+      } catch (error) {
+        console.error("[query-strategist] compileSql failed, falling back:", error instanceof Error ? error.message : error);
         if (fallback.compileSql) {
           return fallback.compileSql(input);
         }
@@ -1008,14 +1030,16 @@ function wrapPlannerWithFallback(
     async explore(input: PlannerInput): Promise<PlannerExploration> {
       try {
         return await remote.explore(input);
-      } catch {
+      } catch (error) {
+        console.error("[planner] explore failed, falling back to stub:", error instanceof Error ? error.message : error);
         return fallback.explore(input);
       }
     },
     async plan(input: PlannerInput & { exploration_results: string }): Promise<PlannerOutput> {
       try {
         return await remote.plan(input);
-      } catch {
+      } catch (error) {
+        console.error("[planner] plan failed, falling back to stub:", error instanceof Error ? error.message : error);
         return fallback.plan(input);
       }
     },
@@ -1231,7 +1255,8 @@ function wrapComposerWithFallback(
     async composeReport(input: ReportComposerInput): Promise<string> {
       try {
         return await remote.composeReport(input);
-      } catch {
+      } catch (error) {
+        console.error("[report-composer] LLM call failed, falling back to stub:", error instanceof Error ? error.message : error);
         return fallback.composeReport(input);
       }
     },

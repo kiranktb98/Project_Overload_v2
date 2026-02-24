@@ -113,6 +113,19 @@ export const ChatStateSchema = z.object({
     })
     .nullable()
     .default(null),
+  single_query_log: z
+    .array(
+      z.object({
+        query_id: z.string().min(1),
+        question: z.string().min(1),
+        governed_sql: z.string().min(1),
+        row_count: z.number().int().min(0),
+        elapsed_ms: z.number().int().min(0),
+        created_at: z.string().datetime()
+      })
+    )
+    .max(20)
+    .default([]),
   planner_summary: z.string().nullable().default(null),
   preparation_summary: z.string().nullable().default(null),
   prepared_payloads: z.array(
@@ -503,6 +516,7 @@ export function createInitialChatState(): ChatState {
     pending_query_limit: null,
     pending_single_query_request: null,
     last_single_query_snapshot: null,
+    single_query_log: [],
     planner_summary: null,
     preparation_summary: null,
     prepared_payloads: [],
@@ -587,6 +601,7 @@ export function parseChatState(value: unknown): ChatState {
     pending_query_limit: parsed.data.pending_query_limit ?? null,
     pending_single_query_request: parsed.data.pending_single_query_request ?? null,
     last_single_query_snapshot: parsed.data.last_single_query_snapshot ?? null,
+    single_query_log: [...(parsed.data.single_query_log ?? [])],
     planner_summary: parsed.data.planner_summary ?? null,
     preparation_summary: parsed.data.preparation_summary ?? null,
     prepared_payloads: [...parsed.data.prepared_payloads],
@@ -1855,6 +1870,17 @@ async function executeNaturalSimpleQuery(
       elapsed_ms: elapsedMs,
       warnings: warningLines
     });
+
+    // Log to single_query_log for the Queries modal
+    const logEntry = {
+      query_id: queryId,
+      question: options.user_message ?? normalizedRequest,
+      governed_sql: result.governed_sql,
+      row_count: result.row_count,
+      elapsed_ms: elapsedMs,
+      created_at: new Date().toISOString()
+    };
+    nextState.single_query_log = [...(nextState.single_query_log ?? []), logEntry].slice(-20);
 
     if (naturalNarration) {
       nextState.last_single_query_snapshot = {
@@ -3315,6 +3341,17 @@ async function executeLlmRoutedSingleQuery(
       elapsed_ms: elapsedMs,
       warnings: warningLines
     });
+
+    // Log to single_query_log for the Queries modal
+    const logEntry = {
+      query_id: queryId,
+      question: userMessage,
+      governed_sql: result.governed_sql || sql,
+      row_count: result.row_count,
+      elapsed_ms: elapsedMs,
+      created_at: new Date().toISOString()
+    };
+    nextState.single_query_log = [...(nextState.single_query_log ?? []), logEntry].slice(-20);
 
     if (naturalNarration) {
       nextState.last_single_query_snapshot = {

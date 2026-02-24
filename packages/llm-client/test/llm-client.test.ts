@@ -183,7 +183,7 @@ describe("stub query strategist", () => {
     }
   });
 
-  it("returns grouped queries when both metric_ids and dimension_ids are set (Case 1)", async () => {
+  it("returns aggregation queries when both metric_ids and dimension_ids are set", async () => {
     const client = createStubQueryStrategistClient();
     const result = await client.planQueries({
       ...baseInput,
@@ -191,9 +191,12 @@ describe("stub query strategist", () => {
       dimension_ids: ["region"]
     });
 
-    expect(result.queries.length).toBe(2);
-    expect(result.queries[0].group_id).toBe("overview");
-    expect(result.queries[1].group_id).toBe("overview");
+    expect(result.queries.length).toBeGreaterThanOrEqual(1);
+    // Stub now generates aggregation queries (COUNT/GROUP BY) instead of SELECT *
+    for (const q of result.queries) {
+      expect(q.sql).toContain("COUNT(*)");
+      expect(q.sql).not.toContain("SELECT *");
+    }
   });
 
   it("returns data quality query for data insight mode", async () => {

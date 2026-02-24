@@ -2173,11 +2173,17 @@ export function renderChatPage(): string {
           return [];
         }
 
+        function collectSingleQueries(chat) {
+          if (!chat || !chat.state || !Array.isArray(chat.state.single_query_log)) { return []; }
+          return chat.state.single_query_log;
+        }
+
         function updateQueriesBtn() {
           if (!queriesBarBtnEl) { return; }
           const chat = getActiveChat();
           const runs = collectPreparedPayloads(chat);
-          const totalQuestions = runs.reduce(function (sum, m) { return sum + m.prepared_payloads.length; }, 0);
+          const singleQueries = collectSingleQueries(chat);
+          const totalQuestions = runs.reduce(function (sum, m) { return sum + m.prepared_payloads.length; }, 0) + singleQueries.length;
           if (totalQuestions === 0) {
             queriesBarBtnEl.textContent = "Queries";
             queriesBarBtnEl.classList.remove("has-queries");
@@ -2192,7 +2198,9 @@ export function renderChatPage(): string {
           queriesModalBodyEl.innerHTML = "";
           const chat = getActiveChat();
           const runs = collectPreparedPayloads(chat);
-          const totalQ = runs.reduce(function (sum, m) { return sum + m.prepared_payloads.length; }, 0);
+          const singleQueries = collectSingleQueries(chat);
+          const prepQ = runs.reduce(function (sum, m) { return sum + m.prepared_payloads.length; }, 0);
+          const totalQ = prepQ + singleQueries.length;
           if (queriesModalTitleEl) {
             queriesModalTitleEl.textContent = "Queries" + (totalQ > 0 ? " \u00B7 " + totalQ + " total" : "");
           }
@@ -2207,67 +2215,52 @@ export function renderChatPage(): string {
             return;
           }
 
-          const table = document.createElement("table");
-          table.className = "queries-table";
+          // --- Single queries section ---
+          if (singleQueries.length > 0) {
+            const sectionLabel = document.createElement("div");
+            sectionLabel.style.cssText = "padding:10px 14px 4px;font-size:0.72rem;font-weight:600;color:#7caad0;text-transform:uppercase;letter-spacing:0.04em;";
+            sectionLabel.textContent = "Single Queries (" + singleQueries.length + ")";
+            queriesModalBodyEl.appendChild(sectionLabel);
 
-          const thead = document.createElement("thead");
-          const headerRow = document.createElement("tr");
-          ["#", "Question / Why it ran", "SQL Query", "Sample Output"].forEach(function (h) {
-            const th = document.createElement("th");
-            th.textContent = h;
-            headerRow.appendChild(th);
-          });
-          thead.appendChild(headerRow);
-          table.appendChild(thead);
-
-          const tbody = document.createElement("tbody");
-          var globalIdx = 1;
-
-          for (var ri = 0; ri < runs.length; ri++) {
-            var entry = runs[ri];
-            if (runs.length > 1) {
-              const groupRow = document.createElement("tr");
-              groupRow.className = "qt-run-group";
-              const groupTd = document.createElement("td");
-              groupTd.colSpan = 4;
-              groupTd.className = "qt-run-label";
-              groupTd.textContent = "Run " + (ri + 1) + " \u00B7 " + entry.prepared_payloads.length + " " + (entry.prepared_payloads.length === 1 ? "query" : "queries");
-              groupRow.appendChild(groupTd);
-              tbody.appendChild(groupRow);
-            }
-            for (var qi = 0; qi < entry.prepared_payloads.length; qi++) {
-              var p = entry.prepared_payloads[qi];
+            const sTable = document.createElement("table");
+            sTable.className = "queries-table";
+            const sThead = document.createElement("thead");
+            const sHr = document.createElement("tr");
+            ["#", "Question", "SQL Query", "Rows / Time"].forEach(function (h) {
+              const th = document.createElement("th");
+              th.textContent = h;
+              sHr.appendChild(th);
+            });
+            sThead.appendChild(sHr);
+            sTable.appendChild(sThead);
+            const sTbody = document.createElement("tbody");
+            for (var si = 0; si < singleQueries.length; si++) {
+              var sq = singleQueries[si];
               const row = document.createElement("tr");
 
-              // # column
               const tdId = document.createElement("td");
               tdId.className = "qt-id";
-              tdId.textContent = String(globalIdx++);
+              tdId.textContent = String(si + 1);
               row.appendChild(tdId);
 
-              // Question / Why it ran
-              const tdWhy = document.createElement("td");
-              tdWhy.className = "qt-why";
-              const qTitle = document.createElement("div");
-              qTitle.className = "qt-question";
-              qTitle.textContent = p.question || "";
-              tdWhy.appendChild(qTitle);
-              if (p.purpose) {
-                const qPurpose = document.createElement("div");
-                qPurpose.className = "qt-purpose";
-                qPurpose.textContent = p.purpose;
-                tdWhy.appendChild(qPurpose);
-              }
-              row.appendChild(tdWhy);
+              const tdQ = document.createElement("td");
+              tdQ.className = "qt-why";
+              const qDiv = document.createElement("div");
+              qDiv.className = "qt-question";
+              qDiv.textContent = sq.question || "";
+              tdQ.appendChild(qDiv);
+              const idDiv = document.createElement("div");
+              idDiv.className = "qt-purpose";
+              idDiv.textContent = "ID: " + (sq.query_id || "");
+              tdQ.appendChild(idDiv);
+              row.appendChild(tdQ);
 
-              // SQL Query
               const tdSql = document.createElement("td");
               tdSql.className = "qt-sql";
-              const sqls = p.preparation_sqls || [];
-              if (sqls.length > 0) {
+              if (sq.governed_sql) {
                 const pre = document.createElement("pre");
                 pre.className = "qt-sql-code";
-                pre.textContent = sqls[0].trim();
+                pre.textContent = sq.governed_sql.trim();
                 tdSql.appendChild(pre);
               } else {
                 tdSql.style.color = "#4a6080";
@@ -2275,48 +2268,138 @@ export function renderChatPage(): string {
               }
               row.appendChild(tdSql);
 
-              // Sample Output
-              const tdOutput = document.createElement("td");
-              tdOutput.className = "qt-output";
-              const sampleRows = p.sample_rows || [];
-              if (sampleRows.length > 0) {
-                const cols = Object.keys(sampleRows[0]);
-                const miniTable = document.createElement("table");
-                miniTable.className = "qc-sample-table";
-                const mThead = document.createElement("thead");
-                const mHr = document.createElement("tr");
-                cols.forEach(function (col) {
-                  const th = document.createElement("th");
-                  th.textContent = col;
-                  mHr.appendChild(th);
-                });
-                mThead.appendChild(mHr);
-                miniTable.appendChild(mThead);
-                const mTbody = document.createElement("tbody");
-                sampleRows.forEach(function (rowData) {
-                  const tr = document.createElement("tr");
-                  cols.forEach(function (col) {
-                    const td = document.createElement("td");
-                    const val = rowData[col];
-                    td.textContent = val == null ? "" : String(val);
-                    tr.appendChild(td);
-                  });
-                  mTbody.appendChild(tr);
-                });
-                miniTable.appendChild(mTbody);
-                tdOutput.appendChild(miniTable);
-              } else {
-                tdOutput.style.color = "#4a6080";
-                tdOutput.textContent = "\u2014";
-              }
-              row.appendChild(tdOutput);
+              const tdMeta = document.createElement("td");
+              tdMeta.className = "qt-output";
+              tdMeta.textContent = (sq.row_count != null ? sq.row_count + " rows" : "") + (sq.elapsed_ms != null ? " \u00B7 " + sq.elapsed_ms + "ms" : "");
+              row.appendChild(tdMeta);
 
-              tbody.appendChild(row);
+              sTbody.appendChild(row);
             }
+            sTable.appendChild(sTbody);
+            queriesModalBodyEl.appendChild(sTable);
           }
 
-          table.appendChild(tbody);
-          queriesModalBodyEl.appendChild(table);
+          // --- Data prep queries section ---
+          if (prepQ > 0) {
+            if (singleQueries.length > 0) {
+              const sectionLabel = document.createElement("div");
+              sectionLabel.style.cssText = "padding:14px 14px 4px;font-size:0.72rem;font-weight:600;color:#7caad0;text-transform:uppercase;letter-spacing:0.04em;";
+              sectionLabel.textContent = "Data Preparation Queries (" + prepQ + ")";
+              queriesModalBodyEl.appendChild(sectionLabel);
+            }
+
+            const table = document.createElement("table");
+            table.className = "queries-table";
+
+            const thead = document.createElement("thead");
+            const headerRow = document.createElement("tr");
+            ["#", "Question / Why it ran", "SQL Query", "Sample Output"].forEach(function (h) {
+              const th = document.createElement("th");
+              th.textContent = h;
+              headerRow.appendChild(th);
+            });
+            thead.appendChild(headerRow);
+            table.appendChild(thead);
+
+            const tbody = document.createElement("tbody");
+            var globalIdx = 1;
+
+            for (var ri = 0; ri < runs.length; ri++) {
+              var entry = runs[ri];
+              if (runs.length > 1) {
+                const groupRow = document.createElement("tr");
+                groupRow.className = "qt-run-group";
+                const groupTd = document.createElement("td");
+                groupTd.colSpan = 4;
+                groupTd.className = "qt-run-label";
+                groupTd.textContent = "Run " + (ri + 1) + " \u00B7 " + entry.prepared_payloads.length + " " + (entry.prepared_payloads.length === 1 ? "query" : "queries");
+                groupRow.appendChild(groupTd);
+                tbody.appendChild(groupRow);
+              }
+              for (var qi = 0; qi < entry.prepared_payloads.length; qi++) {
+                var p = entry.prepared_payloads[qi];
+                const row = document.createElement("tr");
+
+                // # column
+                const tdId = document.createElement("td");
+                tdId.className = "qt-id";
+                tdId.textContent = String(globalIdx++);
+                row.appendChild(tdId);
+
+                // Question / Why it ran
+                const tdWhy = document.createElement("td");
+                tdWhy.className = "qt-why";
+                const qTitle = document.createElement("div");
+                qTitle.className = "qt-question";
+                qTitle.textContent = p.question || "";
+                tdWhy.appendChild(qTitle);
+                if (p.purpose) {
+                  const qPurpose = document.createElement("div");
+                  qPurpose.className = "qt-purpose";
+                  qPurpose.textContent = p.purpose;
+                  tdWhy.appendChild(qPurpose);
+                }
+                row.appendChild(tdWhy);
+
+                // SQL Query
+                const tdSql = document.createElement("td");
+                tdSql.className = "qt-sql";
+                const sqls = p.preparation_sqls || [];
+                if (sqls.length > 0) {
+                  const pre = document.createElement("pre");
+                  pre.className = "qt-sql-code";
+                  pre.textContent = sqls[0].trim();
+                  tdSql.appendChild(pre);
+                } else {
+                  tdSql.style.color = "#4a6080";
+                  tdSql.textContent = "\u2014";
+                }
+                row.appendChild(tdSql);
+
+                // Sample Output
+                const tdOutput = document.createElement("td");
+                tdOutput.className = "qt-output";
+                const sampleRows = p.sample_rows || [];
+                if (sampleRows.length > 0) {
+                  const cols = Object.keys(sampleRows[0]);
+                  const miniTable = document.createElement("table");
+                  miniTable.className = "qc-sample-table";
+                  const mThead = document.createElement("thead");
+                  const mHr = document.createElement("tr");
+                  cols.forEach(function (col) {
+                    const th = document.createElement("th");
+                    th.textContent = col;
+                    mHr.appendChild(th);
+                  });
+                  mThead.appendChild(mHr);
+                  miniTable.appendChild(mThead);
+                  const mTbody = document.createElement("tbody");
+                  sampleRows.forEach(function (rowData) {
+                    const tr = document.createElement("tr");
+                    cols.forEach(function (col) {
+                      const td = document.createElement("td");
+                      const val = rowData[col];
+                      td.textContent = val == null ? "" : String(val);
+                      tr.appendChild(td);
+                    });
+                    mTbody.appendChild(tr);
+                  });
+                  miniTable.appendChild(mTbody);
+                  tdOutput.appendChild(miniTable);
+                } else {
+                  tdOutput.style.color = "#4a6080";
+                  tdOutput.textContent = "\u2014";
+                }
+                row.appendChild(tdOutput);
+
+                tbody.appendChild(row);
+              }
+            }
+
+            table.appendChild(tbody);
+            queriesModalBodyEl.appendChild(table);
+          }
+
           queriesModalEl.classList.add("open");
           queriesModalBackdropEl.style.display = "block";
         }

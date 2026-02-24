@@ -43,6 +43,7 @@ const TURN_INPUT: ConversationTurnInput = {
     pending_query_limit: null,
     pending_single_query_request: null,
     last_single_query_snapshot: null,
+    single_query_log: [],
     planner_summary: null,
     preparation_summary: null,
     prepared_payloads: [],
