@@ -558,13 +558,12 @@ export function renderGlobalConfigPage(): string {
                   <th>Key</th>
                   <th>Display Name</th>
                   <th>Definition</th>
-                  <th>Type</th>
-                  <th>Source Columns</th>
+                  <th>Filters</th>
                   <th></th>
                 </tr>
               </thead>
               <tbody id="metric-tbody">
-                <tr><td colspan="6" class="empty-state">No metric definitions yet. Click "+ Add Metric" to create one.</td></tr>
+                <tr><td colspan="5" class="empty-state">No metric definitions yet. Click "+ Add Metric" to create one.</td></tr>
               </tbody>
             </table>
 
@@ -584,18 +583,9 @@ export function renderGlobalConfigPage(): string {
                 <label for="mf-def">Definition (how to calculate this metric)</label>
                 <input type="text" id="mf-def" placeholder="e.g. SUM(order_amount) for all completed orders" />
               </div>
-              <div class="form-row">
-                <div class="form-group">
-                  <label for="mf-type">Source Type</label>
-                  <select id="mf-type">
-                    <option value="column">Column (direct from a column)</option>
-                    <option value="derived">Derived (computed/formula)</option>
-                  </select>
-                </div>
-                <div class="form-group">
-                  <label for="mf-cols">Source Columns (comma-separated)</label>
-                  <input type="text" id="mf-cols" placeholder="e.g. orders.amount, orders.status" />
-                </div>
+              <div class="form-group" style="margin-bottom:10px">
+                <label for="mf-filters">Filters (auto-applied when this metric is used)</label>
+                <input type="text" id="mf-filters" placeholder="e.g. status = 'completed' AND refund_amount > 0" />
               </div>
               <div class="form-actions">
                 <button class="btn-primary" id="mf-save" type="button">Save Metric</button>
@@ -663,8 +653,7 @@ export function renderGlobalConfigPage(): string {
         const mfKey = document.getElementById("mf-key");
         const mfName = document.getElementById("mf-name");
         const mfDef = document.getElementById("mf-def");
-        const mfType = document.getElementById("mf-type");
-        const mfCols = document.getElementById("mf-cols");
+        const mfFilters = document.getElementById("mf-filters");
         const mfSave = document.getElementById("mf-save");
         const mfCancel = document.getElementById("mf-cancel");
 
@@ -672,17 +661,16 @@ export function renderGlobalConfigPage(): string {
 
         function renderMetrics() {
           if (metrics.length === 0) {
-            metricsTbody.innerHTML = '<tr><td colspan="6" class="empty-state">No metric definitions yet. Click "+ Add Metric" to create one.</td></tr>';
+            metricsTbody.innerHTML = '<tr><td colspan="5" class="empty-state">No metric definitions yet. Click "+ Add Metric" to create one.</td></tr>';
             return;
           }
           metricsTbody.innerHTML = metrics.map(function(m, i) {
-            var cols = (m.source_columns || []).join(", ") || "-";
+            var filters = m.filters || "-";
             return '<tr>'
               + '<td class="metric-key">' + esc(m.metric_key) + '</td>'
               + '<td>' + esc(m.display_name) + '</td>'
               + '<td>' + esc(m.definition) + '</td>'
-              + '<td><span class="metric-type">' + esc(m.source_type || "derived") + '</span></td>'
-              + '<td class="metric-cols">' + esc(cols) + '</td>'
+              + '<td class="metric-cols">' + esc(filters) + '</td>'
               + '<td><button class="btn-secondary" data-edit="' + i + '">Edit</button> <button class="btn-danger" data-del="' + i + '">Del</button></td>'
               + '</tr>';
           }).join("");
@@ -700,8 +688,7 @@ export function renderGlobalConfigPage(): string {
           mfKey.value = "";
           mfName.value = "";
           mfDef.value = "";
-          mfType.value = "derived";
-          mfCols.value = "";
+          mfFilters.value = "";
           form.classList.add("visible");
           mfKey.focus();
         }
@@ -713,8 +700,7 @@ export function renderGlobalConfigPage(): string {
           mfKey.value = m.metric_key;
           mfName.value = m.display_name;
           mfDef.value = m.definition;
-          mfType.value = m.source_type || "derived";
-          mfCols.value = (m.source_columns || []).join(", ");
+          mfFilters.value = m.filters || "";
           form.classList.add("visible");
           mfKey.focus();
         }
@@ -732,13 +718,11 @@ export function renderGlobalConfigPage(): string {
             metricsStatus.textContent = "Metric key, display name, and definition are required.";
             return;
           }
-          var cols = mfCols.value.split(",").map(function(s) { return s.trim(); }).filter(function(s) { return s.length > 0; });
           var entry = {
             metric_key: key,
             display_name: name,
             definition: def,
-            source_type: mfType.value,
-            source_columns: cols
+            filters: mfFilters.value.trim()
           };
           if (editingIndex >= 0) {
             metrics[editingIndex] = entry;

@@ -57,8 +57,7 @@ export type ReportComposerInput = {
     metric_key: string;
     display_name: string;
     definition: string;
-    source_type?: "column" | "derived";
-    source_columns?: string[];
+    filters?: string;
   }>;
   analyses: Array<{
     question: string;
@@ -1275,8 +1274,8 @@ function reportComposerUserPrompt(input: ReportComposerInput): string {
     .map(
       (metric, index) =>
         `${index + 1}. ${metric.display_name} (${metric.metric_key}): ${metric.definition}` +
-        ((metric.source_columns ?? []).length > 0
-          ? ` [columns: ${(metric.source_columns ?? []).join(", ")}]`
+        ((metric.filters ?? "").length > 0
+          ? ` [auto-filter: WHERE ${metric.filters}]`
           : "")
     )
     .join("\n");
@@ -1307,10 +1306,10 @@ function reportComposerUserPrompt(input: ReportComposerInput): string {
 function renderStubReportHtml(input: ReportComposerInput): string {
   const metricDefinitions = (input.metric_definitions ?? [])
     .map((metric) => {
-      const sourceColumns = (metric.source_columns ?? []).length > 0
-        ? `<span class="metric-source">source: ${(metric.source_columns ?? []).map((column) => escapeHtml(column)).join(", ")}</span>`
-        : `<span class="metric-source">source: derived</span>`;
-      return `<li><strong>${escapeHtml(metric.display_name)}</strong>: ${escapeHtml(metric.definition)} ${sourceColumns}</li>`;
+      const filterNote = (metric.filters ?? "").length > 0
+        ? `<span class="metric-source">filter: ${escapeHtml(metric.filters!)}</span>`
+        : "";
+      return `<li><strong>${escapeHtml(metric.display_name)}</strong>: ${escapeHtml(metric.definition)} ${filterNote}</li>`;
     })
     .join("");
 

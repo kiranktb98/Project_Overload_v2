@@ -275,10 +275,10 @@ export async function prepareReportContractData(input: {
   const globalMetricDefs = await loadGlobalMetricDefinitions(input.store, storeContext);
   const allMetricDefs = buildRunMetricDefinitions(input.contract, globalMetricDefs);
   const metricDefsContext = allMetricDefs.length > 0
-    ? "\nMETRIC DEFINITIONS (use these exact formulas):\n" +
+    ? "\nMETRIC DEFINITIONS (use these exact formulas and auto-apply the filters):\n" +
       allMetricDefs.map((m) =>
         `- ${m.display_name} (${m.metric_key}): ${m.definition}` +
-        (m.source_columns.length > 0 ? ` [columns: ${m.source_columns.join(", ")}]` : "")
+        (m.filters && m.filters.length > 0 ? ` [auto-filter: WHERE ${m.filters}]` : "")
       ).join("\n")
     : "";
 
@@ -2319,8 +2319,7 @@ function buildRunMetricDefinitions(
   metric_key: string;
   display_name: string;
   definition: string;
-  source_type: "column" | "derived";
-  source_columns: string[];
+  filters: string;
 }> {
   const fromContract = Array.isArray(contract.metric_definitions)
     ? contract.metric_definitions
@@ -2337,21 +2336,12 @@ function buildRunMetricDefinitions(
   }
 
   const normalized = Array.from(deduped.values())
-    .map((metric) => {
-      const sourceType: "column" | "derived" =
-        metric.source_type === "column" ? "column" : "derived";
-      return {
-        metric_key: String(metric.metric_key ?? "").trim(),
-        display_name: String(metric.display_name ?? "").trim(),
-        definition: String(metric.definition ?? "").trim(),
-        source_type: sourceType,
-        source_columns: Array.isArray(metric.source_columns)
-          ? metric.source_columns
-              .map((column) => String(column).trim())
-              .filter((column) => column.length > 0)
-          : []
-      };
-    })
+    .map((metric) => ({
+      metric_key: String(metric.metric_key ?? "").trim(),
+      display_name: String(metric.display_name ?? "").trim(),
+      definition: String(metric.definition ?? "").trim(),
+      filters: String((metric as Record<string, unknown>).filters ?? "").trim()
+    }))
     .filter(
       (metric) =>
         metric.metric_key.length > 0 &&
@@ -2372,8 +2362,7 @@ function buildRunMetricDefinitions(
       metric_key: metricId,
       display_name: display,
       definition: `Metric derived from ${metricId}. Definition was not explicitly confirmed in this run.`,
-      source_type: "derived",
-      source_columns: []
+      filters: ""
     };
   });
 }
@@ -2386,8 +2375,7 @@ async function composeReportHtmlWithFallback(input: {
     metric_key: string;
     display_name: string;
     definition: string;
-    source_type: "column" | "derived";
-    source_columns: string[];
+    filters: string;
   }>;
 }): Promise<string> {
   let lastError: unknown;
@@ -2426,8 +2414,7 @@ function injectMetricDefinitionsIntoHtml(
     metric_key: string;
     display_name: string;
     definition: string;
-    source_type: "column" | "derived";
-    source_columns: string[];
+    filters: string;
   }>,
   lastError: unknown
 ): string {
@@ -2439,13 +2426,10 @@ function injectMetricDefinitionsIntoHtml(
   const items = definitions
     .slice(0, 8)
     .map((definition) => {
-      const sourceLine =
-        definition.source_columns.length > 0
-          ? ` (source: ${definition.source_columns.join(", ")})`
-          : definition.source_type === "column"
-            ? " (source: column metric)"
-            : " (source: derived metric)";
-      return `<li><strong>${escapeHtml(definition.display_name)}</strong>: ${escapeHtml(definition.definition)}${escapeHtml(sourceLine)}</li>`;
+      const filterLine = definition.filters.length > 0
+        ? ` (filter: ${definition.filters})`
+        : "";
+      return `<li><strong>${escapeHtml(definition.display_name)}</strong>: ${escapeHtml(definition.definition)}${escapeHtml(filterLine)}</li>`;
     })
     .join("");
 

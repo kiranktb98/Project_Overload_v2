@@ -335,8 +335,7 @@ describe("run pipeline", () => {
             metric_key: "refund_rate",
             display_name: "Refund Rate",
             definition: "refunded_orders / total_orders",
-            source_type: "derived",
-            source_columns: ["status", "order_id"]
+            filters: "status = 'refunded'"
           }
         ]
       }),

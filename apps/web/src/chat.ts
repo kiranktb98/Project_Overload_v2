@@ -6625,8 +6625,9 @@ function buildContractPayload(state: ChatState): ReportContractRecord {
       metric_key: entry.metric_key,
       display_name: entry.display_name,
       definition: entry.definition,
-      source_type: entry.source_type,
-      source_columns: entry.source_columns
+      filters: entry.source_columns.length > 0
+        ? entry.source_columns.join(", ")
+        : ""
     }));
 
   return ReportContractSchema.parse({
