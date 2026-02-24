@@ -3182,8 +3182,9 @@ function extractExplicitScopeAnswers(rawMessage: string): Map<number, string> {
   const answers = new Map<number, string>();
 
   const normalizedMessage = rawMessage.replace(/[–—]/g, "-");
+  // Accept Q1: Q1- Q1. Q1, Q1) and "for Q1" patterns
   const questionRegex =
-    /\bq(?:uestion)?\s*(\d+)\s*[:-]\s*([\s\S]*?)(?=\bq(?:uestion)?\s*\d+\s*[:-]|\n{2,}|$)/gi;
+    /\b(?:for\s+)?q(?:uestion)?\s*(\d+)\s*[.,:)\-]?\s*([\s\S]*?)(?=\b(?:for\s+)?q(?:uestion)?\s*\d+\s*[.,:)\-]?|\n{2,}|$)/gi;
   let match: RegExpExecArray | null;
   while ((match = questionRegex.exec(normalizedMessage)) !== null) {
     const questionNumber = Number.parseInt(match[1] ?? "", 10);
