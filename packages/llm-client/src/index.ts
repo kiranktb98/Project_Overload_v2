@@ -57,7 +57,10 @@ export type ReportComposerInput = {
     metric_key: string;
     display_name: string;
     definition: string;
-    filters?: string;
+    filter_description?: string;
+    filter_column?: string;
+    filter_values?: string[];
+    status?: string;
   }>;
   analyses: Array<{
     question: string;
@@ -1271,13 +1274,20 @@ function reportComposerSystemPrompt(input: ReportComposerInput): string {
 
 function reportComposerUserPrompt(input: ReportComposerInput): string {
   const metricDefinitions = (input.metric_definitions ?? [])
-    .map(
-      (metric, index) =>
-        `${index + 1}. ${metric.display_name} (${metric.metric_key}): ${metric.definition}` +
-        ((metric.filters ?? "").length > 0
-          ? ` [auto-filter: WHERE ${metric.filters}]`
-          : "")
-    )
+    .map((metric, index) => {
+      let line = `${index + 1}. ${metric.display_name} (${metric.metric_key}): ${metric.definition}`;
+      if ((metric.filter_description ?? "").length > 0) {
+        line += `\n   intent: ${metric.filter_description}`;
+      }
+      if ((metric.filter_column ?? "").length > 0 && (metric.filter_values ?? []).length > 0) {
+        const escaped = (metric.filter_values ?? []).map((v) => `'${v.replace(/'/g, "''")}'`);
+        line += ` [auto-filter: WHERE ${metric.filter_column} IN (${escaped.join(", ")})]`;
+      }
+      if (metric.status) {
+        line += ` [status: ${metric.status}]`;
+      }
+      return line;
+    })
     .join("\n");
 
   const sections = input.analyses.map((a, i) => [
@@ -1306,10 +1316,14 @@ function reportComposerUserPrompt(input: ReportComposerInput): string {
 function renderStubReportHtml(input: ReportComposerInput): string {
   const metricDefinitions = (input.metric_definitions ?? [])
     .map((metric) => {
-      const filterNote = (metric.filters ?? "").length > 0
-        ? `<span class="metric-source">filter: ${escapeHtml(metric.filters!)}</span>`
-        : "";
-      return `<li><strong>${escapeHtml(metric.display_name)}</strong>: ${escapeHtml(metric.definition)} ${filterNote}</li>`;
+      let filterNote = "";
+      if ((metric.filter_column ?? "").length > 0 && (metric.filter_values ?? []).length > 0) {
+        filterNote = `<span class="metric-source">filter: ${escapeHtml(metric.filter_column!)} IN (${(metric.filter_values ?? []).map((v) => escapeHtml(v)).join(", ")})</span>`;
+      } else if ((metric.filter_description ?? "").length > 0) {
+        filterNote = `<span class="metric-source">filter: ${escapeHtml(metric.filter_description!)}</span>`;
+      }
+      const statusBadge = metric.status ? ` <span class="metric-source">[${escapeHtml(metric.status)}]</span>` : "";
+      return `<li><strong>${escapeHtml(metric.display_name)}</strong>: ${escapeHtml(metric.definition)} ${filterNote}${statusBadge}</li>`;
     })
     .join("");
 

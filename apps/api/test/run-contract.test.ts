@@ -335,7 +335,10 @@ describe("run pipeline", () => {
             metric_key: "refund_rate",
             display_name: "Refund Rate",
             definition: "refunded_orders / total_orders",
-            filters: "status = 'refunded'"
+            filter_description: "Only refunded orders",
+            filter_column: "status",
+            filter_values: ["refunded"],
+            status: "resolved"
           }
         ]
       }),

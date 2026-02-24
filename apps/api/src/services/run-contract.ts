@@ -8,7 +8,8 @@ import {
   type ReportRun,
   GlobalConfigSchema,
   GLOBAL_CONFIG_STATE_KEY,
-  type MetricDefinition
+  type MetricDefinition,
+  migrateMetricDefinition
 } from "@project-overload/shared";
 import { renderExecBriefHtml } from "@project-overload/report-render";
 import type { DataPlane } from "@project-overload/dataplane";
@@ -276,10 +277,17 @@ export async function prepareReportContractData(input: {
   const allMetricDefs = buildRunMetricDefinitions(input.contract, globalMetricDefs);
   const metricDefsContext = allMetricDefs.length > 0
     ? "\nMETRIC DEFINITIONS (use these exact formulas and auto-apply the filters):\n" +
-      allMetricDefs.map((m) =>
-        `- ${m.display_name} (${m.metric_key}): ${m.definition}` +
-        (m.filters && m.filters.length > 0 ? ` [auto-filter: WHERE ${m.filters}]` : "")
-      ).join("\n")
+      allMetricDefs.map((m) => {
+        const parts = [`- ${m.display_name} (${m.metric_key}): ${m.definition}`];
+        if (m.filter_description.length > 0) {
+          parts.push(`  intent: ${m.filter_description}`);
+        }
+        const sqlFilter = buildMetricSqlFilter(m);
+        if (sqlFilter.length > 0) {
+          parts.push(`  [auto-filter: WHERE ${sqlFilter}]`);
+        }
+        return parts.join("\n");
+      }).join("\n")
     : "";
 
   // Build scope clarifications context if available
@@ -2312,35 +2320,46 @@ async function loadGlobalMetricDefinitions(
   }
 }
 
-function buildRunMetricDefinitions(
-  contract: ReportContract,
-  globalMetricDefs: MetricDefinition[] = []
-): Array<{
+type ResolvedMetricDef = {
   metric_key: string;
   display_name: string;
   definition: string;
-  filters: string;
-}> {
+  filter_description: string;
+  filter_column: string;
+  filter_values: string[];
+  status: string;
+};
+
+function buildRunMetricDefinitions(
+  contract: ReportContract,
+  globalMetricDefs: MetricDefinition[] = []
+): ResolvedMetricDef[] {
   const fromContract = Array.isArray(contract.metric_definitions)
-    ? contract.metric_definitions
+    ? contract.metric_definitions.map((m) => migrateMetricDefinition(m as Record<string, unknown>))
     : [];
 
   // Merge: contract-level definitions override global ones with the same key
   const merged = [...globalMetricDefs, ...fromContract];
-  const deduped = new Map<string, typeof merged[number]>();
+  const deduped = new Map<string, Record<string, unknown>>();
   for (const metric of merged) {
-    const key = String(metric.metric_key ?? "").trim().toLowerCase();
+    const raw = metric as Record<string, unknown>;
+    const key = String(raw.metric_key ?? "").trim().toLowerCase();
     if (key.length > 0) {
-      deduped.set(key, metric);
+      deduped.set(key, raw);
     }
   }
 
   const normalized = Array.from(deduped.values())
-    .map((metric) => ({
-      metric_key: String(metric.metric_key ?? "").trim(),
-      display_name: String(metric.display_name ?? "").trim(),
-      definition: String(metric.definition ?? "").trim(),
-      filters: String((metric as Record<string, unknown>).filters ?? "").trim()
+    .map((raw): ResolvedMetricDef => ({
+      metric_key: String(raw.metric_key ?? "").trim(),
+      display_name: String(raw.display_name ?? "").trim(),
+      definition: String(raw.definition ?? "").trim(),
+      filter_description: String(raw.filter_description ?? "").trim(),
+      filter_column: String(raw.filter_column ?? "").trim(),
+      filter_values: Array.isArray(raw.filter_values)
+        ? (raw.filter_values as unknown[]).map((v) => String(v).trim()).filter((v) => v.length > 0)
+        : [],
+      status: String(raw.status ?? "pending")
     }))
     .filter(
       (metric) =>
@@ -2362,21 +2381,27 @@ function buildRunMetricDefinitions(
       metric_key: metricId,
       display_name: display,
       definition: `Metric derived from ${metricId}. Definition was not explicitly confirmed in this run.`,
-      filters: ""
+      filter_description: "",
+      filter_column: "",
+      filter_values: [],
+      status: "pending"
     };
   });
+}
+
+function buildMetricSqlFilter(metric: ResolvedMetricDef): string {
+  if (metric.filter_column.length > 0 && metric.filter_values.length > 0) {
+    const escaped = metric.filter_values.map((v) => `'${v.replace(/'/g, "''")}'`);
+    return `${metric.filter_column} IN (${escaped.join(", ")})`;
+  }
+  return "";
 }
 
 async function composeReportHtmlWithFallback(input: {
   report_composer: ReportComposerClient;
   compose_input: ReportComposerInput;
   fallback_exec_brief: ExecBrief;
-  metric_definitions: Array<{
-    metric_key: string;
-    display_name: string;
-    definition: string;
-    filters: string;
-  }>;
+  metric_definitions: ResolvedMetricDef[];
 }): Promise<string> {
   let lastError: unknown;
 
@@ -2410,12 +2435,7 @@ async function delay(ms: number): Promise<void> {
 
 function injectMetricDefinitionsIntoHtml(
   html: string,
-  definitions: Array<{
-    metric_key: string;
-    display_name: string;
-    definition: string;
-    filters: string;
-  }>,
+  definitions: ResolvedMetricDef[],
   lastError: unknown
 ): string {
   if (definitions.length === 0) {
@@ -2426,9 +2446,12 @@ function injectMetricDefinitionsIntoHtml(
   const items = definitions
     .slice(0, 8)
     .map((definition) => {
-      const filterLine = definition.filters.length > 0
-        ? ` (filter: ${definition.filters})`
-        : "";
+      const sqlFilter = buildMetricSqlFilter(definition);
+      const filterLine = definition.filter_description.length > 0
+        ? ` (${definition.filter_description}${sqlFilter.length > 0 ? ` — ${sqlFilter}` : ""})`
+        : sqlFilter.length > 0
+          ? ` (filter: ${sqlFilter})`
+          : "";
       return `<li><strong>${escapeHtml(definition.display_name)}</strong>: ${escapeHtml(definition.definition)}${escapeHtml(filterLine)}</li>`;
     })
     .join("");

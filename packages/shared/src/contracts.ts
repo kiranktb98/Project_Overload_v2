@@ -1,5 +1,6 @@
 import { z } from "zod";
 import { EVIDENCE_ROW_CAP, MAX_BATCHES } from "./constants";
+import { MetricDefinitionSchema } from "./config";
 
 export const ReportGuardrailsSchema = z.object({
   evidence_row_cap: z.number().int().min(1).max(EVIDENCE_ROW_CAP).default(EVIDENCE_ROW_CAP),
@@ -38,16 +39,7 @@ export const ReportContractSchema = z.object({
   schedule_cron: z.string().min(1).nullable(),
   sql_template: z.string().min(1),
   metric_ids: z.array(z.string().min(1)).default([]),
-  metric_definitions: z
-    .array(
-      z.object({
-        metric_key: z.string().min(1),
-        display_name: z.string().min(1),
-        definition: z.string().min(1),
-        filters: z.string().default("")
-      })
-    )
-    .optional(),
+  metric_definitions: z.array(MetricDefinitionSchema).optional(),
   dimension_ids: z.array(z.string().min(1)).default([]),
   insight_mode: InsightModeSchema,
   delivery: ReportContractDeliverySchema.optional(),
