@@ -354,7 +354,8 @@ export function registerContractRoutes(
           prepared_row_count: payload.prepared_row_count,
           validation: payload.validation,
           preparation_notes: payload.preparation_notes,
-          warnings: payload.warnings
+          warnings: payload.warnings,
+          sample_rows: (payload.prepared_rows ?? []).slice(0, 5)
         })),
         token_usage: result.token_usage
       });
