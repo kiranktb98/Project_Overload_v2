@@ -715,8 +715,10 @@ function queryStrategistSystemPrompt(input: QueryStrategyInput): string {
     "═══ QUESTION ISOLATION ═══",
     "- NEVER bundle two different business questions into one group_id.",
     "- Each business question gets its OWN unique group_id with 1-3 queries.",
+    "- If SCOPED QUESTIONS are provided, generate EXACTLY that many group_ids. Do NOT add extra questions.",
     "- If the PLANNER ANALYSIS has N recommended approaches, generate exactly N questions.",
     "- The question field on all queries within a group MUST be the same string.",
+    "- Use the EXACT columns and dimensions the user specified (e.g., if they said 'issue_type', use issue_type — not channel, not category).",
     "",
     "═══ METRIC DEFINITIONS ═══",
     "If METRIC DEFINITIONS are provided in the report context, use the EXACT formulas described.",
@@ -771,10 +773,16 @@ function queryStrategistUserPrompt(input: QueryStrategyInput): string {
 
   // When scoped questions are embedded in the report goal, instruct LLM to use them directly
   if (input.report_goal.includes("SCOPED QUESTIONS")) {
-    parts.push("The report goal contains SCOPED QUESTIONS. You MUST generate queries for EACH scoped question.");
-    parts.push("Do NOT invent your own business questions — use the scoped questions exactly as given.");
-    parts.push("Each scoped question (Q1, Q2, Q3, etc.) becomes one group_id with 1-3 SQL queries.");
-    parts.push("Use the Clarification text to guide the specific SQL filters, aggregations, and time windows.");
+    parts.push("The report goal contains SCOPED QUESTIONS that were confirmed by the user.");
+    parts.push("");
+    parts.push("STRICT RULES FOR SCOPED QUESTIONS:");
+    parts.push("1. Generate queries for EXACTLY the scoped questions — no more, no fewer.");
+    parts.push("2. Do NOT add extra questions that the user did not ask for.");
+    parts.push("3. Do NOT modify the intent of any scoped question (e.g., if the user asked for 'issue_type', query issue_type — not channel or category).");
+    parts.push("4. Each scoped question (Q1, Q2, Q3, etc.) becomes one group_id with 1-3 SQL queries.");
+    parts.push("5. Use the Clarification text to guide the specific SQL filters, aggregations, time windows, and column choices.");
+    parts.push("6. The 'question' field in your output must closely match the scoped question text.");
+    parts.push("7. If there are 3 scoped questions, return exactly 3 group_ids. If 5, return exactly 5. Never more.");
   } else {
     parts.push("Generate 2-4 business questions from the report goal.");
   }
@@ -792,7 +800,7 @@ function dialectCompilerSystemPrompt(dialect: SqlDialect): string {
   const dialectGuides: Record<string, string[]> = {
     postgres: [
       "TARGET: PostgreSQL",
-      "- DATE_TRUNC('month', col) for date grouping",
+      "- Date grouping: TO_CHAR(DATE_TRUNC('month', col AT TIME ZONE 'UTC'), 'YYYY-MM-DD') — always use AT TIME ZONE 'UTC' and TO_CHAR to avoid timezone shifts",
       "- col::type for type casting (also CAST(col AS type))",
       "- String concatenation with || operator",
       "- ILIKE for case-insensitive string matching",
