@@ -706,6 +706,10 @@ function scopeClarificationSystemPrompt(mode: ScopeClarificationInput["mode"]): 
     "- Always confirm formulas (e.g. 'refund rate = refunded orders / total orders × 100?').",
     "- Always confirm comparison boundaries (e.g. 'past 2 months vs prior 2 months — which exact months?').",
     "- Always confirm ranking/cutoff criteria (e.g. 'top N cities — all or a specific cutoff?').",
+    "- Look at the FULL conversation history, not just the latest message. The user's original",
+    "  request may contain multiple analysis topics. Cover ALL of them — do not drop any.",
+    "- If the conversation already discussed analysis angles (e.g. refund trends, city rankings,",
+    "  support tickets), generate clarifying questions for EACH angle mentioned.",
     "- Maximum 6 questions.",
     "- Return strict JSON only:",
     '  {"questions":[{"question_number":1,"question":"...","clarification":"..."}]}',
@@ -719,10 +723,23 @@ function scopeClarificationUserPrompt(input: ScopeClarificationInput): string {
     .map((turn) => `${turn.role}: ${turn.content}`)
     .join("\n");
 
+  // Extract the earliest user message from history as the original analysis request.
+  // The latest USER_MESSAGE may be a follow-up, so we need both.
+  const userMessages = input.conversation_history
+    .filter((turn) => turn.role === "user")
+    .map((turn) => turn.content);
+  const originalRequest = userMessages.length > 0 ? userMessages[0] : input.user_message;
+
   return [
     `CURRENT_UTC: ${input.now_iso}`,
     `MODE: ${input.mode}`,
-    `USER_MESSAGE: ${input.user_message}`,
+    "",
+    "ORIGINAL_ANALYSIS_REQUEST (this is what the user ORIGINALLY asked for — cover ALL topics from this):",
+    originalRequest,
+    "",
+    "LATEST_USER_MESSAGE:",
+    input.user_message,
+    "",
     `DRAFT_METRICS: ${input.draft_metrics.join(", ") || "(none)"}`,
     `DRAFT_DIMENSIONS: ${input.draft_dimensions.join(", ") || "(none)"}`,
     `ALLOWED_RELATIONS: ${input.allowed_relations.join(", ") || "(none)"}`,
