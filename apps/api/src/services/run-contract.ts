@@ -292,6 +292,12 @@ export async function prepareReportContractData(input: {
 
   // Build scope clarifications context if available
   const scopeClarifications = input.contract.scope_clarifications ?? [];
+  console.log("[data-prep] scope_clarifications count=%d", scopeClarifications.length);
+  if (scopeClarifications.length > 0) {
+    for (const sc of scopeClarifications) {
+      console.log("[data-prep]   Q%d: %s | answer: %s", sc.question_number, sc.question, sc.answer?.substring(0, 80));
+    }
+  }
   const scopeContext = scopeClarifications.length > 0
     ? "\n\nSCOPED QUESTIONS (you MUST generate queries for EACH of these):\n" +
       scopeClarifications.map((sc) =>
@@ -316,6 +322,9 @@ export async function prepareReportContractData(input: {
     sql_dialect: sqlDialect
   });
   collectClientUsage(input.query_strategist, tokenUsage);
+  console.log("[data-prep] strategist returned %d queries, groups: %s",
+    strategy.queries.length,
+    groupPlannedQueries(strategy.queries).map((g) => `${g.group_id ?? "no-group"}(${g.queries.length})`).join(", "));
 
   await input.store.appendAuditLog(
     "query_strategy",

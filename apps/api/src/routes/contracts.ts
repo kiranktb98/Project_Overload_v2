@@ -713,6 +713,7 @@ function toReportContract(body: unknown, tenantId: string) {
     approved_at: typeof payload.approved_at === "string" ? payload.approved_at : null,
     locked_by: typeof payload.locked_by === "string" ? payload.locked_by : null,
     locked_at: typeof payload.locked_at === "string" ? payload.locked_at : null,
+    scope_clarifications: Array.isArray(payload.scope_clarifications) ? payload.scope_clarifications : [],
     guardrails: ReportGuardrailsSchema.parse(payload.guardrails ?? {})
   });
 }

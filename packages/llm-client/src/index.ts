@@ -438,6 +438,8 @@ export function createQueryStrategistClient(options: CreateAnalystClientOptions)
   const remote: QueryStrategistClient = {
     provider: "openrouter",
     async planQueries(input: QueryStrategyInput): Promise<QueryStrategyOutput> {
+      console.log("[query-strategist] planQueries called, report_goal length=%d, scopeInGoal=%s",
+        input.report_goal.length, input.report_goal.includes("SCOPED QUESTIONS"));
       const request = buildRequest(input);
       const response = await fetchWithTimeout(fetcher, request.endpoint, {
         method: "POST",
@@ -461,7 +463,11 @@ export function createQueryStrategistClient(options: CreateAnalystClientOptions)
       const text = extractTextPayload(payload);
       if (!text) throw new Error("Unable to parse query strategist response.");
       const parsed = parseJsonObjectFromText(text);
-      return QueryStrategyOutputSchema.parse(parsed);
+      const result = QueryStrategyOutputSchema.parse(parsed);
+      console.log("[query-strategist] LLM returned %d queries: %s",
+        result.queries.length,
+        result.queries.map((q) => q.question).join(" | "));
+      return result;
     },
     async compileSql(input): Promise<{ sql: string; rationale: string }> {
       const request = buildOpenRouterGenericRequest(
@@ -761,7 +767,16 @@ function queryStrategistUserPrompt(input: QueryStrategyInput): string {
 
   parts.push("");
   parts.push("═══ DATA PREPARATION INSTRUCTIONS ═══");
-  parts.push("Generate 2-4 business questions from the report goal.");
+
+  // When scoped questions are embedded in the report goal, instruct LLM to use them directly
+  if (input.report_goal.includes("SCOPED QUESTIONS")) {
+    parts.push("The report goal contains SCOPED QUESTIONS. You MUST generate queries for EACH scoped question.");
+    parts.push("Do NOT invent your own business questions — use the scoped questions exactly as given.");
+    parts.push("Each scoped question (Q1, Q2, Q3, etc.) becomes one group_id with 1-3 SQL queries.");
+    parts.push("Use the Clarification text to guide the specific SQL filters, aggregations, and time windows.");
+  } else {
+    parts.push("Generate 2-4 business questions from the report goal.");
+  }
   parts.push("For each question, decide how many SQL queries it needs (1, 2, or 3) based on complexity.");
   parts.push("Simple questions need just 1 query. Complex diagnostic questions may need 2-3.");
   parts.push("Think like a data engineer preparing complete datasets for an analyst who cannot query the database.");
