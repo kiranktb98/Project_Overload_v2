@@ -1666,11 +1666,11 @@ function buildMonthCoverageSqlFromBase(
 
   return [
     `WITH base AS (${stripTrailingLimit(baseSql)})`,
-    `SELECT date_trunc('month', ${quoteIdentifier(dateColumn)})::date AS period_month,`,
+    `SELECT TO_CHAR(date_trunc('month', ${quoteIdentifier(dateColumn)} AT TIME ZONE 'UTC'), 'YYYY-MM-DD') AS period_month,`,
     "COUNT(*) AS row_count",
     "FROM base",
-    `WHERE ${quoteIdentifier(dateColumn)} >= date_trunc('month', CURRENT_DATE)::date - interval '${months} months'`,
-    `GROUP BY date_trunc('month', ${quoteIdentifier(dateColumn)})::date`,
+    `WHERE ${quoteIdentifier(dateColumn)} >= date_trunc('month', CURRENT_DATE) - interval '${months} months'`,
+    `GROUP BY TO_CHAR(date_trunc('month', ${quoteIdentifier(dateColumn)} AT TIME ZONE 'UTC'), 'YYYY-MM-DD')`,
     "ORDER BY period_month ASC"
   ].join(" ");
 }

@@ -579,7 +579,7 @@ function queryStrategistSystemPrompt(input: QueryStrategyInput): string {
   const dialectSyntax: Record<string, string[]> = {
     postgres: [
       `═══ ${dialectUpper} SYNTAX (write executable ${dialectUpper} SQL) ═══`,
-      "- Date grouping: DATE_TRUNC('month', col)::date  — ALWAYS cast to ::date to strip timezone and avoid month-shift bugs",
+      "- Date grouping: TO_CHAR(DATE_TRUNC('month', col AT TIME ZONE 'UTC'), 'YYYY-MM-DD') — ALWAYS use this pattern to produce a plain date string without timezone shifts",
       "- Date extraction: EXTRACT(YEAR FROM col), EXTRACT(MONTH FROM col)",
       "- Type casting: col::type or CAST(col AS type)",
       "- String concat: 'a' || 'b'",
@@ -605,7 +605,7 @@ function queryStrategistSystemPrompt(input: QueryStrategyInput): string {
     ],
     snowflake: [
       `═══ ${dialectUpper} SYNTAX (write executable ${dialectUpper} SQL) ═══`,
-      "- Date grouping: DATE_TRUNC('MONTH', col)::DATE (granularity keyword in CAPS, cast to DATE to strip timezone)",
+      "- Date grouping: TO_CHAR(DATE_TRUNC('MONTH', col), 'YYYY-MM-DD') (granularity keyword in CAPS, use TO_CHAR to produce plain date string)",
       "- Date extraction: EXTRACT(YEAR FROM col), DATE_PART('month', col)",
       "- Type casting: col::type or CAST(col AS type)",
       "- String concat: 'a' || 'b' or CONCAT(a, b)",
@@ -702,7 +702,7 @@ function queryStrategistSystemPrompt(input: QueryStrategyInput): string {
     "- When the goal mentions time comparisons (YoY, MoM, QoQ), use date/timestamp columns from the catalog.",
     "- Always add ORDER BY to make results meaningful (ORDER BY metric DESC for rankings, ORDER BY date for trends).",
     "- Use meaningful column aliases (AS revenue, AS order_count, AS month) so analysts can interpret results easily.",
-    "- ALWAYS cast DATE_TRUNC results to date (e.g., DATE_TRUNC('month', col)::date) to avoid timezone-shifted timestamps in output.",
+    "- ALWAYS wrap DATE_TRUNC with TO_CHAR and AT TIME ZONE 'UTC' to produce plain date strings: TO_CHAR(DATE_TRUNC('month', col AT TIME ZONE 'UTC'), 'YYYY-MM-DD')",
     "",
     "═══ PLANNER INTEGRATION ═══",
     "If a PLANNER ANALYSIS section is provided, it contains real data discoveries from exploratory queries.",
