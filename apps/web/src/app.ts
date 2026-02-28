@@ -4,6 +4,7 @@ import {
   appendConversationTurn,
   applyLlmDraftUpdates,
   ChatTurnRequestSchema,
+  createInitialChatState,
   createWebApiClient,
   fetchCatalogContext,
   handleChatTurn,
@@ -11,7 +12,6 @@ import {
   parseScheduleParams
 } from "./chat";
 import {
-  buildDeterministicConversationTitle,
   createConversationClientFromEnv,
   type ConversationClient
 } from "./conversation";
@@ -32,6 +32,25 @@ export type WebAppDependencies = {
   query_router?: QueryRouterClient;
 };
 
+class ChatStageError extends Error {
+  readonly stage: string;
+
+  constructor(stage: string, cause: unknown) {
+    let detail =
+      cause instanceof Error && cause.message.trim().length > 0
+        ? cause.message
+        : typeof cause === "string" && cause.trim().length > 0
+          ? cause
+          : "Unknown error";
+    if (detail.trim().startsWith("[")) {
+      detail = "Provider response format mismatch.";
+    }
+    super(`Stage error: ${stage} failed. ${detail}`);
+    this.name = "ChatStageError";
+    this.stage = stage;
+  }
+}
+
 export function buildWebApp(options: WebAppDependencies = {}) {
   const app = Fastify({
     logger: {
@@ -50,6 +69,7 @@ export function buildWebApp(options: WebAppDependencies = {}) {
   const queryRouter =
     options.query_router ?? createQueryRouterClientFromEnv({ fetch_impl: options.fetch_impl });
   const authEnabled = isUiAuthEnabled();
+  const orchestratorEnabled = isConversationOrchestratorEnabled();
 
   app.addHook("preHandler", async (request, reply) => {
     if (!authEnabled) {
@@ -167,20 +187,23 @@ export function buildWebApp(options: WebAppDependencies = {}) {
 
     try {
       const catalogCtx = await fetchCatalogContext(apiClient);
-      const result = conversationClient.nameConversation
-        ? await conversationClient.nameConversation({
-            first_user_messages: parsed.data.messages,
-            catalog_summary: catalogCtx.catalog_summary,
-            business_context: catalogCtx.business_context
-          })
-        : { title: buildDeterministicConversationTitle(parsed.data.messages) };
+      if (!conversationClient.nameConversation) {
+        return reply.code(503).send({
+          message: "Conversation title service unavailable"
+        });
+      }
+      const result = await conversationClient.nameConversation({
+        first_user_messages: parsed.data.messages,
+        catalog_summary: catalogCtx.catalog_summary,
+        business_context: catalogCtx.business_context
+      });
 
       return reply.code(200).send({
         title: result.title
       });
-    } catch {
-      return reply.code(200).send({
-        title: buildDeterministicConversationTitle(parsed.data.messages)
+    } catch (error) {
+      return reply.code(502).send({
+        message: error instanceof Error ? error.message : "Conversation title generation failed"
       });
     }
   });
@@ -210,34 +233,37 @@ export function buildWebApp(options: WebAppDependencies = {}) {
       });
     }
 
-    const state = parseChatState(parsed.data.state);
+    const state = coerceIncomingChatState(parsed.data.state);
 
     try {
+      let orchestratorDecision: Awaited<
+        ReturnType<NonNullable<ConversationClient["orchestrateTurn"]>>
+      > | null = null;
+
+      const skipOrchestratorForMessage =
+        isUiControlMessage(parsed.data.message) || hasPendingWorkflowDecision(state);
+      if (orchestratorEnabled && conversationClient.orchestrateTurn && !skipOrchestratorForMessage) {
+        try {
+          const catalogCtx = await fetchCatalogContext(apiClient);
+          orchestratorDecision = await conversationClient.orchestrateTurn({
+            user_message: parsed.data.message,
+            state,
+            history: state.conversation_history,
+            catalog_summary: catalogCtx.catalog_summary,
+            business_context: catalogCtx.business_context
+          });
+        } catch (orchestratorError) {
+          throw new ChatStageError("orchestrator_decision", orchestratorError);
+        }
+      }
+
       const response = await handleChatTurn({
         message: parsed.data.message,
         state,
         api_client: apiClient,
-        query_router: queryRouter
+        query_router: queryRouter,
+        orchestrator_decision: orchestratorDecision
       });
-
-      const bypassForCriticalAction =
-        shouldBypassConversationForAction(response.assistant_message, response.state) &&
-        (isUiControlMessage(parsed.data.message) ||
-          isExecutionOutcomeContext(response.assistant_message) ||
-          isDecisionPendingContext(response.assistant_message));
-      const allowDeterministicBypass = conversationClient.mode !== "provider" || bypassForCriticalAction;
-      if (
-        allowDeterministicBypass &&
-        shouldBypassConversationForAction(response.assistant_message, response.state)
-      ) {
-        const normalizedState = normalizeWorkflowDecisionState(response.state);
-        const nextState = appendConversationTurn(normalizedState, parsed.data.message, response.assistant_message);
-        return reply.code(200).send({
-          ...response,
-          state: nextState,
-          assistant_message: response.assistant_message
-        });
-      }
 
       const catalogCtx = await fetchCatalogContext(apiClient);
       let conversationResponse: Awaited<ReturnType<ConversationClient["respond"]>>;
@@ -251,42 +277,27 @@ export function buildWebApp(options: WebAppDependencies = {}) {
           business_context: catalogCtx.business_context
         });
       } catch (conversationError) {
-        app.log.warn(
-          {
-            err: conversationError,
-            path: "/api/chat"
-          },
-          "Conversation provider failed."
-        );
-        if (conversationClient.mode === "provider") {
-          let providerFallbackMessage =
-            "I hit a temporary AI connectivity issue while drafting that response. Please retry in a few seconds.";
-          const runMatch = response.assistant_message.match(/Report executed\. Run ID:\s*([a-zA-Z0-9_-]+)/i);
-          if (runMatch?.[1]) {
-            providerFallbackMessage =
-              `Report run completed (Run ID: ${runMatch[1]}), but I hit a temporary AI connectivity issue while drafting the narrative. Please retry in a few seconds.`;
-          } else {
-            const queryMatch = response.assistant_message.match(/Query (?:completed|failed)\. Query ID:\s*([a-zA-Z0-9_-]+)/i);
-            if (queryMatch?.[1]) {
-              providerFallbackMessage =
-                `Query finished (Query ID: ${queryMatch[1]}), but I hit a temporary AI connectivity issue while drafting the explanation. Please retry in a few seconds.`;
-            }
-          }
-          const normalizedState = normalizeWorkflowDecisionState(response.state);
-          const nextState = appendConversationTurn(normalizedState, parsed.data.message, providerFallbackMessage);
+        const normalizedState = normalizeWorkflowDecisionState(response.state);
+        const parsedResponseState = parseChatState(normalizedState);
+        const hasAuthoritativeExecutionOutcome =
+          isExecutionOutcomeContext(response.assistant_message) ||
+          isDecisionPendingContext(response.assistant_message) ||
+          Boolean(parsedResponseState.pending_run_id);
+
+        if (hasAuthoritativeExecutionOutcome) {
+          const nextState = appendConversationTurn(
+            normalizedState,
+            parsed.data.message,
+            response.assistant_message
+          );
           return reply.code(200).send({
             ...response,
             state: nextState,
-            assistant_message: providerFallbackMessage
+            assistant_message: response.assistant_message
           });
         }
-        const normalizedState = normalizeWorkflowDecisionState(response.state);
-        const nextState = appendConversationTurn(normalizedState, parsed.data.message, response.assistant_message);
-        return reply.code(200).send({
-          ...response,
-          state: nextState,
-          assistant_message: response.assistant_message
-        });
+
+        throw new ChatStageError("conversation_response", conversationError);
       }
 
       const aiMessage = enforceExecutionTruth(
@@ -302,6 +313,7 @@ export function buildWebApp(options: WebAppDependencies = {}) {
       }
       stateAfterLlm = syncDecisionStateFromAssistantMessage(stateAfterLlm, aiMessage);
       stateAfterLlm = normalizeWorkflowDecisionState(stateAfterLlm);
+      safeAiMessage = ensureScopeQuestionsVisible(safeAiMessage, stateAfterLlm);
 
       // Detect <<<SCHEDULE_PARAMS>>> block from LLM response
       const scheduleParams = parseScheduleParams(safeAiMessage);
@@ -327,13 +339,16 @@ export function buildWebApp(options: WebAppDependencies = {}) {
         });
       }
 
-      const safeMessage = buildSafeChatFailureMessage(error);
+      const safeMessage =
+        error instanceof ChatStageError
+          ? error.message
+          : `Stage error: chat_turn failed. ${error instanceof Error ? error.message : "Unknown error"}`;
       app.log.error(
         {
           err: error,
           path: "/api/chat"
         },
-        "Chat route failed; returning safe fallback message."
+        "Chat route failed; returning explicit stage failure."
       );
       const nextState = appendConversationTurn(state, parsed.data.message, safeMessage);
       return reply.code(200).send({
@@ -588,11 +603,34 @@ function isUiControlMessage(message: string): boolean {
   return /^__ui_[a-z0-9_]+__$/i.test(message.trim());
 }
 
+function coerceIncomingChatState(value: unknown) {
+  if (!value || typeof value !== "object" || Array.isArray(value)) {
+    return parseChatState(value);
+  }
+
+  const initial = createInitialChatState();
+  const incoming = value as Record<string, unknown>;
+  const merged: Record<string, unknown> = {
+    ...initial,
+    ...incoming
+  };
+
+  if (incoming.draft && typeof incoming.draft === "object" && !Array.isArray(incoming.draft)) {
+    merged.draft = {
+      ...initial.draft,
+      ...(incoming.draft as Record<string, unknown>)
+    };
+  }
+
+  return parseChatState(merged);
+}
+
 function isExecutionOutcomeContext(actionContext: string): boolean {
   return (
     /^Query completed\. Query ID:/i.test(actionContext) ||
     /^Query failed\. Query ID:/i.test(actionContext) ||
     /^Report executed\. Run ID:/i.test(actionContext) ||
+    /^I['’]m generating your report/i.test(actionContext) ||
     /^Run execution did not complete\./i.test(actionContext) ||
     /^Run could not start\./i.test(actionContext) ||
     /^Data preparation completed/i.test(actionContext) ||
@@ -619,6 +657,8 @@ function enforceExecutionTruth(modelMessage: string, actionContext: string): str
     /\bQuery ID:\s*[a-z0-9_-]+\b/i.test(actionContext) ||
     /\bQuery returned\s+\d+/i.test(actionContext);
   const reportExecuted = /\bReport executed\b/i.test(actionContext);
+  const reportInFlight = /\bgenerating your report\b/i.test(actionContext);
+  const decisionPending = isDecisionPendingContext(actionContext);
   const preparationExecuted = /^Data preparation completed/i.test(actionContext);
 
   if (!queryExecuted && looksLikeQueryExecutionClaim(modelMessage)) {
@@ -636,10 +676,34 @@ function enforceExecutionTruth(modelMessage: string, actionContext: string): str
   }
 
   if (!reportExecuted && looksLikeReportExecutionClaim(modelMessage)) {
+    if (reportInFlight || decisionPending) {
+      return actionContext;
+    }
     return [
       "I haven't executed a report run yet.",
       "The workflow is paused at a pending execution decision."
     ].join("\n");
+  }
+
+  if (
+    reportInFlight &&
+    /\b(execution didn['’]t go through|did not go through|network error on its end|try running it again)\b/i.test(modelMessage)
+  ) {
+    return actionContext;
+  }
+
+  if (
+    /^Ready to prepare data for:/i.test(actionContext) &&
+    /\b(run report|execute report|finish scoping and run analysis)\b/i.test(modelMessage)
+  ) {
+    return actionContext;
+  }
+
+  if (
+    /^Analysis is staged and waiting on the current workflow decision\./i.test(actionContext) &&
+    /\brun data preparation\b/i.test(modelMessage)
+  ) {
+    return actionContext;
   }
 
   if (!preparationExecuted && looksLikePreparationExecutionClaim(modelMessage)) {
@@ -649,57 +713,24 @@ function enforceExecutionTruth(modelMessage: string, actionContext: string): str
   return modelMessage;
 }
 
-function shouldBypassConversationForAction(actionContext: string, state: unknown): boolean {
-  const parsedState = parseChatState(state);
-  if (parsedState.pending_query_sql) {
-    return true;
-  }
-  if (parsedState.pending_single_query_request) {
-    return true;
-  }
-  if (parsedState.pending_metric_confirmations.length > 0) {
-    return true;
-  }
-  // Run submitted but not yet complete — no need to pass through the LLM
-  if (parsedState.pending_run_id) {
-    return true;
-  }
-
-  if (
-    parsedState.prep_pending ||
-    parsedState.scope_pending ||
-    parsedState.scope_clarification_pending ||
-    parsedState.awaiting_post_run_refinement ||
-    parsedState.refinement_active ||
-    parsedState.awaiting_pdf_confirmation ||
-    parsedState.awaiting_save_confirmation ||
-    parsedState.awaiting_schedule_confirmation ||
-    parsedState.awaiting_schedule_mode_selection ||
-    parsedState.awaiting_custom_day_input
-  ) {
-    return true;
-  }
-
-  if (
-    /^Query completed\. Query ID:/i.test(actionContext) ||
-    /^Query failed\. Query ID:/i.test(actionContext) ||
-    /^Report executed\. Run ID:/i.test(actionContext) ||
-    /^Data preparation completed/i.test(actionContext) ||
-    /^Ready to prepare data for:/i.test(actionContext) ||
-    /^Before execution, (please confirm the metric definition|i need one quick metric-definition confirmation)/i.test(actionContext) ||
-    /^Before data preparation, I need one clarification/i.test(actionContext) ||
-    /^Prepared payloads:/i.test(actionContext) ||
-    /^Before I run that query, I need one clarification:/i.test(actionContext) ||
-    /^Contract saved\. ID:/i.test(actionContext)
-  ) {
-    return true;
-  }
-
-  return false;
-}
-
 function syncDecisionStateFromAssistantMessage(state: unknown, assistantMessage: string) {
   const nextState = parseChatState(state);
+
+  const hasAnsweredScope =
+    nextState.scope_questions.length > 0 &&
+    nextState.scope_questions.every(
+      (q: { answer?: string | null }) => q.answer && q.answer.trim().length > 0
+    );
+
+  const scopeLockSignal =
+    /\ball\s+\w+\s+questions?\s+(?:are|is)\s+(?:fully\s+)?confirmed\b/.test(
+      assistantMessage.toLowerCase()
+    ) ||
+    /\bscope is locked\b/.test(assistantMessage.toLowerCase());
+
+  const shouldAllowScopeLockSync =
+    scopeLockSignal &&
+    !/\?/.test(assistantMessage);
 
   if (
     nextState.pending_query_sql ||
@@ -707,7 +738,7 @@ function syncDecisionStateFromAssistantMessage(state: unknown, assistantMessage:
     nextState.pending_metric_confirmations.length > 0 ||
     nextState.prep_pending ||
     nextState.scope_pending ||
-    nextState.scope_clarification_pending ||
+    (nextState.scope_clarification_pending && !shouldAllowScopeLockSync) ||
     nextState.awaiting_post_run_refinement ||
     nextState.refinement_active ||
     nextState.awaiting_pdf_confirmation ||
@@ -729,23 +760,52 @@ function syncDecisionStateFromAssistantMessage(state: unknown, assistantMessage:
   const lower = assistantMessage.toLowerCase();
 
   // ── Prep-pending triggers (show "Run Data Preparation" button) ──
-  const prepSignal = /\brun data preparation\b/.test(lower);
-  const prepContext = /\b(scope|ready|locked|go ahead|choose|click|hit)\b/.test(lower);
-
-  // Broader scope-confirmation phrases the LLM naturally uses
-  const scopeConfirmedSignal =
-    /\bscope is (locked|confirmed|set|ready|finalized)\b/.test(lower) ||
-    /\b(locked in|all set|we'?re (all )?set|good to go)\b/.test(lower) ||
-    /\b(scope confirmed|confirmed scope|scope.{0,10}locked)\b/.test(lower) ||
-    /\bkick.{0,20}(analysis|preparation|things off)\b/.test(lower) ||
+  const prepSignal =
+    /\brun data preparation\b/.test(lower) ||
     /\bready to prepare data\b/.test(lower) ||
-    /\bdraft is ready\b/.test(lower) ||
-    /\brun data preparation\b/.test(lower);
+    /\bready to move to data prep(?:aration)?\b/.test(lower) ||
+    /\bdata preparation decision pending\b/.test(lower) ||
+    /\bscope clarifications captured for all questions\b/.test(lower) ||
+    /\ball\s+\w+\s+questions?\s+(?:are|is)\s+(?:fully\s+)?confirmed\b/.test(lower) ||
+    /\bscope is locked and waiting on the current workflow decision\b/.test(lower) ||
+    /\bscope is locked\b.*\bdata prep(?:aration)?\b/.test(lower) ||
+    /\bscope is locked\b/.test(lower);
 
-  if ((prepSignal && prepContext) || scopeConfirmedSignal) {
-    if (!nextState.prep_complete) {
+  // Guard: if the assistant is still asking for input, don't trigger prep.
+  const isAskingQuestions =
+    /\?/.test(assistantMessage) ||
+    /\b(let me know|please confirm|confirm (?:the|which|whether)|should (?:we|i)|would you|do you want)\b/.test(
+      lower
+    );
+
+  const explicitScopeLockSignal =
+    scopeLockSignal &&
+    !isAskingQuestions &&
+    nextState.scope_questions.length > 0;
+
+  if (explicitScopeLockSignal) {
+    nextState.scope_questions = nextState.scope_questions.map((entry) => {
+      if (entry.answer && entry.answer.trim().length > 0) {
+        return entry;
+      }
+      return {
+        ...entry,
+        answer: "Confirmed from locked scope summary."
+      };
+    });
+  }
+
+  if (prepSignal) {
+    if (
+      !nextState.prep_complete &&
+      !isAskingQuestions &&
+      (hasAnsweredScope || explicitScopeLockSignal)
+    ) {
+      nextState.scope_finalized = true;
+      nextState.scope_clarification_pending = false;
       nextState.prep_pending = true;
       nextState.scope_pending = false;
+      nextState.pending_inputs = [];
       return nextState;
     }
   }
@@ -789,14 +849,39 @@ function normalizeWorkflowDecisionState(state: unknown) {
   const hasAnsweredScopeItems =
     parsed.scope_questions.length > 0 &&
     parsed.scope_questions.every((entry) => Boolean(entry.answer && entry.answer.trim().length > 0));
+  const hasScopeReadyContext = hasScopeReadyContextInHistory(parsed);
+  const hasUnansweredScopeItems = parsed.scope_questions.some(
+    (entry) => !entry.answer || entry.answer.trim().length === 0
+  );
+  const hasBlockingDecision =
+    Boolean(parsed.pending_query_sql) ||
+    parsed.pending_single_query_request !== null ||
+    parsed.pending_metric_confirmations.length > 0 ||
+    (parsed.scope_clarification_pending && hasUnansweredScopeItems) ||
+    parsed.awaiting_post_run_refinement ||
+    parsed.refinement_active ||
+    parsed.awaiting_pdf_confirmation ||
+    parsed.awaiting_save_confirmation ||
+    parsed.awaiting_schedule_confirmation ||
+    parsed.awaiting_schedule_mode_selection ||
+    parsed.awaiting_custom_day_input;
+
+  if (hasUnansweredScopeItems && !hasScopeReadyContext) {
+    parsed.scope_clarification_pending = true;
+    parsed.scope_finalized = false;
+    parsed.prep_pending = false;
+    parsed.scope_pending = false;
+  }
 
   if (
-    hasAnsweredScopeItems &&
-    !parsed.scope_clarification_pending &&
-    !parsed.prep_complete &&
-    !parsed.prep_pending &&
-    !parsed.scope_pending
+    (hasAnsweredScopeItems || hasScopeReadyContext) &&
+    hasScopeReadyContext &&
+    !hasBlockingDecision &&
+    !parsed.prep_complete
   ) {
+    parsed.scope_finalized = true;
+    parsed.scope_clarification_pending = false;
+    parsed.scope_pending = false;
     parsed.prep_pending = true;
   }
 
@@ -818,6 +903,27 @@ function normalizeWorkflowDecisionState(state: unknown) {
   }
 
   return parsed;
+}
+
+function hasScopeReadyContextInHistory(state: ReturnType<typeof parseChatState>): boolean {
+  const lastAssistant = [...state.conversation_history]
+    .reverse()
+    .find((turn) => turn.role === "assistant");
+  if (!lastAssistant) {
+    return false;
+  }
+
+  const text = lastAssistant.content.toLowerCase();
+  return (
+    text.includes("scope clarifications captured for all questions") ||
+    text.includes("ready to prepare data for:") ||
+    /\ball\s+\w+\s+questions?\s+(?:are|is)\s+(?:fully\s+)?confirmed\b/.test(text) ||
+    text.includes("scope is locked and waiting on the current workflow decision") ||
+    text.includes("ready to move to data preparation") ||
+    text.includes("ready to move to data prep") ||
+    /\bscope is locked\b.*\bdata prep(?:aration)?\b/.test(text) ||
+    /\bscope is locked\b/.test(text)
+  );
 }
 
 function extractPendingSqlFromAssistantMessage(message: string): string | null {
@@ -888,13 +994,26 @@ function normalizeSqlCandidate(value: string): string {
 
 function looksLikeQueryExecutionClaim(message: string): boolean {
   const lower = message.toLowerCase();
-  if (/```sql/.test(lower) && /\b(i['’]?m|i am|let me|running|executing|querying|pulling)\b/.test(lower)) {
-    return true;
+  const hasQuerySignal =
+    /sql/.test(lower) ||
+    /\b(query|sql|statement|select|dataset|sample|data\s+pull|results?)\b/.test(lower);
+  if (!hasQuerySignal) {
+    return false;
+  }
+
+  const isReportOnlyLanguage =
+    /\b(report|analysis)\b/.test(lower) && !/\b(query|sql|statement|select)\b/.test(lower);
+  if (isReportOnlyLanguage) {
+    return false;
   }
 
   return (
-    /\b(i['’]?m|i am|we['’]?re|we are)\s+(running|executing|querying|pulling)\b/i.test(message) ||
-    /\b(i|we)\s+(ran|executed|queried|pulled)\b/i.test(message) ||
+    /\b(?:i.?m|i am|we.?re|we are)\s+(running|executing|querying|pulling)\s+(?:the\s+)?(?:query|sql|statement|select|dataset|sample|data\s+pull)\b/i.test(
+      message
+    ) ||
+    /\b(i|we)\s+(ran|executed|queried|pulled)\s+(?:the\s+)?(?:query|sql|statement|dataset|sample|data)\b/i.test(
+      message
+    ) ||
     /\bquery\s+is\s+running\b/i.test(message) ||
     /\b(as soon as|once)\s+[^.]{0,80}\b(query|results?)\b[^.]{0,80}\b(come back|completes?|finishes?|loads?)\b/i.test(message)
   );
@@ -902,7 +1021,7 @@ function looksLikeQueryExecutionClaim(message: string): boolean {
 
 function looksLikeReportExecutionClaim(message: string): boolean {
   return (
-    /\b(i['’]?m|i am|we['’]?re|we are)\s+(running|executing)\s+(the\s+)?report\b/i.test(message) ||
+    /\b(?:i.?m|i am|we.?re|we are)\s+(running|executing)\s+(the\s+)?report\b/i.test(message) ||
     /\b(report|run)\s+is\s+running\b/i.test(message) ||
     /\b(report)\s+(executed|completed)\b/i.test(message)
   );
@@ -913,22 +1032,6 @@ function looksLikePreparationExecutionClaim(message: string): boolean {
     /\bdata preparation\b/i.test(message) &&
     /\b(completed|finished|done|prepared)\b/i.test(message)
   );
-}
-
-function buildSafeChatFailureMessage(error: unknown): string {
-  const rawMessage = error instanceof Error ? error.message : "Chat command failed";
-  if (
-    /fetch failed|network|socket|timed out|econn|enotfound|temporarily unavailable|unexpected token|not valid json|doctype|<html|non-json/i.test(
-      rawMessage
-    )
-  ) {
-    return [
-      "That step did not return a completion signal yet.",
-      "No data was changed. Please retry the same action once."
-    ].join("\n");
-  }
-
-  return `I could not complete that action safely. ${rawMessage}`;
 }
 
 function isUiAuthEnabled(): boolean {
@@ -1037,11 +1140,50 @@ function getCookieValue(cookieHeader: string | undefined, key: string): string |
 
 function sanitizeCustomerFacingAssistantMessage(message: string): string {
   let sanitized = message;
-  sanitized = sanitized.replace(/\bthe system\b/gi, "the workflow");
-  sanitized = sanitized.replace(/\bsystem\b/gi, "workflow");
+  sanitized = sanitized.replace(/\bthe system\b/gi, "this process");
+  sanitized = sanitized.replace(/\bsystem\b/gi, "process");
+  sanitized = sanitized.replace(/\bthe workflow\b/gi, "this process");
+  sanitized = sanitized.replace(/\bworkflow\b/gi, "process");
   sanitized = sanitized.replace(/\bauto-?trigger(?:ed|ing)?\b/gi, "continued");
   sanitized = sanitized.replace(/\bRun Report\b/gi, "Finish scoping and run analysis");
-  sanitized = sanitized.replace(/\b(?:click|tap|press|hit)\b/gi, "choose");
+  sanitized = sanitized.replace(/\b(?:click|tap|press|hit|use)\b/gi, "choose");
+  sanitized = sanitized.replace(/\bbutton\b/gi, "step");
+  sanitized = sanitized.replace(/\bdecision pending\b/gi, "next step pending");
+  // Preserve newlines for markdown readability and table rendering.
+  sanitized = sanitized.replace(/[ \t]{2,}/g, " ");
+  sanitized = sanitized.replace(/[ \t]+\n/g, "\n");
+  sanitized = sanitized.replace(/\n{3,}/g, "\n\n");
 
   return sanitized;
 }
+
+function ensureScopeQuestionsVisible(message: string, state: unknown): string {
+  const parsed = parseChatState(state);
+  if (!parsed.scope_clarification_pending || parsed.scope_questions.length === 0) {
+    return message;
+  }
+
+  const hasQuestionList =
+    /(^|\n)\s*[-*]\s*Q\d+\s*:/i.test(message) || /(^|\n)\s*Q\d+\s*:/i.test(message);
+  if (hasQuestionList) {
+    return message;
+  }
+
+  const questionLines = parsed.scope_questions
+    .map((entry) => `- Q${entry.question_number}: ${entry.question}`)
+    .join("\n");
+
+  if (questionLines.trim().length === 0) {
+    return message;
+  }
+
+  return ["Questions in scope:", questionLines, "", message].join("\n");
+}
+
+function isConversationOrchestratorEnabled(): boolean {
+  const raw = (process.env.WEB_ENABLE_CONVERSATION_ORCHESTRATOR ?? "true").trim().toLowerCase();
+  return raw !== "false" && raw !== "0" && raw !== "off";
+}
+
+
+

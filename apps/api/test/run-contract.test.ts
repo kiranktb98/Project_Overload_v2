@@ -6,7 +6,12 @@ import {
   createStubPlannerClient,
   createStubReportComposerClient
 } from "@project-overload/llm-client";
-import type { AnalystClient, QueryStrategistClient, ReportComposerClient } from "@project-overload/llm-client";
+import type {
+  AnalystClient,
+  QueryStrategistClient,
+  ReportComposerClient,
+  SuperSummaryClient
+} from "@project-overload/llm-client";
 import type { QueryStrategyOutput, ReportContract } from "@project-overload/shared";
 import { InMemoryMetadataStore } from "../src/store/create-store";
 import {
@@ -69,6 +74,18 @@ function fixedStrategist(queries: QueryStrategyOutput["queries"]): QueryStrategi
   };
 }
 
+function sequencedStrategist(plans: QueryStrategyOutput["queries"][]): QueryStrategistClient {
+  let index = 0;
+  return {
+    provider: "stub",
+    async planQueries() {
+      const current = plans[Math.min(index, plans.length - 1)] ?? [];
+      index += 1;
+      return { queries: current };
+    }
+  };
+}
+
 function spyAnalyst(): { client: AnalystClient; calls: Array<{ question: string; row_count: number }> } {
   const calls: Array<{ question: string; row_count: number }> = [];
   const stub = createStubAnalystClient();
@@ -88,6 +105,226 @@ function spyAnalyst(): { client: AnalystClient; calls: Array<{ question: string;
 }
 
 describe("run pipeline", () => {
+  it("lets batch analyst request additional queries and re-runs analysis with supplemental evidence", async () => {
+    let analystCalls = 0;
+    const analystClient: AnalystClient = {
+      provider: "stub",
+      async analyzeBatch(input) {
+        analystCalls += 1;
+        if (analystCalls === 1) {
+          return {
+            request_id: input.request_id,
+            batch_index: input.batch_index,
+            total_batches: input.total_batches,
+            highlights: ["Evidence is missing city-level split for this question."],
+            risks: ["Cannot validate concentration without city breakdown."],
+            recommendations: ["Fetch city-level refund totals for the same period."],
+            confidence_score: 0.58,
+            appendix_refs: [`${input.request_id}:batch-${input.batch_index + 1}`],
+            additional_query_requests: [
+              {
+                reason: "Need city-level split to verify concentration.",
+                question: "What is refund amount by city in the same timeline?",
+                required_fields: ["city", "refund_amount"]
+              }
+            ]
+          };
+        }
+
+        return {
+          request_id: input.request_id,
+          batch_index: input.batch_index,
+          total_batches: input.total_batches,
+          highlights: ["City-level evidence was added and concentration is now measurable."],
+          risks: [],
+          recommendations: ["Proceed with city-level prioritization in the report."],
+          confidence_score: 0.91,
+          appendix_refs: [`${input.request_id}:batch-${input.batch_index + 1}`],
+          additional_query_requests: []
+        };
+      }
+    };
+
+    const strategist = sequencedStrategist([
+      [
+        {
+          question: "Refund trend question",
+          sql: "SELECT event_time, amount AS refund_amount FROM public.sales LIMIT 500",
+          purpose: "Baseline refund trend"
+        }
+      ],
+      [
+        {
+          question: "Refund trend question",
+          sql: "SELECT city, SUM(amount) AS refund_amount FROM public.sales GROUP BY city LIMIT 200",
+          purpose: "City-level refund breakdown"
+        }
+      ]
+    ]);
+
+    const result = await runReportContractPipeline({
+      contract: makeContract(),
+      store: new InMemoryMetadataStore(),
+      data_plane: new LocalStubDataPlane({
+        row_provider: (sql) =>
+          /group by\s+city/i.test(sql)
+            ? [
+                { city: "Bengaluru", refund_amount: 1200 },
+                { city: "Mumbai", refund_amount: 940 }
+              ]
+            : makeRows(120)
+      }),
+      analyst_client: analystClient,
+      query_strategist: strategist,
+      report_composer: createStubReportComposerClient(),
+      planner_client: createStubPlannerClient(),
+      catalog_summary: "public.sales [TABLE]: id, amount, city, event_time"
+    });
+
+    expect(analystCalls).toBeGreaterThanOrEqual(2);
+    expect(result.prepared_payloads[0]?.preparation_notes.join(" ")).toMatch(/Analyst follow-up query/i);
+    expect(result.run.query_plan.strategy_queries).toHaveLength(2);
+  });
+
+  it("filters internal QA wording from customer-facing analysis output", async () => {
+    const analystClient: AnalystClient = {
+      provider: "stub",
+      async analyzeBatch(input) {
+        return {
+          request_id: input.request_id,
+          batch_index: input.batch_index,
+          total_batches: input.total_batches,
+          highlights: ["Applied UTC offset correction before trend comparison."],
+          risks: ["Detected mislabels and autofixes in period keys."],
+          recommendations: ["Use updated labels and continue."],
+          confidence_score: 0.82,
+          appendix_refs: [`${input.request_id}:batch-${input.batch_index + 1}`],
+          additional_query_requests: []
+        };
+      }
+    };
+
+    const strategist = fixedStrategist([
+      {
+        question: "Refund trend",
+        sql: "SELECT event_time, amount AS refund_amount FROM public.sales LIMIT 200",
+        purpose: "Trend"
+      }
+    ]);
+
+    const result = await runReportContractPipeline({
+      contract: makeContract(),
+      store: new InMemoryMetadataStore(),
+      data_plane: new LocalStubDataPlane({ row_provider: () => makeRows(80) }),
+      analyst_client: analystClient,
+      query_strategist: strategist,
+      report_composer: createStubReportComposerClient(),
+      planner_client: createStubPlannerClient(),
+      catalog_summary: "public.sales [TABLE]: id, amount, event_time"
+    });
+
+    const htmlLower = result.html.toLowerCase();
+    expect(htmlLower).not.toContain("utc offset");
+    expect(htmlLower).not.toContain("mislabel");
+    expect(htmlLower).not.toContain("autofix");
+  });
+
+  it("skips super-summary context query planning when analyst already triggered additional queries", async () => {
+    let analystCalls = 0;
+    const analystClient: AnalystClient = {
+      provider: "stub",
+      async analyzeBatch(input) {
+        analystCalls += 1;
+        if (analystCalls === 1) {
+          return {
+            request_id: input.request_id,
+            batch_index: input.batch_index,
+            total_batches: input.total_batches,
+            highlights: ["Need one additional evidence slice."],
+            risks: ["Missing segment detail."],
+            recommendations: ["Fetch segment-level split."],
+            confidence_score: 0.6,
+            appendix_refs: [`${input.request_id}:batch-${input.batch_index + 1}`],
+            additional_query_requests: [
+              {
+                reason: "Need segment-level evidence.",
+                question: "What is refund amount by segment in the same window?",
+                required_fields: ["segment", "refund_amount"]
+              }
+            ]
+          };
+        }
+
+        return {
+          request_id: input.request_id,
+          batch_index: input.batch_index,
+          total_batches: input.total_batches,
+          highlights: ["Segment split added."],
+          risks: [],
+          recommendations: ["Proceed with final summary."],
+          confidence_score: 0.88,
+          appendix_refs: [`${input.request_id}:batch-${input.batch_index + 1}`],
+          additional_query_requests: []
+        };
+      }
+    };
+
+    const strategist = sequencedStrategist([
+      [
+        {
+          question: "Refund trend",
+          sql: "SELECT event_time, amount AS refund_amount FROM public.sales LIMIT 200",
+          purpose: "Trend"
+        }
+      ],
+      [
+        {
+          question: "Refund trend",
+          sql: "SELECT region AS segment, SUM(amount) AS refund_amount FROM public.sales GROUP BY region LIMIT 200",
+          purpose: "Segment split"
+        }
+      ]
+    ]);
+
+    const summarizeCalls: Array<{ allow_query_planning: boolean }> = [];
+    const superSummaryClient: SuperSummaryClient = {
+      provider: "stub",
+      async summarize(input) {
+        summarizeCalls.push({ allow_query_planning: Boolean(input.allow_query_planning) });
+        return {
+          summary: "Summary completed.",
+          issue_detected: false,
+          intervention_actions: [],
+          context_queries: [
+            "SELECT region, COUNT(*) AS cnt FROM public.sales GROUP BY region LIMIT 5"
+          ],
+          notes: []
+        };
+      },
+      drainUsageEvents() {
+        return [];
+      }
+    };
+
+    const result = await runReportContractPipeline({
+      contract: makeContract(),
+      store: new InMemoryMetadataStore(),
+      data_plane: new LocalStubDataPlane({ row_provider: () => makeRows(120) }),
+      analyst_client: analystClient,
+      query_strategist: strategist,
+      report_composer: createStubReportComposerClient(),
+      super_summary_client: superSummaryClient,
+      planner_client: createStubPlannerClient(),
+      catalog_summary: "public.sales [TABLE]: amount, event_time, region"
+    });
+
+    expect(analystCalls).toBeGreaterThanOrEqual(2);
+    expect(summarizeCalls).toHaveLength(1);
+    expect(summarizeCalls[0]?.allow_query_planning).toBe(false);
+    const plan = result.run.query_plan as Record<string, unknown>;
+    expect(plan["super_summary_context_queries"]).toEqual([]);
+  });
+
   it("merges grouped queries into one question payload and one analyst call", async () => {
     const analyst = spyAnalyst();
     const strategist = fixedStrategist([
@@ -209,6 +446,193 @@ describe("run pipeline", () => {
     expect(result.prepared_payloads[0].validation?.observed_months).toBe(12);
     expect(result.prepared_payloads[0].validation?.missing_months).toHaveLength(0);
     expect(result.exec_brief.what_changed.join(" ")).not.toMatch(/coverage warning/i);
+  });
+
+  it("does not treat period-label comparison aggregates as timeline coverage gaps", async () => {
+    const analyst = spyAnalyst();
+    const strategist = fixedStrategist([
+      {
+        question: "Compare last 2 months vs prior 2 months for refunds from Nov 2025 through Feb 2026",
+        sql: "SELECT month_label, prior_period, current_period, prior_total_orders, prior_refund_amount, current_total_orders, current_refund_amount, prior_refund_rate_pct FROM public.sales",
+        purpose: "Period-over-period comparison"
+      }
+    ]);
+
+    const comparisonRows = [
+      {
+        month_label: "Nov-Dec 2025",
+        prior_period: "Nov-Dec 2025 (Prior)",
+        current_period: "Jan-Feb 2026 (Current, Feb partial)",
+        prior_total_orders: 446,
+        prior_refund_amount: 241844.28,
+        current_total_orders: 454,
+        current_refund_amount: 236857.8,
+        prior_refund_rate_pct: 21.75
+      }
+    ];
+
+    const result = await runReportContractPipeline({
+      contract: makeContract(),
+      store: new InMemoryMetadataStore(),
+      data_plane: new LocalStubDataPlane({ row_provider: () => comparisonRows }),
+      analyst_client: analyst.client,
+      query_strategist: strategist,
+      report_composer: createStubReportComposerClient(),
+      planner_client: createStubPlannerClient(),
+      catalog_summary: "public.sales"
+    });
+
+    expect(result.prepared_payloads).toHaveLength(1);
+    expect(result.prepared_payloads[0].prepared_row_count).toBeGreaterThan(0);
+    expect(result.prepared_payloads[0].validation?.expected_months).toBeNull();
+    expect(result.prepared_payloads[0].validation?.missing_months).toHaveLength(0);
+    expect(analyst.calls.length).toBeGreaterThan(0);
+    expect(result.exec_brief.what_changed.join(" ")).not.toMatch(/coverage warning/i);
+  });
+
+  it("anchors expected timeline to requested end month and flags missing February when requested", async () => {
+    const analyst = spyAnalyst();
+    const strategist = fixedStrategist([
+      {
+        question: "Compare last 2 months vs prior 2 months for refunds from Nov 2025 through Feb 2026",
+        sql: "SELECT event_time, amount AS refund_amount, region FROM public.sales",
+        purpose: "2v2 refund comparison"
+      }
+    ]);
+
+    const rowsMissingFebruary = Array.from({ length: 180 }, (_, index) => {
+      const month = [10, 11, 0][index % 3]; // Nov 2025, Dec 2025, Jan 2026
+      const year = month === 0 ? 2026 : 2025;
+      return {
+        id: index + 1,
+        refund_amount: (index % 30) + 1,
+        region: ["NA", "EU", "APAC"][index % 3],
+        event_time: new Date(Date.UTC(year, month, 1)).toISOString()
+      };
+    });
+
+    const result = await runReportContractPipeline({
+      contract: makeContract(),
+      store: new InMemoryMetadataStore(),
+      data_plane: new LocalStubDataPlane({ row_provider: () => rowsMissingFebruary }),
+      analyst_client: analyst.client,
+      query_strategist: strategist,
+      report_composer: createStubReportComposerClient(),
+      planner_client: createStubPlannerClient(),
+      catalog_summary: "public.sales"
+    });
+
+    expect(result.prepared_payloads).toHaveLength(1);
+    expect(result.prepared_payloads[0].validation?.expected_months).toBe(4);
+    expect(result.prepared_payloads[0].validation?.missing_months).toContain("2026-02");
+    expect(analyst.calls).toHaveLength(0);
+  });
+
+  it("labels period-comparison aggregate rows with explicit month-range labels", async () => {
+    const strategist = fixedStrategist([
+      {
+        question: "Compare last 2 months vs prior 2 months for refunds from Nov 2025 through Feb 2026",
+        sql: "SELECT 'monthly_mode' AS mode, event_time, amount AS refund_amount FROM public.sales WHERE event_time >= DATE '2025-11-01' AND event_time < DATE '2026-03-01'",
+        purpose: "Monthly trend of refund metrics",
+        group_id: "q1"
+      },
+      {
+        question: "Compare last 2 months vs prior 2 months for refunds from Nov 2025 through Feb 2026",
+        sql: "SELECT 'comparison_mode' AS mode, event_time, amount AS refund_amount FROM public.sales WHERE event_time >= DATE '2025-11-01' AND event_time < DATE '2026-03-01'",
+        purpose: "Period-over-period comparison",
+        group_id: "q1"
+      }
+    ]);
+
+    const store = new InMemoryMetadataStore();
+    const contract = makeContract();
+    const dataPlane = new LocalStubDataPlane({
+      row_provider: (sql) => {
+        if (sql.includes("comparison_mode")) {
+          return [
+            {
+              month_start: "2025-11-01",
+              month_label: "",
+              refund_order_count: 97,
+              refund_revenue: 241844.28
+            },
+            {
+              month_start: "2026-01-01",
+              month_label: "",
+              refund_order_count: 95,
+              refund_revenue: 237257.8
+            }
+          ];
+        }
+        return [
+          { month_start: "2025-11-01", month_label: "Nov 2025", refund_order_count: 41, refund_revenue: 102222.84 },
+          { month_start: "2025-12-01", month_label: "Dec 2025", refund_order_count: 56, refund_revenue: 139621.44 },
+          { month_start: "2026-01-01", month_label: "Jan 2026", refund_order_count: 64, refund_revenue: 159567.36 },
+          { month_start: "2026-02-01", month_label: "Feb 2026", refund_order_count: 31, refund_revenue: 77290.44 }
+        ];
+      }
+    });
+
+    const prepared = await prepareReportContractData({
+      contract,
+      store,
+      data_plane: dataPlane,
+      query_strategist: strategist,
+      planner_client: createStubPlannerClient(),
+      catalog_summary: "public.sales"
+    });
+
+    expect(prepared.prepared_payloads).toHaveLength(1);
+    const rows = prepared.prepared_payloads[0].prepared_rows;
+    const novDec = rows.find(
+      (row) =>
+        String(row.month_start) === "2025-11-01" &&
+        String(row._sub_query ?? "").toLowerCase().includes("period-over-period")
+    );
+    const janFeb = rows.find(
+      (row) =>
+        String(row.month_start) === "2026-01-01" &&
+        String(row._sub_query ?? "").toLowerCase().includes("period-over-period")
+    );
+
+    expect(String(novDec?.month_label ?? "")).toContain("Nov-Dec 2025");
+    expect(String(janFeb?.month_label ?? "")).toContain("Jan-Feb 2026");
+  });
+
+  it("reduces city x issue rows to top issue cuts per city during preparation", async () => {
+    const strategist = fixedStrategist([
+      {
+        question:
+          "For refunded orders in the past 4 months, what are the top issue types by city?",
+        sql: "SELECT city, issue_type, ticket_count FROM public.sales",
+        purpose: "Cross-tabulation of city vs issue type"
+      }
+    ]);
+
+    const cities = ["Bengaluru", "Mumbai", "Delhi", "Chennai", "Pune", "Kolkata"];
+    const issues = ["delivery", "wrong_item", "damaged_item", "billing"];
+    const rows = cities.flatMap((city, cityIndex) =>
+      issues.map((issue, issueIndex) => ({
+        city,
+        issue_type: issue,
+        ticket_count: 100 - cityIndex * 5 - issueIndex
+      }))
+    );
+
+    const prepared = await prepareReportContractData({
+      contract: makeContract(),
+      store: new InMemoryMetadataStore(),
+      data_plane: new LocalStubDataPlane({ row_provider: () => rows }),
+      query_strategist: strategist,
+      planner_client: createStubPlannerClient(),
+      catalog_summary: "public.sales"
+    });
+
+    expect(prepared.prepared_payloads).toHaveLength(1);
+    const payload = prepared.prepared_payloads[0];
+    expect(payload.row_count_before_reduction).toBe(rows.length);
+    expect(payload.prepared_row_count).toBeLessThan(rows.length);
+    expect(payload.preparation_notes.join(" ")).toMatch(/top 2 issues per city/i);
   });
 
   it("normalizes epoch microsecond timestamps into valid month keys during preparation", async () => {
@@ -355,6 +779,153 @@ describe("run pipeline", () => {
     expect(result.html.toLowerCase()).toContain("<html");
     expect(result.html).toContain("Metric Definitions");
     expect(result.html).toContain("Refund Rate");
+  });
+
+  it("sanitizes metric definitions section so partial/incomplete wording is not shown", async () => {
+    const strategist = fixedStrategist([
+      { question: "Q1", sql: "SELECT * FROM public.sales", purpose: "Test" }
+    ]);
+    const flakyComposer: ReportComposerClient = {
+      provider: "openrouter",
+      async composeReport() {
+        throw new Error("fetch failed");
+      },
+      drainUsageEvents() {
+        return [];
+      }
+    };
+
+    const result = await runReportContractPipeline({
+      contract: makeContract({
+        metric_definitions: [
+          {
+            metric_key: "refund_rate",
+            display_name: "Refund Rate",
+            definition: "Refund rate with partial data coverage in this period",
+            filter_description: "missing months in source data",
+            filter_column: "status",
+            filter_values: ["refunded"],
+            status: "resolved"
+          }
+        ]
+      }),
+      store: new InMemoryMetadataStore(),
+      data_plane: new LocalStubDataPlane({ row_provider: () => makeRows(60) }),
+      analyst_client: createStubAnalystClient(),
+      query_strategist: strategist,
+      report_composer: flakyComposer,
+      planner_client: createStubPlannerClient(),
+      catalog_summary: "public.sales"
+    });
+
+    expect(result.html).toContain("Metric Definitions");
+    expect(result.html.toLowerCase()).not.toContain("partial data coverage");
+    expect(result.html.toLowerCase()).not.toContain("missing months");
+  });
+
+  it("rejects unresolved placeholder composer HTML and falls back to deterministic grounded HTML", async () => {
+    const strategist = fixedStrategist([
+      {
+        question: "Top cities by refund value",
+        sql: "SELECT city, amount AS refund_amount, event_time FROM public.sales",
+        purpose: "City ranking"
+      }
+    ]);
+    const placeholderComposer: ReportComposerClient = {
+      provider: "openrouter",
+      async composeReport() {
+        return "<html><body><p>Pending full export for top cities.</p></body></html>";
+      },
+      drainUsageEvents() {
+        return [];
+      }
+    };
+
+    const rows = [
+      { city: "Bengaluru", refund_amount: 1200, event_time: "2025-11-01T00:00:00.000Z" },
+      { city: "Mumbai", refund_amount: 900, event_time: "2025-11-01T00:00:00.000Z" },
+      { city: "Delhi", refund_amount: 700, event_time: "2025-11-01T00:00:00.000Z" }
+    ];
+
+    const result = await runReportContractPipeline({
+      contract: makeContract(),
+      store: new InMemoryMetadataStore(),
+      data_plane: new LocalStubDataPlane({ row_provider: () => rows }),
+      analyst_client: createStubAnalystClient(),
+      query_strategist: strategist,
+      report_composer: placeholderComposer,
+      planner_client: createStubPlannerClient(),
+      catalog_summary: "public.sales"
+    });
+
+    expect(result.run.status).toBe("succeeded");
+    expect(result.html.toLowerCase()).not.toContain("pending full export");
+    expect(result.html).toMatch(/Bengaluru|Mumbai|Delhi/);
+  });
+
+  it("runs super summary stage with optional context queries before composing html", async () => {
+    const strategist = fixedStrategist([
+      { question: "Q1", sql: "SELECT * FROM public.sales", purpose: "Test" }
+    ]);
+    const summarizeCalls: Array<{ allow_query_planning: boolean; context_rows: number }> = [];
+
+    const superSummaryClient: SuperSummaryClient = {
+      provider: "stub",
+      async summarize(input) {
+        summarizeCalls.push({
+          allow_query_planning: Boolean(input.allow_query_planning),
+          context_rows: (input.context_query_results ?? []).reduce((sum, item) => sum + item.row_count, 0)
+        });
+
+        if (input.allow_query_planning) {
+          return {
+            summary: "Initial executive synthesis from prepared payloads.",
+            issue_detected: true,
+            intervention_actions: ["Investigate top refund drivers by issue type."],
+            context_queries: [
+              "SELECT region, COUNT(*) AS cnt FROM public.sales GROUP BY region LIMIT 5"
+            ],
+            notes: ["Context query requested for regional concentration check."]
+          };
+        }
+
+        return {
+          summary: "Final executive synthesis with regional context validated.",
+          issue_detected: true,
+          intervention_actions: ["Prioritize intervention in highest-concentration region."],
+          context_queries: [],
+          notes: ["Context query was executed and incorporated."]
+        };
+      },
+      drainUsageEvents() {
+        return [];
+      }
+    };
+
+    const result = await runReportContractPipeline({
+      contract: makeContract(),
+      store: new InMemoryMetadataStore(),
+      data_plane: new LocalStubDataPlane({ row_provider: () => makeRows(120) }),
+      analyst_client: createStubAnalystClient(),
+      query_strategist: strategist,
+      report_composer: createStubReportComposerClient(),
+      super_summary_client: superSummaryClient,
+      planner_client: createStubPlannerClient(),
+      catalog_summary: "public.sales [table]: region(text), amount(numeric), event_time(timestamp)"
+    });
+
+    expect(summarizeCalls).toHaveLength(2);
+    expect(summarizeCalls[0].allow_query_planning).toBe(true);
+    expect(summarizeCalls[1].allow_query_planning).toBe(false);
+    expect(summarizeCalls[1].context_rows).toBeGreaterThanOrEqual(0);
+
+    const plan = result.run.query_plan as Record<string, unknown>;
+    const superSummary = plan["super_summary"] as Record<string, unknown>;
+    expect(superSummary).toBeDefined();
+    expect(String(superSummary["summary"])).toContain("Final executive synthesis");
+    expect(Array.isArray(plan["super_summary_context_queries"])).toBe(true);
+    expect(result.html).toContain("Executive Super Summary");
+    expect(result.html).toContain("AI Recommended Actions for Intervention");
   });
 
   it("computes deltas against previous run", async () => {
@@ -556,7 +1127,8 @@ describe("payload QA agent", () => {
           risks: ["Dragon metric instability at 123456."],
           recommendations: ["Launch moon campaign immediately."],
           confidence_score: 0.99,
-          appendix_refs: ["fake-ref"]
+          appendix_refs: ["fake-ref"],
+          additional_query_requests: []
         };
       }
     };
@@ -581,5 +1153,30 @@ describe("payload QA agent", () => {
     expect(analysisPayloads[0].highlights.join(" ").toLowerCase()).toContain("analyzed");
     expect(analysisPayloads[0].highlights.join(" ").toLowerCase()).not.toContain("atlantis");
     expect(analysisPayloads[0].recommendations.length).toBeGreaterThan(0);
+  });
+
+  it("requires fresh scoped analysis for novel follow-up intent not grounded in current payload", async () => {
+    const strategist = fixedStrategist([
+      { question: "How did refunds change month over month?", sql: "SELECT * FROM public.sales", purpose: "Refund trend" }
+    ]);
+
+    const pipeline = await runReportContractPipeline({
+      contract: makeContract(),
+      store: new InMemoryMetadataStore(),
+      data_plane: new LocalStubDataPlane({ row_provider: () => makeRows(120) }),
+      analyst_client: createStubAnalystClient(),
+      query_strategist: strategist,
+      report_composer: createStubReportComposerClient(),
+      planner_client: createStubPlannerClient(),
+      catalog_summary: "public.sales"
+    });
+
+    const qa = answerRunPayloadQuestion({
+      run: pipeline.run,
+      question: "Can you also add top cities by issue type and support-ticket driver breakdown?"
+    });
+
+    expect(qa.grounded).toBe(false);
+    expect(qa.requires_new_analysis).toBe(true);
   });
 });

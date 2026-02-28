@@ -51,7 +51,8 @@ describe("llm client", () => {
       risks: ["No major risk"],
       recommendations: ["Keep monitoring"],
       confidence_score: 0.81,
-      appendix_refs: ["req_1:batch-1"]
+      appendix_refs: ["req_1:batch-1"],
+      additional_query_requests: []
     };
 
     const calls: Array<{ input: RequestInfo | URL; init?: RequestInit }> = [];

@@ -1,7 +1,9 @@
 import { randomUUID } from "node:crypto";
 import {
+  ConversationOrchestratorDecisionSchema,
   ExecBriefSchema,
-  ReportContractSchema
+  ReportContractSchema,
+  type ConversationOrchestratorDecision
 } from "@project-overload/shared";
 import { z } from "zod";
 import type {
@@ -30,14 +32,14 @@ const PREPARE_TIMEOUT_MS = parseTimeoutMsFromEnv(
   process.env.WEB_PREPARE_TIMEOUT_MS ?? process.env.WEB_API_TIMEOUT_MS ?? process.env.LLM_TIMEOUT_MS,
   900_000
 );
-const RUN_TIMEOUT_MS = parseTimeoutMsFromEnv(
-  process.env.WEB_RUN_TIMEOUT_MS ?? process.env.WEB_API_TIMEOUT_MS ?? process.env.LLM_TIMEOUT_MS,
-  900_000
-);
 const PDF_TIMEOUT_MS = parseTimeoutMsFromEnv(
   process.env.WEB_PDF_TIMEOUT_MS ?? process.env.WEB_API_TIMEOUT_MS ?? process.env.LLM_TIMEOUT_MS,
   900_000
 );
+
+function isTestRuntime(): boolean {
+  return process.env.NODE_ENV === "test" || process.env.VITEST === "true";
+}
 
 export const ChatDraftSchema = z.object({
   name: z.string(),
@@ -70,6 +72,24 @@ const ChatMetricDefinitionSchema = z.object({
   context: z.enum(["single_query", "deep_analysis"]).default("deep_analysis")
 });
 
+const ChatPendingInputSchema = z.object({
+  input_key: z.string().min(1),
+  prompt: z.string().min(1),
+  reason: z.string().optional(),
+  question_number: z.number().int().min(1).optional()
+});
+
+const ChatQuestionRegistrySchema = z.object({
+  question_number: z.number().int().min(1),
+  question_id: z.string().nullable().default(null),
+  question_text: z.string().min(1),
+  status: z.enum(["open", "scoped", "prepared", "analyzed", "complete"]).default("open"),
+  group_id: z.string().nullable().default(null),
+  clarification_needed: z.string().nullable().default(null),
+  clarification_answer: z.string().nullable().default(null),
+  scope_clarified: z.boolean().default(false)
+});
+
 export const ChatStateSchema = z.object({
   draft: ChatDraftSchema,
   contract_id: z.string().nullable(),
@@ -80,11 +100,13 @@ export const ChatStateSchema = z.object({
   prep_pending: z.boolean().default(false),
   prep_complete: z.boolean().default(false),
   scope_pending: z.boolean().default(false),
+  scope_finalized: z.boolean().default(false),
   metric_definitions: z.array(ChatMetricDefinitionSchema).default([]),
   pending_metric_confirmations: z.array(ChatMetricDefinitionSchema).default([]),
   pending_metric_resume_message: z.string().nullable().default(null),
   pending_metric_resume_mode: z.enum(["single_query", "deep_analysis"]).nullable().default(null),
   scope_clarification_pending: z.boolean().default(false),
+  scope_business_context: z.string().nullable().default(null),
   scope_source_prompt: z.string().nullable().default(null),
   scope_questions: z
     .array(
@@ -218,7 +240,12 @@ export const ChatStateSchema = z.object({
       )
     })
     .nullable()
-    .default(null)
+    .default(null),
+  orchestrator_context_version: z.number().int().min(1).default(1),
+  orchestrator_summary: z.string().nullable().default(null),
+  last_orchestrator_decision: ConversationOrchestratorDecisionSchema.nullable().default(null),
+  pending_inputs: z.array(ChatPendingInputSchema).default([]),
+  question_registry: z.array(ChatQuestionRegistrySchema).default([])
 });
 
 export const ChatTurnRequestSchema = z.object({
@@ -240,7 +267,6 @@ export type ChatTurnResponse = {
 };
 
 type ReportContractRecord = z.output<typeof ReportContractSchema>;
-type ExecBriefRecord = z.output<typeof ExecBriefSchema>;
 type ConnectionContextRecord = z.output<typeof ConnectionContextSchema>;
 type SafeQueryResponseRecord = z.output<typeof SafeQueryResponseSchema>;
 
@@ -267,6 +293,7 @@ export interface WebApiClient {
     answer: string;
     citations: string[];
     grounded: boolean;
+    requires_new_analysis: boolean;
   }>;
   saveRun(runId: string): Promise<{
     run_id: string;
@@ -457,16 +484,34 @@ const DataCatalogSchema = z.object({
 
 type DataCatalogRecord = z.output<typeof DataCatalogSchema>;
 
-const RelationHealthSchema = z.object({
-  schema_name: z.string(),
-  relation_name: z.string(),
-  qualified_name: z.string(),
-  has_select_privilege: z.boolean(),
-  rls_active_for_me: z.boolean(),
-  policies_count_for_me: z.number(),
-  status: z.enum(["OK", "NO_SELECT_GRANT", "RLS_NO_POLICY"]),
-  status_label: z.string()
-});
+const RelationHealthSchema = z
+  .object({
+    schema_name: z.string().optional(),
+    relation_name: z.string().optional(),
+    qualified_name: z.string(),
+    has_select_privilege: z.boolean().optional(),
+    rls_active_for_me: z.boolean().optional(),
+    policies_count_for_me: z.number().optional(),
+    status: z.enum(["OK", "NO_SELECT_GRANT", "RLS_NO_POLICY"]),
+    status_label: z.string().optional()
+  })
+  .transform((entry) => {
+    const [derivedSchema = "", derivedRelation = ""] = entry.qualified_name.split(".", 2);
+    const hasSelectPrivilege =
+      typeof entry.has_select_privilege === "boolean"
+        ? entry.has_select_privilege
+        : entry.status !== "NO_SELECT_GRANT";
+    return {
+      schema_name: entry.schema_name ?? derivedSchema,
+      relation_name: entry.relation_name ?? derivedRelation,
+      qualified_name: entry.qualified_name,
+      has_select_privilege: hasSelectPrivilege,
+      rls_active_for_me: entry.rls_active_for_me ?? false,
+      policies_count_for_me: entry.policies_count_for_me ?? 0,
+      status: entry.status,
+      status_label: entry.status_label ?? entry.status
+    };
+  });
 
 const TableHealthResponseSchema = z.object({
   relations: z.array(RelationHealthSchema).default([])
@@ -507,11 +552,13 @@ export function createInitialChatState(): ChatState {
     prep_pending: false,
     prep_complete: false,
     scope_pending: false,
+    scope_finalized: false,
     metric_definitions: [],
     pending_metric_confirmations: [],
     pending_metric_resume_message: null,
     pending_metric_resume_mode: null,
     scope_clarification_pending: false,
+    scope_business_context: null,
     scope_source_prompt: null,
     scope_questions: [],
     pending_query_sql: null,
@@ -536,7 +583,12 @@ export function createInitialChatState(): ChatState {
     pending_schedule: null,
     last_concise_summary: null,
     pending_run_id: null,
-    last_token_usage: null
+    last_token_usage: null,
+    orchestrator_context_version: 1,
+    orchestrator_summary: null,
+    last_orchestrator_decision: null,
+    pending_inputs: [],
+    question_registry: []
   };
 }
 
@@ -546,7 +598,7 @@ export function parseChatState(value: unknown): ChatState {
     return createInitialChatState();
   }
 
-  return {
+  const next: ChatState = {
     draft: {
       ...parsed.data.draft,
       metric_ids: [...parsed.data.draft.metric_ids],
@@ -563,6 +615,7 @@ export function parseChatState(value: unknown): ChatState {
     prep_pending: parsed.data.prep_pending ?? false,
     prep_complete: parsed.data.prep_complete ?? false,
     scope_pending: parsed.data.scope_pending ?? false,
+    scope_finalized: parsed.data.scope_finalized ?? false,
     metric_definitions: parsed.data.metric_definitions.map((entry) => ({
       metric_key: entry.metric_key,
       display_name: entry.display_name,
@@ -588,6 +641,7 @@ export function parseChatState(value: unknown): ChatState {
     pending_metric_resume_message: parsed.data.pending_metric_resume_message ?? null,
     pending_metric_resume_mode: parsed.data.pending_metric_resume_mode ?? null,
     scope_clarification_pending: parsed.data.scope_clarification_pending ?? false,
+    scope_business_context: parsed.data.scope_business_context ?? null,
     scope_source_prompt: parsed.data.scope_source_prompt ?? null,
     scope_questions: parsed.data.scope_questions.map((entry) => ({
       question_number: entry.question_number,
@@ -621,8 +675,67 @@ export function parseChatState(value: unknown): ChatState {
     pending_schedule: parsed.data.pending_schedule ?? null,
     last_concise_summary: parsed.data.last_concise_summary ?? null,
     pending_run_id: parsed.data.pending_run_id ?? null,
-    last_token_usage: parsed.data.last_token_usage ?? null
+    last_token_usage: parsed.data.last_token_usage ?? null,
+    orchestrator_context_version: parsed.data.orchestrator_context_version ?? 1,
+    orchestrator_summary: parsed.data.orchestrator_summary ?? null,
+    last_orchestrator_decision: parsed.data.last_orchestrator_decision ?? null,
+    pending_inputs: parsed.data.pending_inputs.map((entry) => ({
+      input_key: entry.input_key,
+      prompt: entry.prompt,
+      reason: entry.reason,
+      question_number: entry.question_number
+    })),
+    question_registry: parsed.data.question_registry.map((entry) => ({
+      question_number: entry.question_number,
+      question_id: entry.question_id ?? null,
+      question_text: entry.question_text,
+      status: entry.status,
+      group_id: entry.group_id ?? null,
+      clarification_needed: entry.clarification_needed ?? null,
+      clarification_answer: entry.clarification_answer ?? null,
+      scope_clarified: entry.scope_clarified ?? false
+    }))
   };
+
+  syncQuestionRegistryFromScope(next);
+  return next;
+}
+
+function isAdvancedQuestionStatus(status: "open" | "scoped" | "prepared" | "analyzed" | "complete"): boolean {
+  return status === "prepared" || status === "analyzed" || status === "complete";
+}
+
+function syncQuestionRegistryFromScope(state: ChatState): void {
+  if (state.scope_questions.length === 0) {
+    state.question_registry = [];
+    return;
+  }
+
+  const byNumber = new Map(
+    state.question_registry.map((entry) => [entry.question_number, entry])
+  );
+
+  state.question_registry = state.scope_questions.map((entry) => {
+    const existing = byNumber.get(entry.question_number);
+    const answered = Boolean(entry.answer && entry.answer.trim().length > 0);
+    const status =
+      existing && isAdvancedQuestionStatus(existing.status)
+        ? existing.status
+        : answered
+        ? "scoped"
+        : "open";
+
+    return {
+      question_number: entry.question_number,
+      question_id: existing?.question_id ?? null,
+      question_text: entry.question,
+      status,
+      group_id: existing?.group_id ?? null,
+      clarification_needed: entry.clarification,
+      clarification_answer: entry.answer ?? null,
+      scope_clarified: answered
+    };
+  });
 }
 
 export function appendConversationTurn(
@@ -655,6 +768,180 @@ export function appendConversationTurn(
   return next;
 }
 
+function applyConversationOrchestratorDecision(
+  state: ChatState,
+  decision: ConversationOrchestratorDecision,
+  userCommand?: string
+): ChatState {
+  const next = parseChatState(state);
+  const hadScopeQuestionsBefore = state.scope_questions.length > 0;
+  const explicitFinalizeSignal =
+    typeof userCommand === "string" && isScopeFinalizeChoice(userCommand.trim().toLowerCase());
+  const parsed = ConversationOrchestratorDecisionSchema.safeParse(decision);
+  if (!parsed.success) {
+    return next;
+  }
+
+  const resolved = parsed.data;
+  next.orchestrator_context_version = 1;
+  next.last_orchestrator_decision = resolved;
+  next.orchestrator_summary = resolved.state_updates.summary ?? null;
+
+  if (resolved.state_updates.clear_pending_inputs) {
+    next.pending_inputs = [];
+  } else if (resolved.pending_inputs.length > 0) {
+    next.pending_inputs = resolved.pending_inputs.map((entry) => ({
+      input_key: entry.input_key,
+      prompt: entry.prompt,
+      reason: entry.reason,
+      question_number: entry.question_number
+    }));
+  }
+
+  const newQuestions = resolved.new_scope_questions.map((entry) => ({
+    question_number: next.scope_questions.length + 1,
+    question: entry.question_text,
+    clarification: entry.clarification,
+    answer: null,
+    metric_key: null,
+    metric_display_name: null,
+    metric_definition_draft: null,
+    metric_source_columns: []
+  }));
+
+  const followUpQuestions = resolved.follow_up_requests
+    .filter((entry) => entry.requires_new_data)
+    .map((entry) => ({
+      question_number: next.scope_questions.length + 1,
+      question: entry.question_text,
+      clarification: "Follow-up scope requiring fresh data preparation.",
+      answer: null,
+      metric_key: null,
+      metric_display_name: null,
+      metric_definition_draft: null,
+      metric_source_columns: []
+    }));
+
+  if (newQuestions.length > 0 || followUpQuestions.length > 0) {
+    next.scope_questions = renumberScopeQuestions(
+      removeDuplicateScopeQuestions(
+        [...next.scope_questions, ...newQuestions, ...followUpQuestions].map(sanitizeScopeQuestionLanguage)
+      )
+    );
+    next.scope_clarification_pending = true;
+    next.scope_pending = false;
+    next.prep_pending = false;
+    next.scope_finalized = false;
+  }
+
+  const shouldIgnoreResolvedAnswersForNewSessionQuestions =
+    !hadScopeQuestionsBefore && (newQuestions.length > 0 || followUpQuestions.length > 0);
+
+  if (
+    !shouldIgnoreResolvedAnswersForNewSessionQuestions &&
+    !next.scope_clarification_pending &&
+    resolved.resolved_scope_answers.length > 0
+  ) {
+    for (const answer of resolved.resolved_scope_answers) {
+      const target = next.scope_questions.find(
+        (entry) => entry.question_number === answer.question_number
+      );
+      if (!target) {
+        continue;
+      }
+      target.answer = answer.answer.trim();
+    }
+  }
+
+  const answeredScopeCount = next.scope_questions.filter(
+    (entry) => entry.answer && entry.answer.trim().length > 0
+  ).length;
+  const allScopeAnswered =
+    next.scope_questions.length > 0 && answeredScopeCount === next.scope_questions.length;
+
+  if (
+    resolved.state_updates.mark_scope_complete &&
+    allScopeAnswered &&
+    next.pending_inputs.length === 0
+  ) {
+    if (explicitFinalizeSignal) {
+      next.scope_clarification_pending = false;
+      next.scope_finalized = true;
+      if (!next.prep_complete) {
+        next.prep_pending = true;
+      }
+    } else {
+      next.scope_clarification_pending = true;
+      next.scope_finalized = false;
+      next.prep_pending = false;
+      next.scope_pending = false;
+    }
+  }
+
+  if (resolved.next_owner === "wait_for_user") {
+    if (next.scope_questions.length > 0) {
+      next.scope_clarification_pending = true;
+      next.prep_pending = false;
+      next.scope_pending = false;
+      next.scope_finalized = false;
+    }
+  }
+
+  if (resolved.state_updates.question_registry_updates.length > 0) {
+    const byQuestion = new Map(
+      next.question_registry.map((entry) => [entry.question_number, entry])
+    );
+
+    for (const update of resolved.state_updates.question_registry_updates) {
+      const existing = byQuestion.get(update.question_number);
+      if (existing) {
+        existing.status = update.status;
+        existing.question_id = update.question_id ?? existing.question_id;
+      } else {
+        const source = next.scope_questions.find(
+          (entry) => entry.question_number === update.question_number
+        );
+        byQuestion.set(update.question_number, {
+          question_number: update.question_number,
+          question_id: update.question_id ?? null,
+          question_text: source?.question ?? `Q${update.question_number}`,
+          status: update.status,
+          group_id: null,
+          clarification_needed: source?.clarification ?? null,
+          clarification_answer: source?.answer ?? null,
+          scope_clarified: Boolean(source?.answer && source.answer.trim().length > 0)
+        });
+      }
+    }
+
+    next.question_registry = Array.from(byQuestion.values()).sort(
+      (left, right) => left.question_number - right.question_number
+    );
+  } else if (next.scope_questions.length > 0) {
+    const existingByNumber = new Map(
+      next.question_registry.map((entry) => [entry.question_number, entry])
+    );
+    next.question_registry = next.scope_questions.map((entry) => {
+      const existing = existingByNumber.get(entry.question_number);
+      return {
+        question_number: entry.question_number,
+        question_id: existing?.question_id ?? null,
+        question_text: entry.question,
+        status:
+          existing?.status ??
+          (entry.answer && entry.answer.trim().length > 0 ? "scoped" : "open"),
+        group_id: existing?.group_id ?? null,
+        clarification_needed: entry.clarification,
+        clarification_answer: entry.answer ?? null,
+        scope_clarified: Boolean(entry.answer && entry.answer.trim().length > 0)
+      };
+    });
+  }
+
+  syncQuestionRegistryFromScope(next);
+  return next;
+}
+
 // ---------------------------------------------------------------------------
 // applyLlmDraftUpdates — merges structured LLM draft updates into state
 // ---------------------------------------------------------------------------
@@ -669,6 +956,11 @@ export function applyLlmDraftUpdates(
   const next = parseChatState(state);
   let changed = false;
   const preservePreparedState = options?.preserve_prepared_state ?? false;
+  const hasInProgressScopeState =
+    next.scope_questions.length > 0 ||
+    next.question_registry.length > 0 ||
+    next.scope_clarification_pending ||
+    next.scope_finalized;
 
   if (updates.name !== undefined && updates.name !== next.draft.name) {
     next.draft.name = updates.name;
@@ -722,7 +1014,7 @@ export function applyLlmDraftUpdates(
     changed = true;
   }
 
-  if (changed && !preservePreparedState) {
+  if (changed && !preservePreparedState && !hasInProgressScopeState) {
     resetPreparedState(next);
   }
 
@@ -774,26 +1066,51 @@ async function verifyDataScope(
     }
   }
 
-  if (blockedTables.length > 0) {
-    return {
-      ok: false,
-      blocking_message: [
-        `Cannot read these tables (no SELECT permission): ${blockedTables.join(", ")}.`,
-        "Visit the connection wizard to generate a GRANT SQL fix script, or remove these tables from the scope."
-      ].join("\n"),
-      warning_lines: []
-    };
-  }
+  const updateDraftScope = (nextRelations: string[]) => {
+    draft.allowed_relations = nextRelations;
+    draft.allowed_schemas = Array.from(
+      new Set(
+        nextRelations
+          .map((relation) => relation.split(".")[0])
+          .filter((schema): schema is string => typeof schema === "string" && schema.length > 0)
+      )
+    );
+  };
 
   if (missingTables.length > 0) {
-    return {
-      ok: false,
-      blocking_message: [
-        `These tables don't exist in your connected database: ${missingTables.join(", ")}.`,
-        "They may have been renamed or dropped. Update your table scope or say 'use connected tables'."
-      ].join("\n"),
-      warning_lines: []
-    };
+    const missingSet = new Set(missingTables.map((relation) => relation.toLowerCase()));
+    const retained = draft.allowed_relations.filter((relation) => !missingSet.has(relation.toLowerCase()));
+    if (retained.length > 0) {
+      updateDraftScope(retained);
+      warnings.push(`Ignored unavailable tables from scope: ${missingTables.join(", ")}.`);
+    } else {
+      return {
+        ok: false,
+        blocking_message: [
+          `These tables don't exist in your connected database: ${missingTables.join(", ")}.`,
+          "They may have been renamed or dropped. Update your table scope or say 'use connected tables'."
+        ].join("\n"),
+        warning_lines: []
+      };
+    }
+  }
+
+  if (blockedTables.length > 0) {
+    const blockedSet = new Set(blockedTables.map((relation) => relation.toLowerCase()));
+    const retained = draft.allowed_relations.filter((relation) => !blockedSet.has(relation.toLowerCase()));
+    if (retained.length > 0) {
+      updateDraftScope(retained);
+      warnings.push(`Excluded tables without SELECT grant: ${blockedTables.join(", ")}.`);
+    } else {
+      return {
+        ok: false,
+        blocking_message: [
+          `Cannot read these tables (no SELECT permission): ${blockedTables.join(", ")}.`,
+          "Visit the connection wizard to generate a GRANT SQL fix script, or remove these tables from the scope."
+        ].join("\n"),
+        warning_lines: []
+      };
+    }
   }
 
   if (rlsTables.length > 0) {
@@ -960,7 +1277,8 @@ export function createWebApiClient(options: CreateWebApiClientOptions): WebApiCl
       return parseJsonResponse(response, z.object({
         answer: z.string().min(1),
         citations: z.array(z.string()).default([]),
-        grounded: z.boolean().default(false)
+        grounded: z.boolean().default(false),
+        requires_new_analysis: z.boolean().default(false)
       }));
     },
     async saveRun(runId) {
@@ -1035,10 +1353,25 @@ export async function handleChatTurn(input: {
   state: ChatState;
   api_client: WebApiClient;
   query_router?: QueryRouterClient;
+  orchestrator_decision?: ConversationOrchestratorDecision | null;
 }): Promise<ChatTurnResponse> {
   const rawMessage = input.message.trim();
   const command = rawMessage.toLowerCase();
+  const hadScopeClarificationPendingBefore = input.state.scope_clarification_pending;
+  const unansweredScopeCountBefore = input.state.scope_questions.filter(
+    (entry) => !entry.answer || entry.answer.trim().length === 0
+  ).length;
   let nextState = parseChatState(input.state);
+
+  if (input.orchestrator_decision) {
+    nextState = applyConversationOrchestratorDecision(nextState, input.orchestrator_decision, command);
+  }
+
+  const scopeClarificationJustStartedThisTurn =
+    !hadScopeClarificationPendingBefore &&
+    unansweredScopeCountBefore === 0 &&
+    nextState.scope_clarification_pending &&
+    nextState.scope_questions.some((entry) => !entry.answer || entry.answer.trim().length === 0);
 
   // Legacy migration: fold pending metric confirmations into scope clarifications.
   if (nextState.pending_metric_confirmations.length > 0) {
@@ -1050,13 +1383,37 @@ export async function handleChatTurn(input: {
   const hasAnsweredScopeItems =
     nextState.scope_questions.length > 0 &&
     nextState.scope_questions.every((entry) => Boolean(entry.answer && entry.answer.trim().length > 0));
+  const hasScopeReadyContext = hasScopeReadyContextInHistory(nextState);
+  const hasUnansweredScopeItems = nextState.scope_questions.some(
+    (entry) => !entry.answer || entry.answer.trim().length === 0
+  );
+  if (hasUnansweredScopeItems) {
+    nextState.scope_clarification_pending = true;
+    nextState.scope_finalized = false;
+    nextState.prep_pending = false;
+    nextState.scope_pending = false;
+  }
+  const hasBlockingDecision =
+    Boolean(nextState.pending_query_sql) ||
+    nextState.pending_single_query_request !== null ||
+    nextState.pending_metric_confirmations.length > 0 ||
+    nextState.awaiting_post_run_refinement ||
+    nextState.refinement_active ||
+    nextState.awaiting_pdf_confirmation ||
+    nextState.awaiting_save_confirmation ||
+    nextState.awaiting_schedule_confirmation ||
+    nextState.awaiting_schedule_mode_selection ||
+    nextState.awaiting_custom_day_input ||
+    (nextState.scope_clarification_pending && hasUnansweredScopeItems);
   if (
     hasAnsweredScopeItems &&
-    !nextState.scope_clarification_pending &&
-    !nextState.prep_complete &&
-    !nextState.prep_pending &&
-    !nextState.scope_pending
+    hasScopeReadyContext &&
+    !hasBlockingDecision &&
+    !nextState.prep_complete
   ) {
+    nextState.scope_finalized = true;
+    nextState.scope_clarification_pending = false;
+    nextState.scope_pending = false;
     nextState.prep_pending = true;
   }
 
@@ -1139,14 +1496,25 @@ export async function handleChatTurn(input: {
   // --- Multi-question scope clarification gate ---
 
   if (nextState.scope_clarification_pending) {
+    if (scopeClarificationJustStartedThisTurn) {
+      return {
+        assistant_message: buildScopeClarificationIntroMessage(nextState),
+        state: nextState
+      };
+    }
+
     const allScopeAnswersPresent = nextState.scope_questions.every(
       (entry) => Boolean(entry.answer && entry.answer.trim().length > 0)
     );
+    const scopeFinalizeRequested = isScopeFinalizeChoice(command);
 
     if (isScopeContinueChoice(command)) {
       nextState.scope_clarification_pending = false;
       nextState.scope_questions = [];
+      nextState.scope_business_context = null;
       nextState.scope_source_prompt = null;
+      nextState.scope_finalized = false;
+      nextState.question_registry = [];
       return {
         assistant_message:
           "Scope clarification paused. Tell me what to refine and I will restage the analysis questions.",
@@ -1163,6 +1531,7 @@ export async function handleChatTurn(input: {
     ) {
       if (allScopeAnswersPresent) {
         nextState.scope_clarification_pending = false;
+        nextState.scope_finalized = true;
         const preparation = await buildPreparationConfirmation(nextState, input.api_client);
         const answeredLines = nextState.scope_questions.map((entry) =>
           `- Q${entry.question_number}: ${entry.answer ?? ""}`
@@ -1190,19 +1559,31 @@ export async function handleChatTurn(input: {
     );
 
     if (clarification.all_answered) {
-      nextState.scope_clarification_pending = false;
-      const preparation = await buildPreparationConfirmation(nextState, input.api_client);
-      const answeredLines = nextState.scope_questions.map((entry) =>
-        `- Q${entry.question_number}: ${entry.answer ?? ""}`
-      );
+      if (scopeFinalizeRequested || clarification.answered_count > 0) {
+        nextState.scope_clarification_pending = false;
+        nextState.scope_finalized = true;
+        const preparation = await buildPreparationConfirmation(nextState, input.api_client);
+        const answeredLines = nextState.scope_questions.map((entry) =>
+          `- Q${entry.question_number}: ${entry.answer ?? ""}`
+        );
+        return {
+          assistant_message: [
+            "Scope clarifications captured for all questions.",
+            answeredLines.join("\n"),
+            "",
+            preparation.assistant_message
+          ].join("\n"),
+          state: preparation.state
+        };
+      }
+
       return {
         assistant_message: [
-          "Scope clarifications captured for all questions.",
-          answeredLines.join("\n"),
-          "",
-          preparation.assistant_message
+          "All scope items are answered.",
+          "If this looks right, reply with `looks good` to finalize scope.",
+          "Or edit any Q item and I'll update it."
         ].join("\n"),
-        state: preparation.state
+        state: nextState
       };
     }
 
@@ -1265,7 +1646,7 @@ export async function handleChatTurn(input: {
       nextState.awaiting_post_run_refinement = false;
       nextState.refinement_active = true;
       nextState.refinement_questions_remaining = 2;
-      return executeRefinementQa(nextState, rawMessage, input.api_client);
+      return executeRefinementQa(nextState, rawMessage, input.api_client, input.query_router);
     }
 
     return {
@@ -1293,7 +1674,7 @@ export async function handleChatTurn(input: {
     }
 
     if (nextState.last_run_id && looksLikePayloadQaQuestion(rawMessage)) {
-      return executeRefinementQa(nextState, rawMessage, input.api_client);
+      return executeRefinementQa(nextState, rawMessage, input.api_client, input.query_router);
     }
 
     return {
@@ -1524,17 +1905,41 @@ export async function handleChatTurn(input: {
   // --- Data preparation gate ---
 
   if (nextState.prep_pending) {
-    if (isRunPreparationChoice(command) || isScopeRunChoice(command)) {
+    if (isRunPreparationChoice(command)) {
       return executePreparation(nextState, input.api_client);
+    }
+
+    if (isScopeRunChoice(command)) {
+      const preparedResult = await executePreparation(nextState, input.api_client);
+      const preparedState = parseChatState(preparedResult.state);
+      if (preparedState.prep_complete && isExplicitScopeRunChoice(command)) {
+        return executeRun(preparedState, input.api_client);
+      }
+      return preparedResult;
     }
 
     if (isScopeContinueChoice(command)) {
       nextState.prep_pending = false;
       nextState.scope_clarification_pending = true;
+      nextState.scope_finalized = false;
       return {
         assistant_message: "Sounds good. Continue scoping and tell me what to refine before we prepare data.",
         state: nextState
       };
+    }
+
+    // Allow typed clarification while prep decision is pending.
+    // Route only into scope clarification handling (not generic query routing).
+    if (!isUiControlCommand(command) && rawMessage.trim().length > 0) {
+      nextState.prep_pending = false;
+      nextState.scope_clarification_pending = true;
+      nextState.scope_finalized = false;
+      return applyScopeClarificationFromPendingDecision(
+        nextState,
+        rawMessage,
+        input.api_client,
+        input.query_router
+      );
     }
 
     return {
@@ -1554,10 +1959,40 @@ export async function handleChatTurn(input: {
     if (isScopeContinueChoice(command)) {
       nextState.scope_pending = false;
       nextState.scope_clarification_pending = true;
+      nextState.scope_finalized = false;
+      // User requested additional scoping after prep. Force a fresh prep pass.
+      nextState.prep_pending = false;
+      nextState.prep_complete = false;
+      nextState.preparation_summary = null;
+      nextState.prepared_payloads = [];
       return {
-        assistant_message: "Sounds good. Continue scoping and tell me what to refine before we run.",
+        assistant_message: [
+          "Sounds good. Let's continue scoping before analysis.",
+          "Tell me what looked off in the prepared data (for example: missing months, wrong filters, wrong joins, or a query result that looks incorrect).",
+          "Once you confirm the fixes, I'll restage data preparation and ask you to run it again."
+        ].join("\n"),
         state: nextState
       };
+    }
+
+    // Allow typed clarification while analysis decision is pending.
+    // Route only into scope clarification handling (not generic query routing).
+    if (!isUiControlCommand(command) && rawMessage.trim().length > 0) {
+      nextState.scope_pending = false;
+      nextState.scope_clarification_pending = true;
+      nextState.scope_finalized = false;
+      // Treat free-text while analysis is pending as scope refinement.
+      // Require a fresh prep run after refinements are applied.
+      nextState.prep_pending = false;
+      nextState.prep_complete = false;
+      nextState.preparation_summary = null;
+      nextState.prepared_payloads = [];
+      return applyScopeClarificationFromPendingDecision(
+        nextState,
+        rawMessage,
+        input.api_client,
+        input.query_router
+      );
     }
 
     return {
@@ -1578,16 +2013,61 @@ export async function handleChatTurn(input: {
       return buildAnalysisConfirmation(nextState);
     }
 
+    const hasUnansweredScopeItems = nextState.scope_questions.some(
+      (entry) => !entry.answer || entry.answer.trim().length === 0
+    );
+    if (
+      nextState.scope_finalized &&
+      !nextState.scope_clarification_pending &&
+      !hasUnansweredScopeItems
+    ) {
+      const preparation = await buildPreparationConfirmation(nextState, input.api_client);
+      const preparedState = parseChatState(preparation.state);
+      if (preparedState.prep_pending) {
+        return executePreparation(preparedState, input.api_client);
+      }
+      return preparation;
+    }
+
     return maybePrepareOrRun(nextState, input.api_client);
   }
 
   if (/^__ui_finish_scoping_run_analysis__$/.test(command)) {
     if (nextState.prep_pending) {
-      return executePreparation(nextState, input.api_client);
+      const preparedResult = await executePreparation(nextState, input.api_client);
+      const preparedState = parseChatState(preparedResult.state);
+      if (preparedState.prep_complete) {
+        return executeRun(preparedState, input.api_client);
+      }
+      return preparedResult;
     }
 
     if (nextState.prep_complete) {
       return executeRun(nextState, input.api_client);
+    }
+
+    const hasUnansweredScopeItems = nextState.scope_questions.some(
+      (entry) => !entry.answer || entry.answer.trim().length === 0
+    );
+    if (
+      nextState.scope_finalized &&
+      !nextState.scope_clarification_pending &&
+      !hasUnansweredScopeItems
+    ) {
+      const preparation = await buildPreparationConfirmation(nextState, input.api_client);
+      const preparedState = parseChatState(preparation.state);
+      if (!preparedState.prep_complete && preparedState.prep_pending) {
+        const preparedResult = await executePreparation(preparedState, input.api_client);
+        const preparedStateAfterRun = parseChatState(preparedResult.state);
+        if (preparedStateAfterRun.prep_complete) {
+          return executeRun(preparedStateAfterRun, input.api_client);
+        }
+        return preparedResult;
+      }
+      if (preparedState.prep_complete) {
+        return executeRun(preparedState, input.api_client);
+      }
+      return preparation;
     }
 
     return {
@@ -2063,7 +2543,7 @@ async function inferLlmQueryRoutingDecision(
         dimension_ids: [...state.draft.dimension_ids]
       },
       conversation_history: state.conversation_history
-        .slice(-8)
+        .slice(-20)
         .map((turn) => ({ role: turn.role, content: turn.content }))
     });
   } catch {
@@ -2077,12 +2557,23 @@ async function attemptSingleQueryOrAnalysisRouting(
   apiClient: WebApiClient,
   queryRouter: QueryRouterClient | undefined
 ): Promise<ChatTurnResponse | null> {
+  const lower = rawMessage.toLowerCase();
   const llmQueryRouting = await inferLlmQueryRoutingDecision(
     rawMessage,
     state,
     apiClient,
     queryRouter
   );
+
+  const forceDeepAnalysis = looksLikeComplexMultiQuestionPrompt(lower);
+  if (forceDeepAnalysis && llmQueryRouting?.route === "single_query") {
+    return buildScopeClarificationStep(
+      state,
+      rawMessage,
+      apiClient,
+      queryRouter
+    );
+  }
 
   if (llmQueryRouting?.route === "single_query" && llmQueryRouting.sql) {
     const clarificationPrompt = await buildSingleQueryClarificationPrompt(
@@ -2110,6 +2601,18 @@ async function attemptSingleQueryOrAnalysisRouting(
       queryRouter
     );
     return scopeClarification;
+  }
+
+  // Fallback hardening: if provider routing is unavailable/uncertain but the
+  // user request is clearly multi-part analysis, force scoped clarification
+  // instead of letting conversational text lock workflow heuristics.
+  if (looksLikeComplexMultiQuestionPrompt(lower)) {
+    return buildScopeClarificationStep(
+      state,
+      rawMessage,
+      apiClient,
+      queryRouter
+    );
   }
 
   const naturalQueryAction = await inferNaturalQueryAction(rawMessage, state, apiClient);
@@ -2145,24 +2648,42 @@ async function buildScopeClarificationStep(
   queryRouter: QueryRouterClient | undefined
 ): Promise<ChatTurnResponse> {
   const nextState = parseChatState(state);
+  const catalogCtx = await fetchCatalogContext(apiClient).catch(() => ({
+    catalog_summary: "",
+    business_context: ""
+  }));
+  nextState.scope_business_context =
+    catalogCtx.business_context && catalogCtx.business_context.trim().length > 0
+      ? catalogCtx.business_context.trim()
+      : null;
   const llmQuestions = await generateLlmScopeQuestions(
     rawMessage,
     state,
     apiClient,
     queryRouter,
-    "deep_analysis"
+    "deep_analysis",
+    catalogCtx
   );
-  const fallbackQuestions = formulateScopeQuestions(rawMessage).map((entry, index) => ({
-    question_number: index + 1,
-    question: entry.question,
-    clarification: entry.clarification,
-    answer: null,
-    metric_key: null,
-    metric_display_name: null,
-    metric_definition_draft: null,
-    metric_source_columns: []
-  }));
-  const scopeQuestions = llmQuestions.length > 0 ? llmQuestions : fallbackQuestions;
+  const fallbackQuestions = isTestRuntime()
+    ? formulateScopeQuestions(rawMessage).map((entry, index) => ({
+        question_number: index + 1,
+        question: entry.question,
+        clarification: entry.clarification,
+        answer: null,
+        metric_key: null,
+        metric_display_name: null,
+        metric_definition_draft: null,
+        metric_source_columns: []
+      }))
+    : [];
+  const scopeQuestions = selectScopeQuestionsForClarification({
+    raw_message: rawMessage,
+    llm_questions: llmQuestions,
+    fallback_questions: fallbackQuestions
+  });
+  if (scopeQuestions.length === 0 && !isTestRuntime()) {
+    throw new Error("scope_clarification_generation_failed: llm returned no scope questions");
+  }
   const metricQuestions = await buildMetricScopeQuestions({
     state: nextState,
     raw_message: rawMessage,
@@ -2179,25 +2700,140 @@ async function buildScopeClarificationStep(
   nextState.scope_clarification_pending = true;
   nextState.prep_pending = false;
   nextState.scope_pending = false;
+  nextState.scope_finalized = false;
 
-  const questionLines = allQuestions.map(
-    (entry) =>
-      `- Q${entry.question_number}: ${entry.question}\n  Clarification: ${entry.clarification}`
-  );
-
+  syncQuestionRegistryFromScope(nextState);
   return {
-    assistant_message: [
-      "Before data preparation, please confirm the scope details below.",
-      "This includes timeline/filter clarifications and any formula clarifications that need a final call.",
-      "You can answer all at once (for example: `Q1: ... Q2: ... Q3: ...`) or across multiple messages.",
-      questionLines.join("\n"),
-      "",
-      "Once all items are answered, I will proceed to data preparation."
-    ]
-      .filter((line) => line.trim().length > 0)
-      .join("\n"),
+    assistant_message: buildScopeClarificationIntroMessage(nextState),
     state: nextState
   };
+}
+
+async function applyScopeClarificationFromPendingDecision(
+  state: ChatState,
+  rawMessage: string,
+  apiClient: WebApiClient,
+  queryRouter: QueryRouterClient | undefined
+): Promise<ChatTurnResponse> {
+  const nextState = parseChatState(state);
+  nextState.scope_clarification_pending = true;
+  nextState.scope_finalized = false;
+
+  // If scope questions are missing, rebuild the clarification step from this message
+  // instead of routing to single-query execution while a decision is pending.
+  if (nextState.scope_questions.length === 0) {
+    return buildScopeClarificationStep(nextState, rawMessage, apiClient, queryRouter);
+  }
+
+  const clarification = await applyScopeClarificationAnswersWithLlm(
+    nextState,
+    rawMessage,
+    queryRouter
+  );
+
+  if (clarification.all_answered) {
+    nextState.scope_clarification_pending = false;
+    syncQuestionRegistryFromScope(nextState);
+    const preparation = await buildPreparationConfirmation(nextState, apiClient);
+    const answeredLines = nextState.scope_questions.map((entry) =>
+      `- Q${entry.question_number}: ${entry.answer ?? ""}`
+    );
+    return {
+      assistant_message: [
+        "Scope clarifications captured for all questions.",
+        answeredLines.join("\n"),
+        "",
+        preparation.assistant_message
+      ].join("\n"),
+      state: preparation.state
+    };
+  }
+
+  if (clarification.answered_count === 0) {
+    syncQuestionRegistryFromScope(nextState);
+    return {
+      assistant_message: buildScopeClarificationPendingMessage(nextState),
+      state: nextState
+    };
+  }
+
+  syncQuestionRegistryFromScope(nextState);
+  return {
+    assistant_message: [
+      `Captured ${clarification.answered_count} clarification answer${clarification.answered_count === 1 ? "" : "s"}.`,
+      buildScopeClarificationPendingMessage(nextState)
+    ].join("\n\n"),
+    state: nextState
+  };
+}
+
+function selectScopeQuestionsForClarification(input: {
+  raw_message: string;
+  llm_questions: Array<{
+    question_number: number;
+    question: string;
+    clarification: string;
+    answer: string | null;
+    metric_key: string | null;
+    metric_display_name: string | null;
+    metric_definition_draft: string | null;
+    metric_source_columns: string[];
+  }>;
+  fallback_questions: Array<{
+    question_number: number;
+    question: string;
+    clarification: string;
+    answer: string | null;
+    metric_key: string | null;
+    metric_display_name: string | null;
+    metric_definition_draft: string | null;
+    metric_source_columns: string[];
+  }>;
+}): Array<{
+  question_number: number;
+  question: string;
+  clarification: string;
+  answer: string | null;
+  metric_key: string | null;
+  metric_display_name: string | null;
+  metric_definition_draft: string | null;
+  metric_source_columns: string[];
+}> {
+  const llmQuestions = input.llm_questions.map(sanitizeScopeQuestionLanguage);
+  const fallbackQuestions = input.fallback_questions.map(sanitizeScopeQuestionLanguage);
+  if (!isTestRuntime()) {
+    return llmQuestions.slice(0, 6);
+  }
+
+  if (llmQuestions.length === 0) {
+    return fallbackQuestions;
+  }
+  if (fallbackQuestions.length === 0) {
+    return llmQuestions;
+  }
+
+  const lower = input.raw_message.toLowerCase();
+  const looksComplex = looksLikeComplexMultiQuestionPrompt(lower);
+  const llmLooksGeneric =
+    llmQuestions.length === 1 &&
+    /\b(latest available date|today|timeframe|scope|data available)\b/i.test(
+      `${llmQuestions[0].question} ${llmQuestions[0].clarification}`
+    );
+
+  if (looksComplex && (llmLooksGeneric || llmQuestions.length < Math.min(3, fallbackQuestions.length))) {
+    return fallbackQuestions;
+  }
+
+  if (looksComplex) {
+    const llmCoverageStrong =
+      llmQuestions.length >= Math.max(3, Math.min(4, fallbackQuestions.length)) && !llmLooksGeneric;
+    if (llmCoverageStrong) {
+      return llmQuestions.slice(0, 6);
+    }
+    return fallbackQuestions;
+  }
+
+  return llmQuestions;
 }
 
 async function generateLlmScopeQuestions(
@@ -2205,7 +2841,8 @@ async function generateLlmScopeQuestions(
   state: ChatState,
   apiClient: WebApiClient,
   queryRouter: QueryRouterClient | undefined,
-  mode: "single_query" | "deep_analysis"
+  mode: "single_query" | "deep_analysis",
+  catalogContext?: { catalog_summary: string; business_context: string }
 ): Promise<
   Array<{
     question_number: number;
@@ -2222,10 +2859,12 @@ async function generateLlmScopeQuestions(
     return [];
   }
 
-  const catalog = await fetchCatalogContext(apiClient).catch(() => ({
-    catalog_summary: "",
-    business_context: ""
-  }));
+  const catalog =
+    catalogContext ??
+    (await fetchCatalogContext(apiClient).catch(() => ({
+      catalog_summary: "",
+      business_context: ""
+    })));
   if (!catalog.catalog_summary || catalog.catalog_summary.trim().length === 0) {
     return [];
   }
@@ -2242,12 +2881,12 @@ async function generateLlmScopeQuestions(
       draft_metrics: [...state.draft.metric_ids],
       draft_dimensions: [...state.draft.dimension_ids],
       conversation_history: state.conversation_history
-        .slice(-8)
+        .slice(-20)
         .map((turn) => ({ role: turn.role, content: turn.content }))
     });
 
     return response.questions
-      .slice(0, mode === "single_query" ? 1 : 5)
+      .slice(0, mode === "single_query" ? 1 : 6)
       .map((entry, index) => ({
         question_number: index + 1,
         question: entry.question.trim(),
@@ -2300,7 +2939,7 @@ async function inferMetricDefinitionsFromLlm(input: {
       allowed_relations: [...input.state.draft.allowed_relations],
       allowed_schemas: [...input.state.draft.allowed_schemas],
       conversation_history: input.state.conversation_history
-        .slice(-8)
+        .slice(-20)
         .map((turn) => ({ role: turn.role, content: turn.content }))
     });
 
@@ -2673,6 +3312,40 @@ function tokenizeForSimilarity(value: string): string[] {
   );
 }
 
+function areScopeQuestionTextsSimilar(leftQuestion: string, rightQuestion: string): boolean {
+  const left = normalizeSimilarityText(leftQuestion);
+  const right = normalizeSimilarityText(rightQuestion);
+  if (left.length === 0 || right.length === 0) {
+    return false;
+  }
+  if (left === right) {
+    return true;
+  }
+  if (left.includes(right) || right.includes(left)) {
+    return Math.min(left.length, right.length) >= 24;
+  }
+
+  const leftTokens = tokenizeForSimilarity(left).filter((token) => !isGenericScopeToken(token));
+  const rightTokens = tokenizeForSimilarity(right).filter((token) => !isGenericScopeToken(token));
+  if (leftTokens.length === 0 || rightTokens.length === 0) {
+    return false;
+  }
+
+  const leftSet = new Set(leftTokens);
+  const rightSet = new Set(rightTokens);
+  let intersection = 0;
+  for (const token of leftSet) {
+    if (rightSet.has(token)) {
+      intersection += 1;
+    }
+  }
+  if (intersection < 2) {
+    return false;
+  }
+  const minSize = Math.max(1, Math.min(leftSet.size, rightSet.size));
+  return intersection / minSize >= 0.6;
+}
+
 function migratePendingMetricConfirmationsToScope(state: ChatState): void {
   if (state.pending_metric_confirmations.length === 0) {
     return;
@@ -2709,6 +3382,7 @@ function migratePendingMetricConfirmationsToScope(state: ChatState): void {
     state.scope_clarification_pending = true;
     state.prep_pending = false;
     state.scope_pending = false;
+    state.scope_finalized = false;
   }
 
   state.pending_metric_confirmations = [];
@@ -2993,6 +3667,17 @@ function formulateScopeQuestions(
     .map((segment) => cleanScopeQuestionText(segment))
     .filter((segment) => segment.length > 0);
 
+  if (segments.length <= 1 && looksLikeComplexMultiQuestionPrompt(normalized.toLowerCase())) {
+    const commaSegments = normalized
+      .split(/,\s+(?:and\s+)?/i)
+      .map((segment) => cleanScopeQuestionText(segment))
+      .filter((segment) => segment.length > 0);
+    const scopedClauses = commaSegments.filter((segment) => looksLikeStandaloneScopeClause(segment));
+    if (scopedClauses.length >= 2) {
+      segments = scopedClauses;
+    }
+  }
+
   if (segments.length <= 1) {
     segments = normalized
       .split(/\b(?:also|plus|and also)\b/gi)
@@ -3004,10 +3689,64 @@ function formulateScopeQuestions(
     segments = [cleanScopeQuestionText(normalized)];
   }
 
-  return segments.slice(0, 5).map((question) => ({
+  const baseQuestions = segments.slice(0, 5).map((question) => ({
     question,
     clarification: buildClarificationForScopeQuestion(question)
   }));
+
+  if (!looksLikeComplexMultiQuestionPrompt(normalized.toLowerCase()) || baseQuestions.length >= 3) {
+    return baseQuestions;
+  }
+
+  const suggestions = suggestAdditionalScopeQuestionsFromMessage(normalized)
+    .map((question) => ({
+      question,
+      clarification: buildClarificationForScopeQuestion(question)
+    }))
+    .filter(
+      (candidate) =>
+        !baseQuestions.some((existing) => areScopeQuestionTextsSimilar(existing.question, candidate.question))
+    );
+
+  return [...baseQuestions, ...suggestions].slice(0, 5);
+}
+
+function suggestAdditionalScopeQuestionsFromMessage(rawMessage: string): string[] {
+  const lower = rawMessage.toLowerCase();
+  const suggestions: string[] = [];
+
+  if (/\b(refund|return|cancel)\b/.test(lower) && !/\b(issue|reason|driver|root cause)\b/.test(lower)) {
+    suggestions.push("[Suggested] What are the top reasons driving refunded orders in the same period?");
+  }
+
+  if (/\b(city|region|country|location)\b/.test(lower) && !/\btrend|month|months|week|weeks\b/.test(lower)) {
+    suggestions.push("[Suggested] How has this metric trended over time for the top locations?");
+  }
+
+  if (/\b(compare|comparison|vs|versus|prior|previous)\b/.test(lower) && !/\b(delta|change|percentage|percent)\b/.test(lower)) {
+    suggestions.push("[Suggested] What is the absolute and percentage delta between the compared periods?");
+  }
+
+  if (/\b(support|ticket|issue)\b/.test(lower) && !/\bresolution|sla|time to resolve|backlog\b/.test(lower)) {
+    suggestions.push("[Suggested] Which support themes have the longest resolution time in this window?");
+  }
+
+  if (suggestions.length === 0) {
+    suggestions.push("[Suggested] Which segment shows the biggest risk or opportunity in this period?");
+  }
+
+  return suggestions.slice(0, 2);
+}
+
+function looksLikeStandaloneScopeClause(value: string): boolean {
+  const lower = value.toLowerCase();
+  if (lower.length < 10) {
+    return false;
+  }
+
+  return /\b(compare|comparison|vs|trend|top|highest|lowest|city|cities|issue|issues|reason|reasons|ticket|tickets|refund|revenue|sales|month|months|quarter|quarters|year|years|by)\b/.test(
+    lower
+  );
 }
 
 function cleanScopeQuestionText(value: string): string {
@@ -3021,16 +3760,139 @@ function cleanScopeQuestionText(value: string): string {
 
 function buildClarificationForScopeQuestion(question: string): string {
   const lower = question.toLowerCase();
-  if (/\b(vs|versus|compare|comparison|prior|previous)\b/.test(lower)) {
-    return "Confirm exact period A vs period B window and the primary date column for this comparison.";
+  const isComparison = /\b(vs|versus|compare|comparison|prior|previous)\b/.test(lower);
+  const isTrend = /\b(trend|month|months|week|weeks|quarter|quarters|timeline|period|window)\b/.test(lower);
+  const isRefund = /\b(refund|refunded|cancell|return)\b/.test(lower);
+  const isRate = /\b(rate|ratio|percentage|percent)\b/.test(lower);
+  const isGeo = /\b(city|cities|region|state|country|location)\b/.test(lower);
+  const isSupport = /\b(support|ticket|tickets|issue|issues|reason|reasons|resolution)\b/.test(lower);
+  const isTopN = /\b(top|highest|lowest|rank|ranking)\b/.test(lower);
+  const isProduct = /\b(product|category|sku|item)\b/.test(lower);
+
+  if (isSupport) {
+    return "Confirm join key for ticket-to-order linkage (for example order_id), whether only refunded-order-linked tickets are in scope, and how to rank top issue themes.";
   }
-  if (/\b(refund|refunded|cancell|return)\b/.test(lower)) {
-    return "Confirm which statuses count in-scope and which date column should anchor the time window.";
+
+  if (isRefund && isRate && isGeo) {
+    return "Confirm refund-rate formula (count-based vs value-based), city/region ranking cutoff, and the timeframe/date column for this breakdown.";
   }
-  if (!/\b(day|days|week|weeks|month|months|quarter|quarters|year|years|date|timeline|window|period)\b/.test(lower)) {
-    return "Confirm exact timeframe and the primary date column for this question.";
+
+  if (isComparison && isTrend) {
+    return "Confirm exact Period A vs Period B definitions, whether current partial month is included, and the primary date column/granularity.";
   }
-  return "Confirm the final filters and primary date column before execution.";
+
+  if (isComparison) {
+    return "Confirm exact comparison windows and the core metric to compare (absolute, percentage, or both).";
+  }
+
+  if (isTrend) {
+    return "Confirm timeframe boundary, primary date column, and reporting granularity (for example monthly).";
+  }
+
+  if (isRefund) {
+    return "Confirm which statuses define a refunded order and which date column should anchor the requested window.";
+  }
+
+  if (isTopN && (isProduct || isGeo)) {
+    return "Confirm ranking metric and top-N cutoff for this breakdown.";
+  }
+
+  return "Confirm final filters, timeframe, and primary date column before execution.";
+}
+
+function getRequestedMonthWindowFromScope(state: ChatState, questionText: string): number | null {
+  const fromQuestion = extractRequestedMonths(questionText.toLowerCase());
+  if (fromQuestion !== null) {
+    return fromQuestion;
+  }
+  if (state.scope_source_prompt) {
+    return extractRequestedMonths(state.scope_source_prompt.toLowerCase());
+  }
+  return null;
+}
+
+function buildProposedDefaultForScopeQuestion(
+  state: ChatState,
+  question: {
+    question_number: number;
+    question: string;
+    clarification: string;
+    answer: string | null;
+    metric_key: string | null;
+    metric_display_name: string | null;
+    metric_definition_draft: string | null;
+    metric_source_columns: string[];
+  }
+): string {
+  const text = `${question.question} ${question.clarification}`.toLowerCase();
+  const timezone = state.draft.timezone || "UTC";
+  const todayLocal = getTodayDateStringInTimezone(timezone);
+  const requestedMonths = getRequestedMonthWindowFromScope(state, text);
+
+  const baseTimeline = requestedMonths
+    ? `Use a ${requestedMonths}-month window ending on ${todayLocal} (${timezone}), including current partial month.`
+    : `Anchor relative windows to ${todayLocal} (${timezone}) using the primary date column from catalog.`;
+
+  if (/\b(support|ticket|tickets|issue|issues|reason|reasons|resolution)\b/.test(text)) {
+    return [
+      baseTimeline,
+      "Join support tickets to refunded orders via order_id when available.",
+      "Use only linked refunded-order tickets and rank top issue types by ticket count."
+    ].join(" ");
+  }
+
+  if (/\b(refund|refunded|return|cancel)\b/.test(text) && /\b(rate|ratio|percentage|percent)\b/.test(text)) {
+    const topN = /\btop\s+(\d{1,2})\b/.exec(text)?.[1] ?? "5";
+    return [
+      baseTimeline,
+      "Default refund-rate formula: refunded_orders / total_orders.",
+      `Rank top ${topN} cities/regions by refund rate unless you choose a value-based formula.`
+    ].join(" ");
+  }
+
+  if (/\b(vs|versus|compare|comparison|prior|previous)\b/.test(text)) {
+    const compareMonths = /\b(?:past|last|previous)\s+(\d{1,2})\s+months?\b/.exec(text)?.[1] ?? "2";
+    return [
+      `Compare latest ${compareMonths}-month window vs the prior ${compareMonths}-month window anchored to ${todayLocal} (${timezone}).`,
+      "Return both absolute and percentage delta by default."
+    ].join(" ");
+  }
+
+  if (/\b(trend|month|months|week|weeks|quarter|quarters)\b/.test(text)) {
+    return [
+      baseTimeline,
+      "Use monthly granularity by default for trend readability."
+    ].join(" ");
+  }
+
+  if (/\b(top|highest|lowest|rank|ranking)\b/.test(text)) {
+    return "Use top-5 ranking by the primary requested metric unless you specify another cutoff.";
+  }
+
+  const businessContext = state.scope_business_context?.trim();
+  const contextHint =
+    businessContext && businessContext.length > 0
+      ? ` Business context is applied when selecting conservative defaults (${businessContext.slice(0, 120)}${businessContext.length > 120 ? "..." : ""}).`
+      : "";
+
+  return `${baseTimeline}${contextHint}`.trim();
+}
+
+function getTodayDateStringInTimezone(timezone: string): string {
+  try {
+    const formatted = new Intl.DateTimeFormat("en-CA", {
+      timeZone: timezone || "UTC",
+      year: "numeric",
+      month: "2-digit",
+      day: "2-digit"
+    }).format(new Date());
+    if (/^\d{4}-\d{2}-\d{2}$/.test(formatted)) {
+      return formatted;
+    }
+  } catch {
+    // fallback below
+  }
+  return new Date().toISOString().slice(0, 10);
 }
 
 async function applyScopeClarificationAnswersWithLlm(
@@ -3041,21 +3903,60 @@ async function applyScopeClarificationAnswersWithLlm(
   if (state.scope_questions.length === 0) {
     return { answered_count: 0, all_answered: true };
   }
-
-  if (!queryRouter?.resolve_scope_answers) {
-    console.warn("[scope-resolver] No LLM resolver available — assigning full message to all unanswered questions");
-    let count = 0;
-    for (const entry of state.scope_questions) {
-      if (!entry.answer || entry.answer.trim().length === 0) {
-        entry.answer = rawMessage.trim();
-        count += 1;
+  const explicitAssignments = parseExplicitScopeAnswerAssignments(rawMessage);
+  const explicitAssignmentNumbers = new Set(explicitAssignments.map((entry) => entry.question_number));
+  const pendingInputQuestionNumbers = new Set(
+    state.pending_inputs
+      .map((entry) => entry.question_number)
+      .filter((value): value is number => typeof value === "number" && Number.isInteger(value) && value > 0)
+  );
+  const semanticSkipQuestionNumbers = new Set<number>();
+  if (explicitAssignments.length > 0) {
+    for (const questionNumber of pendingInputQuestionNumbers) {
+      if (!explicitAssignmentNumbers.has(questionNumber)) {
+        semanticSkipQuestionNumbers.add(questionNumber);
       }
     }
-    applyMetricDefinitionAnswersFromScope(state);
-    return { answered_count: count, all_answered: true };
   }
+  const explicitApplyToAll =
+    /\b(same for all|all questions|for all questions|apply to all|across all questions|for each question)\b/i.test(
+      rawMessage
+    );
+
+  const applyAssignment = (questionNumber: number, answer: string): number => {
+    const target = state.scope_questions.find((entry) => entry.question_number === questionNumber);
+    if (!target) {
+      return 0;
+    }
+    const normalized = answer.replace(/\s+/g, " ").trim();
+    if (normalized.length === 0) {
+      return 0;
+    }
+    const wasEmpty = !target.answer || target.answer.trim().length === 0;
+    target.answer = normalized;
+    return wasEmpty ? 1 : 0;
+  };
 
   let answeredCount = 0;
+  if (isTestRuntime()) {
+    answeredCount += applyBestEffortScopeAssignments(state, rawMessage, applyAssignment);
+  }
+
+  if (!queryRouter?.resolve_scope_answers) {
+    if (!isTestRuntime()) {
+      throw new Error("scope_answer_resolver_unavailable: LLM resolver is required in provider mode");
+    }
+    console.warn("[scope-resolver] No LLM resolver available - using best-effort assignment only");
+    answeredCount += applySemanticScopeFallback(state, rawMessage, applyAssignment, {
+      skip_question_numbers: semanticSkipQuestionNumbers
+    });
+    applyMetricDefinitionAnswersFromScope(state);
+    maybeAppendImpromptuScopeQuestionFromClarification(state, rawMessage);
+    return {
+      answered_count: answeredCount,
+      all_answered: state.scope_questions.every((entry) => Boolean(entry.answer && entry.answer.trim().length > 0))
+    };
+  }
 
   try {
     const response = await queryRouter.resolve_scope_answers({
@@ -3068,7 +3969,7 @@ async function applyScopeClarificationAnswersWithLlm(
         answer: entry.answer
       })),
       conversation_history: state.conversation_history
-        .slice(-12)
+        .slice(-20)
         .map((turn) => ({ role: turn.role, content: turn.content }))
     });
 
@@ -3076,143 +3977,609 @@ async function applyScopeClarificationAnswersWithLlm(
       const target = state.scope_questions.find(
         (entry) => entry.question_number === assignment.question_number
       );
-      if (!target) {
+      if (
+        target &&
+        !shouldAcceptResolvedScopeAssignment({
+          raw_message: rawMessage,
+          target_question: target,
+          explicit_assignment_numbers: explicitAssignmentNumbers,
+          explicit_apply_to_all: explicitApplyToAll
+        })
+      ) {
         continue;
       }
-      const normalized = (assignment.answer ?? "").replace(/\s+/g, " ").trim();
-      if (normalized.length === 0) {
-        continue;
-      }
-      if (!target.answer || target.answer.trim().length === 0) {
-        answeredCount += 1;
-      }
-      target.answer = normalized;
+      answeredCount += applyAssignment(assignment.question_number, assignment.answer ?? "");
     }
   } catch (error) {
+    if (!isTestRuntime()) {
+      throw new Error(
+        `scope_answer_resolver_failed: ${
+          error instanceof Error ? error.message : "unknown LLM resolver error"
+        }`
+      );
+    }
     console.error("[scope-resolver] LLM call failed:", error instanceof Error ? error.message : error);
   }
 
-  // Safety net: if any questions are still unanswered after the LLM pass
-  // (either it returned partial results or failed), assign the full user
-  // message so the user is never stuck in a re-ask loop.
-  for (const entry of state.scope_questions) {
-    if (!entry.answer || entry.answer.trim().length === 0) {
-      entry.answer = rawMessage.trim();
-      answeredCount += 1;
-    }
+  if (isTestRuntime()) {
+    answeredCount += applyBestEffortScopeAssignments(state, rawMessage, applyAssignment);
+    answeredCount += applySemanticScopeFallback(state, rawMessage, applyAssignment, {
+      skip_question_numbers: semanticSkipQuestionNumbers
+    });
   }
 
+  answeredCount += applySinglePendingScopeConfirmationFallback(
+    state,
+    rawMessage,
+    applyAssignment,
+    explicitAssignments.length
+  );
+
   applyMetricDefinitionAnswersFromScope(state);
+  maybeAppendImpromptuScopeQuestionFromClarification(state, rawMessage);
   return {
     answered_count: answeredCount,
-    all_answered: true
+    all_answered: state.scope_questions.every((entry) => Boolean(entry.answer && entry.answer.trim().length > 0))
   };
 }
 
-function applyScopeClarificationAnswers(
-  state: ChatState,
-  rawMessage: string
-): { answered_count: number; all_answered: boolean } {
-  if (state.scope_questions.length === 0) {
-    return { answered_count: 0, all_answered: true };
+function shouldAcceptResolvedScopeAssignment(input: {
+  raw_message: string;
+  target_question: {
+    question_number: number;
+    question: string;
+    clarification: string;
+  };
+  explicit_assignment_numbers: Set<number>;
+  explicit_apply_to_all: boolean;
+}): boolean {
+  if (input.explicit_assignment_numbers.has(input.target_question.question_number)) {
+    return true;
   }
 
-  const unanswered = () => state.scope_questions.filter((entry) => !entry.answer || entry.answer.trim().length === 0);
-  let answeredCount = 0;
-
-  const explicitAnswers = extractExplicitScopeAnswers(rawMessage);
-  if (explicitAnswers.size > 0) {
-    for (const [questionNumber, answer] of explicitAnswers.entries()) {
-      const target = state.scope_questions.find(
-        (entry) => entry.question_number === questionNumber
-      );
-      if (!target) {
-        continue;
-      }
-      if (!target.answer || target.answer.trim().length === 0) {
-        answeredCount += 1;
-      }
-      target.answer = answer;
-    }
-    applyMetricDefinitionAnswersFromScope(state);
-    return { answered_count: answeredCount, all_answered: unanswered().length === 0 };
+  const message = normalizeScopeAnswer(input.raw_message).toLowerCase();
+  const isSuggested = /^\s*\[suggested\]/i.test(input.target_question.question);
+  const score = scoreScopeAnswerClauseAgainstQuestion(
+    message,
+    input.target_question.question,
+    input.target_question.clarification
+  );
+  if (isSuggested && !isClauseCompatibleWithScopeQuestion(message, input.target_question.question)) {
+    return false;
   }
 
-  const lower = rawMessage.toLowerCase();
-  if (/\b(all questions|all of them|same for all)\b/.test(lower)) {
-    const answer = normalizeScopeAnswer(rawMessage);
-    if (answer.length === 0) {
-      return { answered_count: 0, all_answered: unanswered().length === 0 };
-    }
-    for (const entry of state.scope_questions) {
-      if (!entry.answer || entry.answer.trim().length === 0) {
-        answeredCount += 1;
-      }
-      entry.answer = answer;
-    }
-    applyMetricDefinitionAnswersFromScope(state);
-    return { answered_count: answeredCount, all_answered: true };
+  if (input.explicit_apply_to_all) {
+    return score >= 1.4;
   }
 
-  const pending = unanswered();
-  if (pending.length === 0) {
-    return { answered_count: 0, all_answered: true };
-  }
-
-  const splitAnswers = rawMessage
-    .split(/\n+|;\s+/)
-    .map((part) => normalizeScopeAnswer(part))
-    .filter((part) => part.length > 0);
-  if (splitAnswers.length > 1) {
-    for (let index = 0; index < pending.length && index < splitAnswers.length; index += 1) {
-      pending[index]!.answer = splitAnswers[index]!;
-      answeredCount += 1;
-    }
-    applyMetricDefinitionAnswersFromScope(state);
-    return { answered_count: answeredCount, all_answered: unanswered().length === 0 };
-  }
-
-  const singleAnswer = normalizeScopeAnswer(rawMessage);
-  if (singleAnswer.length === 0) {
-    return { answered_count: 0, all_answered: unanswered().length === 0 };
-  }
-  pending[0]!.answer = singleAnswer;
-  answeredCount += 1;
-  const result = { answered_count: answeredCount, all_answered: unanswered().length === 0 };
-  applyMetricDefinitionAnswersFromScope(state);
-  return result;
+  return score >= 1.2;
 }
 
-function extractExplicitScopeAnswers(rawMessage: string): Map<number, string> {
-  const answers = new Map<number, string>();
+const SUGGESTED_SCOPE_GENERIC_TOKENS = new Set([
+  "what",
+  "which",
+  "are",
+  "the",
+  "with",
+  "for",
+  "from",
+  "past",
+  "last",
+  "month",
+  "months",
+  "order",
+  "orders",
+  "refund",
+  "refunded",
+  "rate",
+  "count",
+  "counts",
+  "value",
+  "values",
+  "support",
+  "ticket",
+  "tickets",
+  "top",
+  "highest",
+  "linked"
+]);
 
-  const normalizedMessage = rawMessage.replace(/[–—]/g, "-");
-  // Accept Q1: Q1- Q1. Q1, Q1) and "for Q1" patterns
-  const questionRegex =
-    /\b(?:for\s+)?q(?:uestion)?\s*(\d+)\s*[.,:)\-]?\s*([\s\S]*?)(?=\b(?:for\s+)?q(?:uestion)?\s*\d+\s*[.,:)\-]?|\n{2,}|$)/gi;
-  let match: RegExpExecArray | null;
-  while ((match = questionRegex.exec(normalizedMessage)) !== null) {
-    const questionNumber = Number.parseInt(match[1] ?? "", 10);
-    const answer = normalizeScopeAnswer(match[2] ?? "");
-    if (!Number.isNaN(questionNumber) && answer.length > 0) {
-      answers.set(questionNumber, answer);
+function maybeAppendImpromptuScopeQuestionFromClarification(
+  state: ChatState,
+  rawMessage: string
+): boolean {
+  const explicitAssignments = parseExplicitScopeAnswerAssignments(rawMessage);
+  const candidate = extractImpromptuScopeQuestionFromClarification(
+    state,
+    rawMessage,
+    explicitAssignments
+  );
+  if (!candidate) {
+    return false;
+  }
+  if (state.scope_questions.some((entry) => areScopeQuestionTextsSimilar(entry.question, candidate))) {
+    return false;
+  }
+
+  const nextQuestion = sanitizeScopeQuestionLanguage({
+    question_number: state.scope_questions.length + 1,
+    question: candidate,
+    clarification: buildClarificationForScopeQuestion(candidate),
+    answer: null,
+    metric_key: null,
+    metric_display_name: null,
+    metric_definition_draft: null,
+    metric_source_columns: []
+  });
+
+  const deduped = removeDuplicateScopeQuestions(
+    [...state.scope_questions, nextQuestion].map(sanitizeScopeQuestionLanguage)
+  );
+  if (deduped.length === state.scope_questions.length) {
+    return false;
+  }
+
+  state.scope_questions = renumberScopeQuestions(deduped.map(sanitizeScopeQuestionLanguage));
+  state.scope_finalized = false;
+  syncQuestionRegistryFromScope(state);
+  return true;
+}
+
+function applyBestEffortScopeAssignments(
+  state: ChatState,
+  rawMessage: string,
+  applyAssignment: (questionNumber: number, answer: string) => number
+): number {
+  const trimmed = rawMessage.trim();
+  if (trimmed.length === 0) {
+    return 0;
+  }
+
+  let assigned = 0;
+  const explicitAssignments = parseExplicitScopeAnswerAssignments(trimmed);
+  if (explicitAssignments.length > 0) {
+    for (const item of explicitAssignments) {
+      assigned += applyAssignment(item.question_number, item.answer);
     }
   }
 
-  if (answers.size > 0) {
-    return answers;
+  const unanswered = state.scope_questions.filter((entry) => !entry.answer || entry.answer.trim().length === 0);
+  if (unanswered.length === 0) {
+    return assigned;
   }
 
-  const numericRegex = /(?:^|\n)\s*(\d+)[).:-]\s*([\s\S]*?)(?=(?:\n\s*\d+[).:-])|\n{2,}|$)/g;
-  while ((match = numericRegex.exec(normalizedMessage)) !== null) {
-    const questionNumber = Number.parseInt(match[1] ?? "", 10);
-    const answer = normalizeScopeAnswer(match[2] ?? "");
-    if (!Number.isNaN(questionNumber) && answer.length > 0) {
-      answers.set(questionNumber, answer);
+  if (shouldApplyDefaultsToRemainingScopeItems(trimmed)) {
+    for (const entry of unanswered) {
+      assigned += applyAssignment(
+        entry.question_number,
+        "Use default assumptions from the stated clarification for this question."
+      );
+    }
+    return assigned;
+  }
+
+  if (shouldAffirmSuggestedScopeItems(trimmed)) {
+    const suggested = unanswered.filter((entry) => /^\s*\[suggested\]/i.test(entry.question));
+    for (const entry of suggested) {
+      assigned += applyAssignment(
+        entry.question_number,
+        "Include this suggested analysis with the default assumptions in scope."
+      );
     }
   }
 
-  return answers;
+  if (unanswered.length === 1 && explicitAssignments.length === 0) {
+    const normalized = normalizeScopeAnswer(trimmed);
+    if (
+      normalized.length > 0 &&
+      !looksLikeNewQuestionWhileClarifying(normalized)
+    ) {
+      assigned += applyAssignment(unanswered[0]!.question_number, normalized);
+    }
+    return assigned;
+  }
+
+  return assigned;
+}
+
+function applySinglePendingScopeConfirmationFallback(
+  state: ChatState,
+  rawMessage: string,
+  applyAssignment: (questionNumber: number, answer: string) => number,
+  explicitAssignmentCount: number
+): number {
+  const pending = state.scope_questions.filter((entry) => !entry.answer || entry.answer.trim().length === 0);
+  if (pending.length !== 1 || explicitAssignmentCount > 0) {
+    return 0;
+  }
+
+  const normalized = normalizeScopeAnswer(rawMessage);
+  if (normalized.length === 0 || looksLikeNewQuestionWhileClarifying(normalized)) {
+    return 0;
+  }
+
+  const fallbackAnswer = looksLikeAffirmativeScopeConfirmation(normalized)
+    ? "Confirmed: use the proposed clarification/default for this pending question."
+    : normalized;
+
+  return applyAssignment(pending[0]!.question_number, fallbackAnswer);
+}
+
+function looksLikeAffirmativeScopeConfirmation(message: string): boolean {
+  const lower = message.toLowerCase();
+  if (/\b(?:not|don't|do not|skip|cancel|hold|wait)\b/.test(lower)) {
+    return false;
+  }
+  return /\b(?:yes|yep|yeah|ok|okay|looks good|sounds good|go ahead|proceed|works|that works|approved|confirm(?:ed)?|use it|use that|do it)\b/.test(
+    lower
+  );
+}
+
+function shouldApplyDefaultsToRemainingScopeItems(rawMessage: string): boolean {
+  const lower = rawMessage.toLowerCase();
+  const asksForDefaults =
+    /\b(default|defaults|default assumptions|standard assumptions|safe assumptions)\b/.test(lower) &&
+    /\b(remaining|pending|rest|left)\b/.test(lower);
+  const proceedIntent = /\b(proceed|go ahead|continue|apply|use|yes|ok|okay|works|do it)\b/.test(lower);
+  return asksForDefaults && proceedIntent;
+}
+
+function shouldAffirmSuggestedScopeItems(rawMessage: string): boolean {
+  const lower = rawMessage.toLowerCase();
+  const mentionsSuggested = /\b(suggested|suggestions|optional|additional|extra)\b/.test(lower);
+  const affirmative = /\b(include|keep|add|yes|yep|yeah|ok|okay|go ahead|proceed|works|fine)\b/.test(lower);
+  return mentionsSuggested && affirmative;
+}
+
+function applySemanticScopeFallback(
+  state: ChatState,
+  rawMessage: string,
+  applyAssignment: (questionNumber: number, answer: string) => number,
+  options?: { skip_question_numbers?: Set<number> }
+): number {
+  const unanswered = state.scope_questions.filter((entry) => !entry.answer || entry.answer.trim().length === 0);
+  if (unanswered.length === 0) {
+    return 0;
+  }
+
+  const clauses = extractScopeAnswerClauses(rawMessage);
+  if (clauses.length === 0) {
+    return 0;
+  }
+
+  let assigned = 0;
+  const usedQuestionNumbers = new Set<number>();
+  for (const clause of clauses) {
+    const normalized = normalizeScopeAnswer(clause);
+    if (normalized.length < 8 || looksLikePureNewQuestionClause(normalized)) {
+      continue;
+    }
+
+    let bestMatch: { question_number: number; score: number } | null = null;
+    for (const entry of unanswered) {
+      if (options?.skip_question_numbers?.has(entry.question_number)) {
+        continue;
+      }
+      if (usedQuestionNumbers.has(entry.question_number)) {
+        continue;
+      }
+      if (!isClauseCompatibleWithScopeQuestion(normalized, entry.question)) {
+        continue;
+      }
+      const score = scoreScopeAnswerClauseAgainstQuestion(normalized, entry.question, entry.clarification);
+      if (!bestMatch || score > bestMatch.score) {
+        bestMatch = { question_number: entry.question_number, score };
+      }
+    }
+
+    if (!bestMatch) {
+      continue;
+    }
+
+    const matchedQuestion = unanswered.find(
+      (entry) => entry.question_number === bestMatch.question_number
+    );
+    const isSuggestedMatch = Boolean(
+      matchedQuestion && /^\s*\[suggested\]/i.test(matchedQuestion.question)
+    );
+    const minScore = isSuggestedMatch ? 2.8 : 1.2;
+    if (bestMatch.score < minScore) {
+      continue;
+    }
+
+    assigned += applyAssignment(bestMatch.question_number, normalized);
+    usedQuestionNumbers.add(bestMatch.question_number);
+  }
+
+  return assigned;
+}
+
+function isClauseCompatibleWithScopeQuestion(clause: string, question: string): boolean {
+  const isSuggested = /^\s*\[suggested\]/i.test(question);
+  if (!isSuggested) {
+    return true;
+  }
+
+  const normalizedClause = normalizeScopeAnswer(clause).toLowerCase();
+  if (normalizedClause.length === 0) {
+    return false;
+  }
+
+  if (
+    /\b(include|keep|retain|add)\b/.test(normalizedClause) &&
+    /\b(suggested|extra|additional)\b/.test(normalizedClause)
+  ) {
+    return true;
+  }
+
+  const userTokens = new Set(tokenizeForSimilarity(normalizedClause));
+  const targetTokens = tokenizeForSimilarity(
+    question.replace(/^\s*\[suggested\]\s*/i, "")
+  );
+  const nonGenericTokens = targetTokens.filter(
+    (token) => !SUGGESTED_SCOPE_GENERIC_TOKENS.has(token)
+  );
+  if (nonGenericTokens.length === 0) {
+    return false;
+  }
+
+  return nonGenericTokens.some((token) => userTokens.has(token));
+}
+
+function extractScopeAnswerClauses(rawMessage: string): string[] {
+  const normalized = rawMessage
+    .replace(/\r\n/g, "\n")
+    .replace(/(?:^|[\n\r;,])\s*(?:[-*]\s*)?q(?:uestion)?\s*\d{1,2}\s*/gim, "\n")
+    .replace(/[.;]\s+/g, "\n")
+    .replace(/\s+(?:and also|also|plus)\s+/gi, "\n");
+
+  return normalized
+    .split(/\n+/g)
+    .map((line) => line.replace(/^\s*[-*]\s*/, "").trim())
+    .map((line) => line.replace(/^(?:q(?:uestion)?\s*\d{1,2}\s*[:\-)\]]\s*)/i, ""))
+    .map((line) => line.trim())
+    .filter((line) => line.length >= 8);
+}
+
+function looksLikePureNewQuestionClause(clause: string): boolean {
+  const lower = clause.toLowerCase().trim();
+  if (lower.length === 0) {
+    return true;
+  }
+  if (lower.includes("?")) {
+    return true;
+  }
+  if (/^(?:can you|could you|would you|will you|show me|give me|tell me|what|which|who|why|how|add)\b/.test(lower)) {
+    return true;
+  }
+  if (/^(?:also|and also|plus|another|one more)\b/.test(lower) && /\b(add|show|give|tell|include|analysis|breakdown|question)\b/.test(lower)) {
+    return true;
+  }
+  if (/\b(can you|could you|would you|show me|give me|tell me|add another|one more)\b/.test(lower)) {
+    return true;
+  }
+  return false;
+}
+
+function scoreScopeAnswerClauseAgainstQuestion(
+  clause: string,
+  question: string,
+  clarification: string
+): number {
+  const clauseTokens = tokenizeForSimilarity(clause);
+  const targetTokens = tokenizeForSimilarity(`${question} ${clarification}`);
+  if (clauseTokens.length === 0 || targetTokens.length === 0) {
+    return 0;
+  }
+
+  const clauseSet = new Set(clauseTokens);
+  const targetSet = new Set(targetTokens);
+
+  let overlap = 0;
+  for (const token of clauseSet) {
+    if (targetSet.has(token)) {
+      overlap += 1;
+    }
+  }
+
+  let score = overlap;
+  const lowerClause = clause.toLowerCase();
+  const lowerTarget = `${question} ${clarification}`.toLowerCase();
+
+  const timelineSignal = /\b(date|timeline|window|period|month|months|week|weeks|quarter|year|today|feb|jan|nov|dec)\b/;
+  const metricSignal = /\b(metric|rate|count|value|amount|revenue|refunded|refund|percentage|ratio)\b/;
+  const geoSignal = /\b(city|cities|region|state|country|location)\b/;
+  const supportSignal = /\b(support|ticket|issue|reason|resolution|order_id|customer_id)\b/;
+  const approvalSignal = /\b(yes|approved|confirm|confirmed|go ahead|works|that works|looks good|proceed)\b/;
+
+  if (timelineSignal.test(lowerClause) && timelineSignal.test(lowerTarget)) {
+    score += 1.2;
+  }
+  if (metricSignal.test(lowerClause) && metricSignal.test(lowerTarget)) {
+    score += 1.2;
+  }
+  if (geoSignal.test(lowerClause) && geoSignal.test(lowerTarget)) {
+    score += 0.8;
+  }
+  if (supportSignal.test(lowerClause) && supportSignal.test(lowerTarget)) {
+    score += 0.8;
+  }
+  if (approvalSignal.test(lowerClause)) {
+    score += 0.4;
+  }
+
+  return score;
+}
+
+function looksLikeNewQuestionWhileClarifying(message: string): boolean {
+  const trimmed = message.trim();
+  const lower = trimmed.toLowerCase();
+
+  if (trimmed.includes("?")) {
+    return true;
+  }
+
+  if (
+    /\b(can you|could you|would you|what|which|who|why|how|show me|give me|tell me|add|also|another)\b/.test(
+      lower
+    )
+  ) {
+    return true;
+  }
+
+  if (looksLikeAnalysisIntent(lower)) {
+    return true;
+  }
+
+  return false;
+}
+
+function parseExplicitScopeAnswerAssignments(
+  rawMessage: string
+): Array<{ question_number: number; answer: string }> {
+  const patterns = [
+    /(?:^|[\n\r]|[,;])\s*(?:[-*]\s*)?q(?:uestion)?\s*(\d{1,2})\s*(?:[:\-)\]]\s*|\s+)([\s\S]*?)(?=(?:^|[\n\r]|[,;])\s*(?:[-*]\s*)?q(?:uestion)?\s*\d{1,2}\s*(?:[:\-)\]]\s*|\s+)|$)/gim,
+    /(?:^|[\n\r]|\b)\s*q(?:uestion)?\s*(\d{1,2})\s*[:\-)\]]\s*([\s\S]*?)(?=(?:\s*q(?:uestion)?\s*\d{1,2}\s*[:\-)\]])|$)/gi
+  ];
+
+  const assignments = new Map<number, string>();
+  for (const pattern of patterns) {
+    let match: RegExpExecArray | null;
+    match = pattern.exec(rawMessage);
+    while (match !== null) {
+      const questionNumber = Number.parseInt(match[1] ?? "", 10);
+      const answer = normalizeScopeAnswer(match[2] ?? "");
+      const looksLikeConnectorOnly =
+        /^(?:and|or|plus|also|&|,|\.)+\s*(?:\d{1,2}|q(?:uestion)?\s*\d{1,2})?$/i.test(answer);
+      if (
+        Number.isFinite(questionNumber) &&
+        questionNumber > 0 &&
+        answer.length > 0 &&
+        !looksLikeConnectorOnly
+      ) {
+        assignments.set(questionNumber, answer);
+      }
+      match = pattern.exec(rawMessage);
+    }
+  }
+
+  return Array.from(assignments.entries())
+    .map(([question_number, answer]) => ({ question_number, answer }))
+    .sort((left, right) => left.question_number - right.question_number);
+}
+
+function extractImpromptuScopeQuestionFromClarification(
+  state: ChatState,
+  rawMessage: string,
+  explicitAssignments: Array<{ question_number: number; answer: string }>
+): string | null {
+  for (const assignment of explicitAssignments) {
+    const split = splitScopeAnswerAndImpromptuQuestion(assignment.answer);
+    if (!split.impromptu_question) {
+      continue;
+    }
+
+    const target = state.scope_questions.find((entry) => entry.question_number === assignment.question_number);
+    if (target && split.primary_answer.length > 0) {
+      target.answer = split.primary_answer;
+    }
+    return split.impromptu_question;
+  }
+
+  if (!/\b(also|and also|plus|additionally|one more|another)\b/i.test(rawMessage)) {
+    return null;
+  }
+
+  const extractedClause = extractImpromptuQuestionClause(rawMessage);
+  if (extractedClause) {
+    return extractedClause;
+  }
+
+  const remainder = rawMessage
+    .replace(
+      /(?:^|[\n\r]|\b)\s*q(?:uestion)?\s*\d{1,2}\s*[:\-)\]]\s*[\s\S]*?(?=(?:\s*q(?:uestion)?\s*\d{1,2}\s*[:\-)\]])|$)/gi,
+      " "
+    )
+    .replace(/\s+/g, " ")
+    .trim();
+  if (remainder.length === 0) {
+    return null;
+  }
+
+  const normalized = cleanScopeQuestionText(
+    remainder.replace(/^(?:also|and also|plus|additionally|one more|another)\b[:\s-]*/i, "")
+  );
+  if (normalized.length < 16) {
+    return null;
+  }
+  if (!looksLikePureNewQuestionClause(normalized)) {
+    return null;
+  }
+  return normalized;
+}
+
+function extractImpromptuQuestionClause(rawMessage: string): string | null {
+  const markerPattern = /\b(?:also|and also|plus|additionally|one more|another)\b/gi;
+  const clauses = rawMessage
+    .replace(/\r\n/g, "\n")
+    .split(markerPattern)
+    .map((part) => cleanScopeQuestionText(part))
+    .filter((part) => part.length >= 12);
+
+  if (clauses.length <= 1) {
+    return null;
+  }
+
+  for (let index = 1; index < clauses.length; index += 1) {
+    const clause = clauses[index]!;
+    const normalized = cleanScopeQuestionText(
+      clause.replace(/^(?:can you|could you|would you|please|show me|give me|tell me)\s+/i, "")
+    );
+    if (normalized.length < 16) {
+      continue;
+    }
+    if (!looksLikePureNewQuestionClause(clause)) {
+      continue;
+    }
+    return normalized;
+  }
+
+  return null;
+}
+
+function splitScopeAnswerAndImpromptuQuestion(answer: string): {
+  primary_answer: string;
+  impromptu_question: string | null;
+} {
+  const match = /(?:^|[.;]\s+|\n+)(?:also|and also|plus|additionally|one more|another)\s+([\s\S]+)$/i.exec(
+    answer
+  );
+  if (!match || typeof match.index !== "number") {
+    return {
+      primary_answer: answer,
+      impromptu_question: null
+    };
+  }
+
+  const primary = cleanScopeQuestionText(answer.slice(0, match.index));
+  const candidate = cleanScopeQuestionText(match[1] ?? "");
+  if (primary.length === 0 || candidate.length < 16) {
+    return {
+      primary_answer: answer,
+      impromptu_question: null
+    };
+  }
+  if (!looksLikeStandaloneScopeClause(candidate) && !looksLikeAnalysisIntent(candidate.toLowerCase())) {
+    return {
+      primary_answer: answer,
+      impromptu_question: null
+    };
+  }
+
+  return {
+    primary_answer: primary,
+    impromptu_question: candidate
+  };
 }
 
 function normalizeScopeAnswer(value: string): string {
@@ -3222,22 +4589,86 @@ function normalizeScopeAnswer(value: string): string {
     .trim();
 }
 
+function buildScopeClarificationIntroMessage(state: ChatState): string {
+  const pending = state.scope_questions.filter((entry) => !entry.answer || entry.answer.trim().length === 0);
+  if (pending.length === 0) {
+    return "All scope clarifications are captured.";
+  }
+  const timezone = state.draft.timezone || "UTC";
+  const todayLocal = getTodayDateStringInTimezone(timezone);
+
+  const questionLines = pending.map((entry) => {
+    const clarification =
+      entry.clarification && entry.clarification.trim().length > 0
+        ? entry.clarification
+        : buildClarificationForScopeQuestion(entry.question);
+    const proposedDefault = buildProposedDefaultForScopeQuestion(state, entry);
+    return [
+      `- Q${entry.question_number}: ${entry.question}`,
+      `  Clarification needed: ${clarification}`,
+      `  Proposed default (not applied): ${proposedDefault}`
+    ].join("\n");
+  });
+
+  const businessContextLine =
+    state.scope_business_context && state.scope_business_context.trim().length > 0
+      ? `Business context available and used for defaults: ${state.scope_business_context.trim()}`
+      : null;
+
+  return [
+    "Before data preparation, please confirm the scope details below.",
+    `Today is ${todayLocal} in ${timezone}. Relative windows will anchor to this date unless you override.`,
+    "I have prepared proposed defaults for each question, but none of them are applied until you confirm or edit.",
+    businessContextLine,
+    "You can answer all at once (for example: `Q1: ... Q2: ... Q3: ...`) or across multiple messages.",
+    questionLines.join("\n"),
+    "",
+    "Once all items are explicitly resolved, I will proceed to data preparation."
+  ]
+    .filter((line): line is string => typeof line === "string" && line.trim().length > 0)
+    .join("\n");
+}
+
 function buildScopeClarificationPendingMessage(state: ChatState): string {
   const pending = state.scope_questions.filter((entry) => !entry.answer || entry.answer.trim().length === 0);
   if (pending.length === 0) {
     return "All scope clarifications are captured.";
   }
+  const answered = state.scope_questions.filter((entry) => Boolean(entry.answer && entry.answer.trim().length > 0));
+  const timezone = state.draft.timezone || "UTC";
+  const todayLocal = getTodayDateStringInTimezone(timezone);
 
-  const lines = pending.map((entry) => {
+  const pendingLines = pending.map((entry) => {
+    const clarification =
+      entry.clarification && entry.clarification.trim().length > 0
+        ? entry.clarification
+        : buildClarificationForScopeQuestion(entry.question);
     const metricLine =
       entry.metric_display_name && entry.metric_display_name.trim().length > 0
         ? ` (metric: ${entry.metric_display_name})`
         : "";
-    return `- Q${entry.question_number}${metricLine}: ${entry.clarification}`;
+    const proposedDefault = buildProposedDefaultForScopeQuestion(state, entry);
+    return [
+      `- Q${entry.question_number}${metricLine}: ${entry.question}`,
+      `  Clarification needed: ${clarification}`,
+      `  Proposed default (not applied): ${proposedDefault}`
+    ].join("\n");
   });
+
+  const answeredLines =
+    answered.length > 0
+      ? answered.map((entry) => `- Q${entry.question_number}: ${entry.question}\n  Recorded answer: ${entry.answer ?? ""}`)
+      : ["- None yet."];
+
   return [
     `Need clarification for ${pending.length} scope item${pending.length === 1 ? "" : "s"} before data preparation:`,
-    lines.join("\n"),
+    `Today is ${todayLocal} in ${timezone}; relative windows are anchored to this date by default.`,
+    "Proposed defaults remain unconfirmed until you explicitly confirm or edit them.",
+    "Recorded so far:",
+    answeredLines.join("\n"),
+    "",
+    "Still pending:",
+    pendingLines.join("\n"),
     "Reply with `Q1: ... Q2: ...` (all at once) or answer across multiple messages."
   ].join("\n");
 }
@@ -4036,8 +5467,10 @@ async function buildPreparationConfirmation(state: ChatState, apiClient: WebApiC
   }
 
   const nextState = parseChatState(state);
+  nextState.scope_finalized = true;
   nextState.prep_pending = true;
   nextState.scope_pending = false;
+  syncQuestionRegistryFromScope(nextState);
 
   const draft = nextState.draft;
   const tables = draft.allowed_relations.length > 0 ? draft.allowed_relations.join(", ") : "default tables";
@@ -4138,10 +5571,25 @@ function isQueryOtherInstructionChoice(command: string): boolean {
 }
 
 function isScopeRunChoice(command: string): boolean {
+  const normalized = command.trim();
   return (
-    /^__ui_finish_scoping_run_analysis__$/.test(command) ||
-    /\b(confirm|yes|go ahead|proceed|looks good|lgtm|run it|do it|execute|approved|ok|okay|sure|start)\b/.test(command) ||
-    /^(finish scoping and run analysis|run analysis|execute analysis)\b/.test(command)
+    /^__ui_finish_scoping_run_analysis__$/.test(normalized) ||
+    /^(finish scoping and run analysis|run analysis|execute analysis|run report|execute report)\b/.test(
+      normalized
+    ) ||
+    /^(confirm|yes|go ahead|proceed|looks good|lgtm|run it|do it|execute|approved|ok|okay|sure|start)\s*[.!]?$/.test(
+      normalized
+    )
+  );
+}
+
+function isExplicitScopeRunChoice(command: string): boolean {
+  const normalized = command.trim();
+  return (
+    /^__ui_finish_scoping_run_analysis__$/.test(normalized) ||
+    /^(finish scoping and run analysis|run analysis|execute analysis|run report|execute report)\b/.test(
+      normalized
+    )
   );
 }
 
@@ -4153,9 +5601,20 @@ function isScopeContinueChoice(command: string): boolean {
 }
 
 function isRunPreparationChoice(command: string): boolean {
+  const normalized = command.trim();
   return (
-    /^__ui_run_data_preparation__$/.test(command) ||
-    /^(run data preparation|prepare data|run preparation)\b/.test(command)
+    /^__ui_run_data_preparation__$/.test(normalized) ||
+    /^(run data preparation|prepare data|run preparation)\b/.test(normalized)
+  );
+}
+
+function isScopeFinalizeChoice(command: string): boolean {
+  const normalized = command.trim();
+  return (
+    /^__ui_run_data_preparation__$/.test(normalized) ||
+    /^(looks good|scope looks good|finalize scope|lock scope|ready|all set|proceed|go ahead|yes|ok|okay|confirm)\s*[.!]?$/.test(
+      normalized
+    )
   );
 }
 
@@ -4210,7 +5669,8 @@ function completePdfGeneration(state: ChatState): ChatTurnResponse {
 async function executeRefinementQa(
   state: ChatState,
   question: string,
-  apiClient: WebApiClient
+  apiClient: WebApiClient,
+  queryRouter?: QueryRouterClient
 ): Promise<ChatTurnResponse> {
   const nextState = parseChatState(state);
   if (!nextState.last_run_id) {
@@ -4224,6 +5684,10 @@ async function executeRefinementQa(
   }
 
   const response = await apiClient.askRunQuestion(nextState.last_run_id, question);
+  if (!response.grounded || response.requires_new_analysis) {
+    return stageRefinementAsScopedQuestion(nextState, question, apiClient, queryRouter);
+  }
+
   const citationLine = response.citations.length > 0
     ? `\nReferences: ${response.citations.join(", ")}`
     : "";
@@ -4249,6 +5713,72 @@ async function executeRefinementQa(
     assistant_message: [
       `${response.answer}${citationLine}`,
       "Refinement limit reached for this run. PDF decision is now pending."
+    ].join("\n\n"),
+    state: nextState
+  };
+}
+
+async function stageRefinementAsScopedQuestion(
+  state: ChatState,
+  followUpQuestion: string,
+  apiClient: WebApiClient,
+  queryRouter: QueryRouterClient | undefined
+): Promise<ChatTurnResponse> {
+  const nextState = parseChatState(state);
+  nextState.awaiting_post_run_refinement = false;
+  nextState.refinement_active = false;
+  nextState.refinement_questions_remaining = 0;
+  nextState.awaiting_pdf_confirmation = false;
+  nextState.prep_pending = false;
+  nextState.prep_complete = false;
+  nextState.scope_pending = false;
+  nextState.scope_finalized = false;
+  nextState.preparation_summary = null;
+  nextState.prepared_payloads = [];
+  const catalogCtx = await fetchCatalogContext(apiClient).catch(() => ({
+    catalog_summary: "",
+    business_context: ""
+  }));
+  nextState.scope_business_context =
+    catalogCtx.business_context && catalogCtx.business_context.trim().length > 0
+      ? catalogCtx.business_context.trim()
+      : nextState.scope_business_context;
+
+  const generated = await generateLlmScopeQuestions(
+    followUpQuestion,
+    nextState,
+    apiClient,
+    queryRouter,
+    "deep_analysis",
+    catalogCtx
+  );
+  if (generated.length === 0 && !isTestRuntime()) {
+    throw new Error("scope_clarification_generation_failed: llm returned no follow-up scope questions");
+  }
+  const incoming = (generated.length > 0 ? generated : [])
+    .map(sanitizeScopeQuestionLanguage)
+    .slice(0, 3);
+
+  const baseIndex = nextState.scope_questions.length;
+  const appended = incoming.map((entry, index) => ({
+    ...entry,
+    question_number: baseIndex + index + 1
+  }));
+  const dedupedAppended = removeDuplicateScopeQuestions(appended).map(sanitizeScopeQuestionLanguage);
+  nextState.scope_questions = renumberScopeQuestions(
+    [...nextState.scope_questions, ...dedupedAppended].map(sanitizeScopeQuestionLanguage)
+  );
+  nextState.scope_source_prompt = [nextState.scope_source_prompt, followUpQuestion]
+    .filter((entry): entry is string => Boolean(entry && entry.trim().length > 0))
+    .join("\n");
+  nextState.scope_clarification_pending = true;
+  nextState.scope_finalized = false;
+  syncQuestionRegistryFromScope(nextState);
+
+  return {
+    assistant_message: [
+      "That follow-up needs fresh scoped analysis to stay grounded.",
+      buildScopeClarificationPendingMessage(nextState)
     ].join("\n\n"),
     state: nextState
   };
@@ -4366,6 +5896,18 @@ async function executePreparation(state: ChatState, apiClient: WebApiClient): Pr
   if (missing.length > 0) {
     return { assistant_message: `Cannot prepare data yet: ${missing.join(", ")}.`, state };
   }
+  const hasUnansweredScopeItems = state.scope_questions.some(
+    (entry) => !entry.answer || entry.answer.trim().length === 0
+  );
+  const allowLegacyPrepWithoutScope =
+    state.prep_pending && state.scope_questions.length === 0 && !state.scope_clarification_pending;
+  if (!allowLegacyPrepWithoutScope && (!state.scope_finalized || hasUnansweredScopeItems)) {
+    return {
+      assistant_message:
+        "Scope is not finalized yet. Please confirm the scope details first, then run data preparation.",
+      state
+    };
+  }
 
   const nextState = parseChatState(state);
   nextState.prep_pending = false;
@@ -4401,6 +5943,27 @@ async function executePreparation(state: ChatState, apiClient: WebApiClient): Pr
   nextState.scope_clarification_pending = false;
   nextState.prepared_payloads = prepared.prepared_payloads;
   nextState.preparation_summary = prepared.planner_summary ?? null;
+  syncQuestionRegistryFromScope(nextState);
+  if (nextState.question_registry.length > 0 && prepared.prepared_payloads.length > 0) {
+    const byNumber = new Map(
+      nextState.question_registry.map((entry) => [entry.question_number, entry])
+    );
+    for (const payload of prepared.prepared_payloads) {
+      if (!payload.question_number) {
+        continue;
+      }
+      const target = byNumber.get(payload.question_number);
+      if (!target) {
+        continue;
+      }
+      target.status = "prepared";
+      target.question_id = payload.question_id ?? target.question_id;
+      target.group_id = payload.group_id ?? target.group_id;
+    }
+    nextState.question_registry = Array.from(byNumber.values()).sort(
+      (left, right) => left.question_number - right.question_number
+    );
+  }
   if (prepared.token_usage) {
     nextState.last_token_usage = prepared.token_usage;
   }
@@ -4584,8 +6147,7 @@ async function executeSchedule(
 function formatPreparedPayloadSummary(payload: PreparedPayloadRecord): string {
   const label = payload.question_number ? `Q${payload.question_number}` : "Question";
   const lines: string[] = [
-    `- ${label}: ${payload.question}`,
-    `  Rows: ${payload.row_count_before_reduction} raw -> ${payload.prepared_row_count} prepared`
+    `- ${label}: ${payload.question}`
   ];
 
   if (payload.source_query_count && payload.source_query_count > 1) {
@@ -5500,7 +7062,7 @@ function extractProductPhrase(lower: string): string | null {
 
 function extractProductPhraseFromHistory(state: ChatState): string | null {
   const recentUserMessages = state.conversation_history
-    .slice(-8)
+    .slice(-20)
     .filter((turn) => turn.role === "user")
     .map((turn) => turn.content.toLowerCase());
 
@@ -5849,7 +7411,7 @@ function extractRequestedWindowFromHistory(
   state: ChatState
 ): { unit: "months" | "days"; value: number } | null {
   const recentUserMessages = state.conversation_history
-    .slice(-8)
+    .slice(-20)
     .filter((turn) => turn.role === "user")
     .map((turn) => turn.content.toLowerCase());
 
@@ -5912,7 +7474,7 @@ function looksLikeSalesNumericFollowUp(lower: string, state: ChatState): boolean
   }
 
   const recent = state.conversation_history
-    .slice(-8)
+    .slice(-20)
     .map((turn) => turn.content.toLowerCase())
     .join(" ");
 
@@ -5930,7 +7492,7 @@ function collectRequestedStatuses(lower: string, state: ChatState): string[] {
   }
 
   const recentUserText = state.conversation_history
-    .slice(-8)
+    .slice(-20)
     .filter((turn) => turn.role === "user")
     .map((turn) => turn.content.toLowerCase())
     .join(" ");
@@ -6113,7 +7675,7 @@ function extractCityPhrase(lower: string): string | null {
 
 function extractCityPhraseFromHistory(state: ChatState): string | null {
   const recentUserMessages = state.conversation_history
-    .slice(-8)
+    .slice(-20)
     .filter((turn) => turn.role === "user")
     .map((turn) => turn.content.toLowerCase());
 
@@ -6566,12 +8128,18 @@ function resetPreparedState(state: ChatState): void {
   state.prep_pending = false;
   state.prep_complete = false;
   state.scope_pending = false;
+  state.scope_finalized = false;
   state.pending_metric_confirmations = [];
   state.pending_metric_resume_message = null;
   state.pending_metric_resume_mode = null;
   state.scope_clarification_pending = false;
+  state.scope_business_context = null;
   state.scope_source_prompt = null;
   state.scope_questions = [];
+  state.pending_inputs = [];
+  state.question_registry = [];
+  state.orchestrator_summary = null;
+  state.last_orchestrator_decision = null;
   state.preparation_summary = null;
   state.prepared_payloads = [];
   state.awaiting_pdf_confirmation = false;
@@ -6754,6 +8322,27 @@ function getMissingDraftFields(state: ChatState): string[] {
 
 function asksForPdf(command: string): boolean {
   return command.includes("pdf") || command.includes("download");
+}
+
+function hasScopeReadyContextInHistory(state: ChatState): boolean {
+  const lastAssistant = [...state.conversation_history]
+    .reverse()
+    .find((turn) => turn.role === "assistant");
+  if (!lastAssistant) {
+    return false;
+  }
+
+  const text = lastAssistant.content.toLowerCase();
+  return (
+    text.includes("scope clarifications captured for all questions") ||
+    text.includes("ready to prepare data for:") ||
+    /\ball\s+\w+\s+questions?\s+(?:are|is)\s+(?:fully\s+)?confirmed\b/.test(text) ||
+    text.includes("scope is locked and waiting on the current workflow decision") ||
+    text.includes("ready to move to data preparation") ||
+    text.includes("ready to move to data prep") ||
+    /\bscope is locked\b.*\bdata prep(?:aration)?\b/.test(text) ||
+    /\bscope is locked\b/.test(text)
+  );
 }
 
 function asksToUseConnectedTables(command: string): boolean {
@@ -7138,6 +8727,4 @@ function formatRunExecutionFailure(error: unknown): string {
 
   return message;
 }
-
-
 

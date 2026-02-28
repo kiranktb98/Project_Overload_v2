@@ -2,12 +2,16 @@ import { describe, expect, it } from "vitest";
 import {
   AnalystInputSchema,
   BatchPlanSchema,
+  BatchAnalysisSchema,
   ContractBatchAnalysisSchema,
   ContractEvidencePacketSchema,
   ContractExecBriefSchema,
   ContractQueryPlanSchema,
+  ConversationOrchestratorDecisionSchema,
   EvidencePacketSchema,
+  MergedQueryPlanOutputSchema,
   MetricSchema,
+  PerQuestionAnalysisSummarySchema,
   PlannedQuerySchema,
   QueryStrategyOutputSchema,
   QualityEvalSchema,
@@ -247,5 +251,134 @@ describe("shared schemas", () => {
     expect(output.queries[0].group_id).toBeUndefined();
     expect(output.queries[1].group_id).toBe("g1");
     expect(output.queries[2].group_id).toBe("g1");
+  });
+
+  it("supports analyst additional query requests", () => {
+    const parsed = BatchAnalysisSchema.parse({
+      request_id: "req_1",
+      batch_index: 0,
+      total_batches: 1,
+      highlights: ["Partial coverage detected"],
+      risks: ["Missing dimensions in evidence rows."],
+      recommendations: ["Fetch additional grouped breakdown."],
+      confidence_score: 0.64,
+      appendix_refs: ["req_1:batch-1"],
+      additional_query_requests: [
+        {
+          reason: "Need city-level split to validate regional concentration.",
+          question: "What is refund concentration by city for the same window?",
+          required_fields: ["city", "refund_amount", "total_orders"]
+        }
+      ]
+    });
+
+    expect(parsed.additional_query_requests).toHaveLength(1);
+    expect(parsed.additional_query_requests[0]?.required_fields).toContain("city");
+  });
+
+  it("validates orchestrator mixed-intent decision contract", () => {
+    const decision = ConversationOrchestratorDecisionSchema.parse({
+      intent_parts: [
+        { type: "new_question", text: "Compare refunds this month vs last month." },
+        { type: "clarification_answer", text: "Use paid + delivered only.", question_ref: "Q1" },
+        { type: "follow_up_request", text: "Also break down by city." }
+      ],
+      resolved_scope_answers: [
+        { question_number: 1, answer: "Use paid + delivered statuses only." }
+      ],
+      new_scope_questions: [
+        { question_text: "Refund trend by month", clarification: "Compare current month vs previous month." }
+      ],
+      follow_up_requests: [
+        {
+          question_text: "City breakdown for refund trend",
+          requires_new_data: true,
+          grounded_in_existing_payload: false,
+          referenced_question_ids: ["q1"]
+        }
+      ],
+      pending_inputs: [
+        { input_key: "timeline_anchor", prompt: "Confirm timeline anchor month", question_number: 1 }
+      ],
+      next_owner: "query_planning_agent",
+      tool_calls: [{ tool_name: "query_planning_agent", payload: { question_ids: ["q1"] } }],
+      state_updates: {
+        mark_scope_complete: false,
+        append_new_questions: true,
+        clear_pending_inputs: false,
+        summary: "Need one timeline clarification before planning."
+      }
+    });
+
+    expect(decision.intent_parts).toHaveLength(3);
+    expect(decision.next_owner).toBe("query_planning_agent");
+  });
+
+  it("accepts nullable optional orchestrator string fields from provider output", () => {
+    const decision = ConversationOrchestratorDecisionSchema.parse({
+      intent_parts: [
+        { type: "new_question", text: "Compare refunds this month vs last month.", question_ref: null }
+      ],
+      resolved_scope_answers: [],
+      new_scope_questions: [],
+      follow_up_requests: [],
+      pending_inputs: [],
+      next_owner: "wait_for_user",
+      tool_calls: [],
+      state_updates: {
+        mark_scope_complete: false,
+        append_new_questions: false,
+        clear_pending_inputs: false,
+        summary: null
+      }
+    });
+
+    expect(decision.intent_parts[0]?.question_ref).toBeUndefined();
+  });
+
+  it("validates merged query planning output contract", () => {
+    const output = MergedQueryPlanOutputSchema.parse({
+      plan_id: "plan_merged_1",
+      questions: [
+        {
+          question_id: "q1",
+          question_number: 1,
+          question_text: "Refund trend for 4 months",
+          clarifications_used: ["Use order_date", "Include refunded status only"],
+          group_id: "grp_q1",
+          query_blocks: [
+            {
+              sql: "SELECT DATE_TRUNC('month', order_date) AS month, SUM(total_amount) AS refund_value FROM public.orders GROUP BY 1 LIMIT 50",
+              purpose: "Monthly refund value trend",
+              expected_rows: 4,
+              joins_used: [],
+              filters_used: ["status='refunded'"]
+            }
+          ],
+          expected_output_columns: ["month", "refund_value"],
+          success_criteria: ["4 monthly rows", "no missing months"]
+        }
+      ]
+    });
+
+    expect(output.questions[0].group_id).toBe("grp_q1");
+    expect(output.questions[0].query_blocks).toHaveLength(1);
+  });
+
+  it("validates per-question analysis summary contract", () => {
+    const summary = PerQuestionAnalysisSummarySchema.parse({
+      question_id: "q1",
+      question_text: "Refund trend for 4 months",
+      findings: ["Refund value increased in January."],
+      drivers: ["Holiday return volume spike."],
+      anomalies: [],
+      coverage_status: "complete",
+      coverage_notes: ["Observed 4/4 expected months."],
+      evidence_refs: ["q1:grp_q1:block_1"],
+      confidence_notes: ["All required months present; no join-key loss."]
+    });
+
+    expect(summary.coverage_status).toBe("complete");
+    expect(summary.evidence_refs).toContain("q1:grp_q1:block_1");
   });
 });

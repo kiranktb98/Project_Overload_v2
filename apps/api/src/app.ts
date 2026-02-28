@@ -7,10 +7,12 @@ import {
   createPlannerClientFromEnv,
   createQueryStrategistClientFromEnv,
   createReportComposerClientFromEnv,
+  createSuperSummaryClientFromEnv,
   type AnalystClient,
   type PlannerClient,
   type QueryStrategistClient,
-  type ReportComposerClient
+  type ReportComposerClient,
+  type SuperSummaryClient
 } from "@project-overload/llm-client";
 import { SqlGuardError } from "@project-overload/sql-guard";
 import { createMetadataStoreFromEnv, type MetadataStore } from "./store";
@@ -29,6 +31,7 @@ export type ApiDependencies = {
   analyst_client: AnalystClient;
   query_strategist: QueryStrategistClient;
   report_composer: ReportComposerClient;
+  super_summary_client: SuperSummaryClient;
   planner_client: PlannerClient;
   connection_manager: RuntimeConnectionManager;
 };
@@ -82,6 +85,7 @@ export async function buildApiApp(options: Partial<ApiDependencies> = {}) {
   const analystClient = options.analyst_client ?? createAnalystClientFromEnv();
   const queryStrategist = options.query_strategist ?? createQueryStrategistClientFromEnv();
   const reportComposer = options.report_composer ?? createReportComposerClientFromEnv();
+  const superSummaryClient = options.super_summary_client ?? createSuperSummaryClientFromEnv();
   const plannerClient = options.planner_client ?? createPlannerClientFromEnv();
 
   const configuredRateLimit = Number.parseInt(process.env.RATE_LIMIT_RPM ?? "0", 10);
@@ -117,7 +121,17 @@ export async function buildApiApp(options: Partial<ApiDependencies> = {}) {
   app.get("/health", async () => ({ status: "ok", service: "api" }));
 
   registerSemanticRoutes(app, store);
-  registerContractRoutes(app, store, dataPlane, analystClient, queryStrategist, reportComposer, plannerClient, connectionManager);
+  registerContractRoutes(
+    app,
+    store,
+    dataPlane,
+    analystClient,
+    queryStrategist,
+    reportComposer,
+    superSummaryClient,
+    plannerClient,
+    connectionManager
+  );
   registerConnectionRoutes(app, connectionManager);
   registerConfigRoutes(app, store);
   registerUiRoutes(app, store);

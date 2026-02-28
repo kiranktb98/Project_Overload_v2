@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import { buildWebApp } from "../src/app";
 import { createPassthroughConversationClient } from "../src/conversation";
 import type { QueryRouterClient } from "../src/query-router";
+import { applyLlmDraftUpdates, parseChatState } from "../src/chat";
 
 describe("web chat interface", () => {
   it("serves health and html routes", async () => {
@@ -767,7 +768,28 @@ describe("web chat interface", () => {
       method: "POST",
       url: "/api/chat",
       payload: {
-        message: "scope looks good to me"
+        message: "scope looks good to me",
+        state: {
+          draft: {
+            name: "Scope Ready Report",
+            audience: "Executive",
+            timezone: "UTC",
+            schedule_cron: null,
+            sql_template: "SELECT * FROM analytics.sales",
+            metric_ids: ["metric_refunds"],
+            dimension_ids: ["city"],
+            allowed_relations: ["analytics.sales"],
+            allowed_schemas: ["analytics"],
+            insight_mode: "business"
+          },
+          contract_id: null,
+          last_run_id: null,
+          last_exec_brief: null,
+          scope_finalized: true,
+          scope_questions: [
+            { question_number: 1, question: "Time range?", clarification: "Specify the period", answer: "Last 6 months" }
+          ]
+        }
       }
     });
 
@@ -2164,7 +2186,7 @@ describe("web chat interface", () => {
     await app.close();
   });
 
-  it("returns transient provider-error message when conversation provider throws", async () => {
+  it("returns explicit stage error when conversation provider throws", async () => {
     const fetchImpl: typeof fetch = async (input, init) => {
       const url = typeof input === "string" ? input : input instanceof URL ? input.toString() : input.url;
       const method = init?.method?.toUpperCase() ?? "GET";
@@ -2201,14 +2223,78 @@ describe("web chat interface", () => {
     });
 
     expect(response.statusCode).toBe(200);
-    expect(response.json().assistant_message).toContain(
-      "temporary AI connectivity issue"
-    );
+    expect(response.json().assistant_message).toContain("Stage error: conversation_response failed.");
 
     await app.close();
   });
 
-  it("keeps analysis decision locked and does not execute simple query text when scope confirmation is pending", async () => {
+  it("keeps authoritative run-in-flight context when finishing scope", async () => {
+    const fetchImpl: typeof fetch = async (input, init) => {
+      const url = typeof input === "string" ? input : input instanceof URL ? input.toString() : input.url;
+      const method = init?.method?.toUpperCase() ?? "GET";
+
+      if (url.endsWith("/report-contracts/test_contract/run") && method === "POST") {
+        return new Response(
+          JSON.stringify({
+            run_id: "run_test_1",
+            status: "queued"
+          }),
+          { status: 200, headers: { "content-type": "application/json" } }
+        );
+      }
+
+      if (url.endsWith("/connections/catalog") && method === "GET") {
+        return new Response(
+          JSON.stringify({
+            business_id: "biz_test",
+            business_context: "",
+            cataloged_at: "2026-02-01T00:00:00.000Z",
+            tables: []
+          }),
+          { status: 200, headers: { "content-type": "application/json" } }
+        );
+      }
+
+      return new Response(JSON.stringify({ message: `Unhandled request: ${method} ${url}` }), {
+        status: 404,
+        headers: { "content-type": "application/json" }
+      });
+    };
+
+    const app = buildWebApp({
+      api_base_url: "http://api.local",
+      fetch_impl: fetchImpl,
+      conversation_client: {
+        provider: "openrouter",
+        mode: "provider",
+        async respond() {
+          return { message: "I am running the report now." };
+        }
+      }
+    });
+
+    const response = await app.inject({
+      method: "POST",
+      url: "/api/chat",
+      payload: {
+        message: "__ui_finish_scoping_run_analysis__",
+        state: {
+          contract_id: "test_contract",
+          prep_complete: true,
+          scope_pending: true
+        }
+      }
+    });
+
+    expect(response.statusCode).toBe(200);
+    const body = response.json();
+    expect(body.assistant_message).toContain("I'm generating your report");
+    expect(body.assistant_message).not.toContain("I haven't executed a report run yet");
+
+    await app.close();
+  });
+
+  it("accepts typed refinement while analysis decision is pending and still blocks ad-hoc query execution", async () => {
     let queryCalls = 0;
     const fetchImpl: typeof fetch = async (input, init) => {
       const url = typeof input === "string" ? input : input instanceof URL ? input.toString() : input.url;
@@ -2303,8 +2389,8 @@ describe("web chat interface", () => {
     });
 
     expect(response.statusCode).toBe(200);
-    expect(response.json().assistant_message).toContain("Analysis decision pending");
-    expect(response.json().state.scope_pending).toBe(true);
+    expect(response.json().assistant_message).not.toContain("Analysis decision pending");
+    expect(response.json().assistant_message).not.toContain("Query completed");
     expect(queryCalls).toBe(0);
 
     await app.close();
@@ -2378,7 +2464,7 @@ describe("web chat interface", () => {
     expect(response.statusCode).toBe(200);
     expect(response.json().assistant_message).toContain("generating your report");
     expect(response.json().state.pending_run_id).toBe("run_web_test");
-    expect(conversationCalls).toBe(0);
+    expect(conversationCalls).toBe(1);
 
     await app.close();
   });
@@ -2455,7 +2541,7 @@ describe("web chat interface", () => {
     expect(response.json().assistant_message).toContain("generating your report");
     expect(response.json().assistant_message).not.toContain("execution didn't go through");
     expect(response.json().state.pending_run_id).toBe("run_web_test");
-    expect(conversationCalls).toBe(0);
+    expect(conversationCalls).toBe(1);
 
     await app.close();
   });
@@ -2570,14 +2656,26 @@ describe("web chat interface", () => {
     expect(first.json().state.scope_clarification_pending).toBe(true);
     expect(first.json().state.scope_questions.length).toBeGreaterThanOrEqual(2);
 
-    // Without an LLM resolver, the safety net assigns the full message
-    // to all unanswered questions so the user is never stuck
+    // Without an LLM resolver, explicit Qn assignments are still accepted.
+    const firstState = first.json().state;
+    const generatedAnswers = (firstState.scope_questions as Array<{ question_number: number }>)
+      .map((entry) => {
+        if (entry.question_number === 1) {
+          return "Q1: Use order_date and last 6 full calendar months.";
+        }
+        if (entry.question_number === 2) {
+          return "Q2: Compare against the previous 6 full months and include refunded status only.";
+        }
+        return `Q${entry.question_number}: Use standard defaults and keep the same 6-month timeline.`;
+      })
+      .join(" ");
+
     const second = await app.inject({
       method: "POST",
       url: "/api/chat",
       payload: {
-        message: "Use order_date and last 6 full calendar months. Compare against the previous 6 full months and include refunded status only.",
-        state: first.json().state
+        message: generatedAnswers,
+        state: firstState
       }
     });
 
@@ -2586,6 +2684,191 @@ describe("web chat interface", () => {
     expect(second.json().state.prep_pending).toBe(true);
     expect(second.json().assistant_message).toContain("Scope clarifications captured for all questions.");
     expect(second.json().assistant_message).toContain("Ready to prepare data for:");
+
+    await app.close();
+  });
+
+  it("does not crash scope clarification when business context is empty", async () => {
+    const router: QueryRouterClient = {
+      provider: "openrouter",
+      mode: "provider",
+      async decide() {
+        return {
+          route: "deep_analysis",
+          reason: "Multi-part analysis request",
+          confidence: 0.9
+        };
+      },
+      async scope_clarifications() {
+        return {
+          questions: [
+            {
+              question_number: 1,
+              question: "Show a 4-month refund trend",
+              clarification: "Confirm if we should include the current partial month."
+            },
+            {
+              question_number: 2,
+              question: "Compare past 2 months vs prior 2 months",
+              clarification: "Confirm exact comparison windows and primary date column."
+            }
+          ]
+        };
+      }
+    };
+
+    const fetchImpl: typeof fetch = async (input, init) => {
+      const url = typeof input === "string" ? input : input instanceof URL ? input.toString() : input.url;
+      const method = init?.method?.toUpperCase() ?? "GET";
+
+      if (url.endsWith("/connections/catalog") && method === "GET") {
+        return new Response(
+          JSON.stringify({
+            business_id: "biz_test",
+            business_context: "",
+            cataloged_at: "2026-02-01T00:00:00.000Z",
+            tables: [
+              {
+                table_id: "tbl_orders",
+                qualified_name: "public.demo_orders",
+                relation_type: "TABLE",
+                summary: "Orders",
+                columns: [
+                  { column_name: "order_id", data_type: "uuid", is_nullable: false },
+                  { column_name: "order_date", data_type: "timestamp with time zone", is_nullable: false },
+                  { column_name: "status", data_type: "text", is_nullable: false }
+                ],
+                low_cardinality_columns: [],
+                sample_rows: [],
+                row_count_estimate: 5000
+              }
+            ]
+          }),
+          {
+            status: 200,
+            headers: { "content-type": "application/json" }
+          }
+        );
+      }
+
+      return new Response(JSON.stringify({ message: `Unhandled request: ${method} ${url}` }), {
+        status: 404,
+        headers: { "content-type": "application/json" }
+      });
+    };
+
+    const app = buildWebApp({
+      api_base_url: "http://api.local",
+      fetch_impl: fetchImpl,
+      query_router: router,
+      conversation_client: createPassthroughConversationClient()
+    });
+
+    const response = await app.inject({
+      method: "POST",
+      url: "/api/chat",
+      payload: {
+        message:
+          "I want a 4 month refund trend and compare past 2 months vs prior 2 months, plus top refund cities."
+      }
+    });
+
+    expect(response.statusCode).toBe(200);
+    const body = response.json();
+    expect(typeof body.assistant_message).toBe("string");
+    expect(body.assistant_message).toContain("Before data preparation");
+    expect(body.assistant_message).toContain("Proposed default (not applied)");
+
+    await app.close();
+  });
+
+  it("adds a new scoped question when a clarification message includes Q answers plus an extra ask", async () => {
+    const fetchImpl: typeof fetch = async (input, init) => {
+      const url = typeof input === "string" ? input : input instanceof URL ? input.toString() : input.url;
+      const method = init?.method?.toUpperCase() ?? "GET";
+
+      if (url.endsWith("/connections/catalog") && method === "GET") {
+        return new Response(
+          JSON.stringify({
+            business_id: "biz_test",
+            business_context: "",
+            cataloged_at: "2026-02-01T00:00:00.000Z",
+            tables: [
+              {
+                table_id: "tbl_orders",
+                qualified_name: "public.demo_orders",
+                relation_type: "TABLE",
+                summary: "Orders",
+                columns: [
+                  { column_name: "order_date", data_type: "timestamp with time zone", is_nullable: false },
+                  { column_name: "status", data_type: "text", is_nullable: false },
+                  { column_name: "total_amount", data_type: "numeric", is_nullable: false }
+                ],
+                low_cardinality_columns: [],
+                sample_rows: [],
+                row_count_estimate: 1000
+              }
+            ]
+          }),
+          { status: 200, headers: { "content-type": "application/json" } }
+        );
+      }
+
+      return new Response(JSON.stringify({ message: `Unhandled request: ${method} ${url}` }), {
+        status: 404,
+        headers: { "content-type": "application/json" }
+      });
+    };
+
+    const app = buildWebApp({
+      api_base_url: "http://api.local",
+      fetch_impl: fetchImpl,
+      query_router: {
+        provider: "openrouter",
+        mode: "provider",
+        async decide() {
+          return {
+            route: "deep_analysis",
+            reason: "Multi-part request",
+            confidence: 0.9
+          };
+        }
+      },
+      conversation_client: createPassthroughConversationClient()
+    });
+
+    const first = await app.inject({
+      method: "POST",
+      url: "/api/chat",
+      payload: {
+        message: "I need a refund trend for the last 4 months. Also show top cities by refund rate."
+      }
+    });
+
+    expect(first.statusCode).toBe(200);
+    expect(first.json().state.scope_clarification_pending).toBe(true);
+
+    const second = await app.inject({
+      method: "POST",
+      url: "/api/chat",
+      payload: {
+        message:
+          "Q1: Use Nov-Feb on order_date. Q2: Use value-based city refund rate. Also add top products by refund value in the same window.",
+        state: first.json().state
+      }
+    });
+
+    expect(second.statusCode).toBe(200);
+    const body = second.json();
+    expect(body.state.scope_clarification_pending).toBe(true);
+    expect(body.state.prep_pending).toBe(false);
+    expect(body.state.scope_questions.length).toBeGreaterThanOrEqual(3);
+    expect(body.state.scope_questions[0].answer).toContain("Nov-Feb");
+    expect(body.state.scope_questions[1].answer).toContain("value-based");
+    const unresolved = body.state.scope_questions.filter((entry: { answer: string | null }) => !entry.answer);
+    expect(unresolved.length).toBeGreaterThan(0);
+    expect(body.assistant_message.toLowerCase()).toContain("need clarification");
+    expect(JSON.stringify(body.state.scope_questions).toLowerCase()).toContain("top products");
 
     await app.close();
   });
@@ -2705,13 +2988,28 @@ describe("web chat interface", () => {
     expect(first.statusCode).toBe(200);
     expect(first.json().state.scope_clarification_pending).toBe(true);
 
+    const firstState = first.json().state;
+    const generatedAnswers = (firstState.scope_questions as Array<{ question_number: number }>)
+      .map((entry) => {
+        if (entry.question_number === 1) {
+          return "Q1: use refund amount / total revenue and rank top 6 cities.";
+        }
+        if (entry.question_number === 2) {
+          return "Q2: use Nov 2025 to Feb 2026 and compare Nov-Dec vs Jan-Feb.";
+        }
+        if (entry.question_number === 3) {
+          return "Q3: only include non-null order_id and customer_id-linked tickets.";
+        }
+        return `Q${entry.question_number}: use standard defaults and keep the same scoped timeframe.`;
+      })
+      .join(" ");
+
     const second = await app.inject({
       method: "POST",
       url: "/api/chat",
       payload: {
-        message:
-          "Q1- use refund amount / total revenue and rank top 6 cities Q2- use Nov 2025 to Feb 2026 and compare Nov-Dec vs Jan-Feb Q3- only include non-null order_id and customer_id-linked tickets",
-        state: first.json().state
+        message: generatedAnswers,
+        state: firstState
       }
     });
 
@@ -2720,6 +3018,1039 @@ describe("web chat interface", () => {
     expect(second.json().state.prep_pending).toBe(true);
     expect(second.json().assistant_message).toContain("Scope clarifications captured for all questions.");
     expect(second.json().assistant_message).toContain("Ready to prepare data for:");
+
+    await app.close();
+  });
+
+  it("does not auto-lock scope from the same initial problem statement and backfills missing LLM scope questions", async () => {
+    const router: QueryRouterClient = {
+      provider: "openrouter",
+      mode: "provider",
+      async decide() {
+        return {
+          route: "deep_analysis",
+          reason: "Multi-part request",
+          confidence: 0.92
+        };
+      },
+      async scope_clarifications() {
+        return {
+          questions: [
+            {
+              question_number: 1,
+              question: "Use latest available date as today.",
+              clarification: "Confirm date anchor."
+            }
+          ]
+        };
+      }
+    };
+
+    const fetchImpl: typeof fetch = async (input, init) => {
+      const url = typeof input === "string" ? input : input instanceof URL ? input.toString() : input.url;
+      const method = init?.method?.toUpperCase() ?? "GET";
+
+      if (url.endsWith("/connections/catalog") && method === "GET") {
+        return new Response(
+          JSON.stringify({
+            business_id: "biz_test",
+            business_context: "",
+            cataloged_at: "2026-02-01T00:00:00.000Z",
+            tables: [
+              {
+                table_id: "tbl_orders",
+                qualified_name: "public.demo_orders",
+                relation_type: "TABLE",
+                summary: "Orders",
+                columns: [
+                  { column_name: "order_date", data_type: "timestamp with time zone", is_nullable: false },
+                  { column_name: "status", data_type: "text", is_nullable: false },
+                  { column_name: "total_amount", data_type: "numeric", is_nullable: false }
+                ],
+                low_cardinality_columns: [],
+                sample_rows: [],
+                row_count_estimate: 1000
+              }
+            ]
+          }),
+          { status: 200, headers: { "content-type": "application/json" } }
+        );
+      }
+
+      if (url.endsWith("/connections/tables") && method === "GET") {
+        return new Response(
+          JSON.stringify({
+            relations: [
+              {
+                schema_name: "public",
+                relation_name: "demo_orders",
+                qualified_name: "public.demo_orders",
+                has_select_privilege: true,
+                has_rls: false,
+                force_rls: false,
+                rls_active_for_me: false,
+                policies_count_for_me: 0,
+                relation_type: "TABLE",
+                status: "OK",
+                status_label: "OK"
+              }
+            ]
+          }),
+          { status: 200, headers: { "content-type": "application/json" } }
+        );
+      }
+
+      return new Response(JSON.stringify({ message: `Unhandled request: ${method} ${url}` }), {
+        status: 404,
+        headers: { "content-type": "application/json" }
+      });
+    };
+
+    const app = buildWebApp({
+      api_base_url: "http://api.local",
+      fetch_impl: fetchImpl,
+      query_router: router,
+      conversation_client: createPassthroughConversationClient()
+    });
+
+    const response = await app.inject({
+      method: "POST",
+      url: "/api/chat",
+      payload: {
+        message:
+          "I want a 4 month refund trend with 2 month vs prior 2 month comparison, top cities by refund rate, and support ticket top issues."
+      }
+    });
+
+    expect(response.statusCode).toBe(200);
+    const body = response.json();
+    expect(body.assistant_message.toLowerCase()).toContain("before data preparation, please confirm");
+    expect(body.assistant_message.toLowerCase()).not.toContain("scope clarifications captured for all questions");
+    expect(body.state.scope_clarification_pending).toBe(true);
+    expect(body.state.prep_pending).toBe(false);
+    expect(body.state.scope_questions.length).toBeGreaterThanOrEqual(2);
+
+    const forcePrep = await app.inject({
+      method: "POST",
+      url: "/api/chat",
+      payload: {
+        message: "__ui_run_data_preparation__",
+        state: body.state
+      }
+    });
+    expect(forcePrep.statusCode).toBe(200);
+    expect(forcePrep.json().assistant_message.toLowerCase()).toContain("need clarification");
+    expect(forcePrep.json().state.prep_pending).toBe(false);
+
+    await app.close();
+  });
+
+  it("does not auto-apply orchestrator scope answers for brand-new questions on the first turn", async () => {
+    const app = buildWebApp({
+      conversation_client: {
+        provider: "openrouter",
+        mode: "provider",
+        async respond(input) {
+          return { message: input.action_context };
+        },
+        async orchestrateTurn() {
+          return {
+            intent_parts: [{ type: "new_question", text: "Refund trend and city ranking." }],
+            resolved_scope_answers: [
+              { question_number: 1, answer: "Use Nov-Feb on order_date." },
+              { question_number: 2, answer: "Use value-based city refund rate." }
+            ],
+            new_scope_questions: [
+              {
+                question_text: "4-month refund trend and 2-month vs prior 2-month comparison",
+                clarification: "Confirm exact month anchors."
+              },
+              {
+                question_text: "Top cities by refund rate",
+                clarification: "Confirm count-based or value-based refund rate."
+              }
+            ],
+            follow_up_requests: [],
+            pending_inputs: [],
+            next_owner: "wait_for_user",
+            tool_calls: [],
+            state_updates: {
+              mark_scope_complete: true,
+              append_new_questions: true,
+              clear_pending_inputs: true,
+              summary: "Scope drafted from initial request.",
+              question_registry_updates: []
+            }
+          };
+        }
+      }
+    });
+
+    const response = await app.inject({
+      method: "POST",
+      url: "/api/chat",
+      payload: {
+        message:
+          "I want a 4 month refund trend with 2 month vs prior 2 month comparison and top cities by refund rate."
+      }
+    });
+
+    expect(response.statusCode).toBe(200);
+    const body = response.json();
+    expect(body.state.scope_clarification_pending).toBe(true);
+    expect(body.state.prep_pending).toBe(false);
+    expect(body.state.scope_questions.length).toBeGreaterThanOrEqual(2);
+    expect(body.state.scope_questions.some((entry: { answer: string | null }) => !entry.answer)).toBe(true);
+    expect(body.assistant_message.toLowerCase()).toContain("before data preparation, please confirm");
+
+    await app.close();
+  });
+
+  it("keeps impromptu new scoped question during clarification instead of auto-finalizing scope", async () => {
+    const fetchImpl: typeof fetch = async (input, init) => {
+      const url = typeof input === "string" ? input : input instanceof URL ? input.toString() : input.url;
+      const method = init?.method?.toUpperCase() ?? "GET";
+
+      if (url.endsWith("/connections/catalog") && method === "GET") {
+        return new Response(
+          JSON.stringify({
+            business_id: "biz_test",
+            business_context: "",
+            cataloged_at: "2026-02-01T00:00:00.000Z",
+            tables: []
+          }),
+          { status: 200, headers: { "content-type": "application/json" } }
+        );
+      }
+
+      return new Response(JSON.stringify({ message: `Unhandled request: ${method} ${url}` }), {
+        status: 404,
+        headers: { "content-type": "application/json" }
+      });
+    };
+
+    const app = buildWebApp({
+      api_base_url: "http://api.local",
+      fetch_impl: fetchImpl,
+      conversation_client: {
+        provider: "openrouter",
+        mode: "provider",
+        async respond(input) {
+          return { message: input.action_context };
+        },
+        async orchestrateTurn() {
+          return {
+            intent_parts: [
+              { type: "clarification_answer", text: "Q1 and Q2 answered." },
+              { type: "follow_up_request", text: "Add top products breakdown." }
+            ],
+            resolved_scope_answers: [
+              { question_number: 1, answer: "Use Nov-Feb and order_date." },
+              { question_number: 2, answer: "Use refunded amount / total revenue by city, top 5." }
+            ],
+            new_scope_questions: [],
+            follow_up_requests: [
+              {
+                question_text: "Top problematic products by refund value in the same window",
+                requires_new_data: true,
+                grounded_in_existing_payload: false,
+                referenced_question_ids: ["q1", "q2"]
+              }
+            ],
+            pending_inputs: [
+              {
+                input_key: "q3_product_scope",
+                prompt: "Should Q3 use top 5 products or all products?",
+                question_number: 3
+              }
+            ],
+            next_owner: "wait_for_user",
+            tool_calls: [],
+            state_updates: {
+              mark_scope_complete: false,
+              append_new_questions: true,
+              clear_pending_inputs: false,
+              summary: "Added Q3 follow-up.",
+              question_registry_updates: []
+            }
+          };
+        }
+      }
+    });
+
+    const response = await app.inject({
+      method: "POST",
+      url: "/api/chat",
+      payload: {
+        message: "Q1: Use Nov-Feb. Q2: Value-based city rate. Also add top products analysis.",
+        state: {
+          draft: {
+            name: "Refund Deep Dive",
+            audience: "Ops",
+            timezone: "UTC",
+            schedule_cron: null,
+            sql_template: "SELECT * FROM public.demo_orders",
+            metric_ids: [],
+            dimension_ids: [],
+            allowed_relations: ["public.demo_orders", "public.demo_support_tickets"],
+            allowed_schemas: ["public"],
+            insight_mode: "business"
+          },
+          contract_id: null,
+          last_run_id: null,
+          last_query_id: null,
+          last_exec_brief: null,
+          conversation_history: [],
+          prep_pending: false,
+          prep_complete: false,
+          scope_pending: false,
+          metric_definitions: [],
+          pending_metric_confirmations: [],
+          pending_metric_resume_message: null,
+          pending_metric_resume_mode: null,
+          scope_clarification_pending: true,
+          scope_source_prompt: "initial prompt",
+          scope_questions: [
+            {
+              question_number: 1,
+              question: "4-month refund trend",
+              clarification: "Confirm timeline/date column.",
+              answer: null,
+              metric_key: null,
+              metric_display_name: null,
+              metric_definition_draft: null,
+              metric_source_columns: []
+            },
+            {
+              question_number: 2,
+              question: "Top cities by refund rate",
+              clarification: "Confirm value-based vs count-based.",
+              answer: null,
+              metric_key: null,
+              metric_display_name: null,
+              metric_definition_draft: null,
+              metric_source_columns: []
+            }
+          ],
+          pending_query_sql: null,
+          pending_query_limit: null,
+          pending_single_query_request: null,
+          last_single_query_snapshot: null,
+          single_query_log: [],
+          planner_summary: null,
+          preparation_summary: null,
+          prepared_payloads: [],
+          awaiting_pdf_confirmation: false,
+          awaiting_post_run_refinement: false,
+          refinement_active: false,
+          refinement_questions_remaining: 0,
+          awaiting_save_confirmation: false,
+          awaiting_schedule_confirmation: false,
+          awaiting_schedule_mode_selection: false,
+          schedule_mode_pending: null,
+          schedule_day_kind: null,
+          awaiting_custom_day_input: false,
+          schedule_pending: false,
+          pending_schedule: null,
+          last_concise_summary: null,
+          pending_run_id: null,
+          last_token_usage: null,
+          orchestrator_context_version: 1,
+          orchestrator_summary: null,
+          last_orchestrator_decision: null,
+          pending_inputs: [],
+          question_registry: []
+        }
+      }
+    });
+
+    expect(response.statusCode).toBe(200);
+    const body = response.json();
+    expect(body.state.scope_clarification_pending).toBe(true);
+    expect(body.state.prep_pending).toBe(false);
+    expect(body.state.scope_questions.length).toBe(3);
+    expect(body.state.scope_questions[0].answer).toContain("Nov-Feb");
+    expect(body.state.scope_questions[1].answer).toContain("Value-based");
+    expect(body.state.scope_questions[2].answer).toBe(null);
+    expect(body.assistant_message.toLowerCase()).toContain("need clarification");
+
+    await app.close();
+  });
+
+  it("does not auto-mark clarifications answered when user adds an extra question", async () => {
+    const app = buildWebApp({
+      conversation_client: {
+        provider: "openrouter",
+        mode: "provider",
+        async respond(input) {
+          return { message: input.action_context };
+        },
+        async orchestrateTurn() {
+          return {
+            intent_parts: [{ type: "follow_up_request", text: "Add city by issue-type cut." }],
+            resolved_scope_answers: [
+              { question_number: 1, answer: "Use Nov-Feb and order_date." }
+            ],
+            new_scope_questions: [
+              {
+                question_text: "Top cities for each support issue type on refunded orders",
+                clarification: "Confirm top N and whether ranking should be by refund value or refunded order count."
+              }
+            ],
+            follow_up_requests: [],
+            pending_inputs: [
+              {
+                input_key: "q1_window",
+                prompt: "Confirm exact Q1 month window.",
+                question_number: 1
+              },
+              {
+                input_key: "q2_rank_mode",
+                prompt: "Confirm Q2 rank mode and top N.",
+                question_number: 2
+              }
+            ],
+            next_owner: "wait_for_user",
+            tool_calls: [],
+            state_updates: {
+              mark_scope_complete: true,
+              append_new_questions: true,
+              clear_pending_inputs: false,
+              summary: "Added follow-up question while clarifications are still pending.",
+              question_registry_updates: []
+            }
+          };
+        }
+      }
+    });
+
+    const bootstrap = await app.inject({
+      method: "POST",
+      url: "/api/chat",
+      payload: { message: "set name: Clarification Guardrail Test" }
+    });
+    expect(bootstrap.statusCode).toBe(200);
+
+    const seededState = bootstrap.json().state as Record<string, unknown>;
+    seededState.scope_clarification_pending = true;
+    seededState.scope_finalized = false;
+    seededState.prep_pending = false;
+    seededState.scope_pending = false;
+    seededState.scope_questions = [
+      {
+        question_number: 1,
+        question: "4-month refund trend",
+        clarification: "Confirm exact timeline and anchor date column.",
+        answer: null,
+        metric_key: null,
+        metric_display_name: null,
+        metric_definition_draft: null,
+        metric_source_columns: []
+      }
+    ];
+
+    const response = await app.inject({
+      method: "POST",
+      url: "/api/chat",
+      payload: {
+        message: "Can you also give me top cities for each issue type for refunded orders?",
+        state: seededState
+      }
+    });
+
+    expect(response.statusCode).toBe(200);
+    const body = response.json();
+    expect(body.state.scope_clarification_pending).toBe(true);
+    expect(body.state.prep_pending).toBe(false);
+    expect(body.state.scope_questions.length).toBe(2);
+    expect(body.state.scope_questions[0].answer).toBe(null);
+    expect(body.state.scope_questions[1].answer).toBe(null);
+    expect(body.assistant_message).toContain("Need clarification for 2 scope items");
+    expect(body.assistant_message).toContain("Q1: 4-month refund trend");
+    expect(body.assistant_message).toContain("Clarification needed:");
+    expect(body.assistant_message).toContain("Q2:");
+    expect(body.assistant_message.toLowerCase()).toContain("top cities for each issue type");
+
+    await app.close();
+  });
+
+  it("fails fast when orchestrator decision fails", async () => {
+    const fetchImpl: typeof fetch = async (input, init) => {
+      const url = typeof input === "string" ? input : input instanceof URL ? input.toString() : input.url;
+      const method = init?.method?.toUpperCase() ?? "GET";
+
+      if (url.endsWith("/connections/catalog") && method === "GET") {
+        return new Response(
+          JSON.stringify({
+            business_id: "biz_orch_fallback",
+            business_context: "",
+            cataloged_at: "2026-02-01T00:00:00.000Z",
+            tables: [
+              {
+                table_id: "tbl_orders",
+                qualified_name: "public.demo_orders",
+                relation_type: "TABLE",
+                summary: "Orders",
+                columns: [
+                  { column_name: "order_date", data_type: "timestamp with time zone", is_nullable: false },
+                  { column_name: "status", data_type: "text", is_nullable: false },
+                  { column_name: "total_amount", data_type: "numeric", is_nullable: false }
+                ],
+                low_cardinality_columns: [],
+                sample_rows: [],
+                row_count_estimate: 1000
+              }
+            ]
+          }),
+          { status: 200, headers: { "content-type": "application/json" } }
+        );
+      }
+
+      return new Response(JSON.stringify({ message: `Unhandled request: ${method} ${url}` }), {
+        status: 404,
+        headers: { "content-type": "application/json" }
+      });
+    };
+
+    const app = buildWebApp({
+      api_base_url: "http://api.local",
+      fetch_impl: fetchImpl,
+      query_router: {
+        provider: "openrouter",
+        mode: "provider",
+        async decide() {
+          return {
+            route: "deep_analysis",
+            reason: "Multi-part request",
+            confidence: 0.9
+          };
+        }
+      },
+      conversation_client: {
+        provider: "openrouter",
+        mode: "provider",
+        async respond(input) {
+          return { message: input.action_context };
+        },
+        async orchestrateTurn() {
+          throw new Error("orchestrator down");
+        }
+      }
+    });
+
+    const response = await app.inject({
+      method: "POST",
+      url: "/api/chat",
+      payload: {
+        message:
+          "I want a 4 month refund trend along with comparison of past 2 months vs prior 2 months for refunds."
+      }
+    });
+
+    expect(response.statusCode).toBe(200);
+    expect(response.json().assistant_message).toContain("Stage error: orchestrator_decision failed.");
+    expect(response.json().state.scope_clarification_pending).toBe(false);
+    expect(response.json().state.prep_pending).toBe(false);
+
+    await app.close();
+  });
+
+  it("records comma-separated Q1/Q2 clarifications without colons and appends extra scoped question", async () => {
+    const app = buildWebApp({
+      conversation_client: createPassthroughConversationClient()
+    });
+
+    const bootstrap = await app.inject({
+      method: "POST",
+      url: "/api/chat",
+      payload: { message: "set name: Scope Parser Guardrail" }
+    });
+    expect(bootstrap.statusCode).toBe(200);
+
+    const seededState = bootstrap.json().state as Record<string, unknown>;
+    seededState.scope_clarification_pending = true;
+    seededState.scope_finalized = false;
+    seededState.prep_pending = false;
+    seededState.scope_pending = false;
+    seededState.scope_questions = [
+      {
+        question_number: 1,
+        question: "4-month refund trend with 2-month vs prior 2-month comparison",
+        clarification: "Confirm month window and anchor date column.",
+        answer: null,
+        metric_key: null,
+        metric_display_name: null,
+        metric_definition_draft: null,
+        metric_source_columns: []
+      },
+      {
+        question_number: 2,
+        question: "Cities with highest refund rate",
+        clarification: "Confirm value-based or count-based refund rate.",
+        answer: null,
+        metric_key: null,
+        metric_display_name: null,
+        metric_definition_draft: null,
+        metric_source_columns: []
+      }
+    ];
+
+    const response = await app.inject({
+      method: "POST",
+      url: "/api/chat",
+      payload: {
+        message:
+          "Q1 include Feb and use order_date, Q2 use refunded revenue / total revenue by city, also can you show top city for each issue type for refunded orders?",
+        state: seededState
+      }
+    });
+
+    expect(response.statusCode).toBe(200);
+    const body = response.json();
+    expect(body.state.scope_clarification_pending).toBe(true);
+    expect(body.state.prep_pending).toBe(false);
+    expect(body.state.scope_questions.length).toBe(3);
+    expect(body.state.scope_questions[0].answer).toContain("include Feb");
+    expect(body.state.scope_questions[1].answer).toContain("refunded revenue / total revenue");
+    expect(body.state.scope_questions[2].answer).toBe(null);
+    expect(body.assistant_message).toContain("Recorded so far:");
+    expect(body.assistant_message).toContain("Still pending:");
+    expect(JSON.stringify(body.state.scope_questions).toLowerCase()).toContain("top city for each issue type");
+
+    await app.close();
+  });
+
+  it("maps unnumbered clarification text to pending scope questions and keeps new ask as unresolved", async () => {
+    const app = buildWebApp({
+      conversation_client: createPassthroughConversationClient()
+    });
+
+    const bootstrap = await app.inject({
+      method: "POST",
+      url: "/api/chat",
+      payload: { message: "set name: Unnumbered Scope Mapping" }
+    });
+    expect(bootstrap.statusCode).toBe(200);
+
+    const seededState = bootstrap.json().state as Record<string, unknown>;
+    seededState.scope_clarification_pending = true;
+    seededState.scope_finalized = false;
+    seededState.prep_pending = false;
+    seededState.scope_pending = false;
+    seededState.scope_questions = [
+      {
+        question_number: 1,
+        question: "4-month refund trend and 2-month vs prior 2-month comparison",
+        clarification: "Confirm month window and date anchor column.",
+        answer: null,
+        metric_key: null,
+        metric_display_name: null,
+        metric_definition_draft: null,
+        metric_source_columns: []
+      },
+      {
+        question_number: 2,
+        question: "Cities with highest refund rate",
+        clarification: "Confirm value-based or count-based refund rate.",
+        answer: null,
+        metric_key: null,
+        metric_display_name: null,
+        metric_definition_draft: null,
+        metric_source_columns: []
+      },
+      {
+        question_number: 3,
+        question: "Support ticket reasons for refunded orders",
+        clarification: "Confirm join path and top issue breakdown.",
+        answer: null,
+        metric_key: null,
+        metric_display_name: null,
+        metric_definition_draft: null,
+        metric_source_columns: []
+      }
+    ];
+
+    const response = await app.inject({
+      method: "POST",
+      url: "/api/chat",
+      payload: {
+        message:
+          "Use Nov-Feb on order_date and include February partial month. For refund rate use refunded revenue divided by total revenue by city. Also can you show top city for each issue type among refunded orders?",
+        state: seededState
+      }
+    });
+
+    expect(response.statusCode).toBe(200);
+    const body = response.json();
+    expect(body.state.scope_clarification_pending).toBe(true);
+    expect(body.state.prep_pending).toBe(false);
+    expect(body.state.scope_questions.length).toBe(4);
+    expect(body.state.scope_questions[0].answer).toContain("Nov-Feb");
+    expect(body.state.scope_questions[1].answer).toContain("refunded revenue");
+    expect(body.state.scope_questions[2].answer).toBe(null);
+    expect(body.state.scope_questions[3].answer).toBe(null);
+    expect(body.assistant_message).toContain("Recorded so far:");
+    expect(body.assistant_message).toContain("Still pending:");
+    expect(JSON.stringify(body.state.scope_questions).toLowerCase()).toContain("top city for each issue type");
+
+    await app.close();
+  });
+
+  it("does not auto-answer suggested scope questions from generic clarification text", async () => {
+    const app = buildWebApp({
+      conversation_client: createPassthroughConversationClient()
+    });
+
+    const bootstrap = await app.inject({
+      method: "POST",
+      url: "/api/chat",
+      payload: { message: "set name: Suggested Scope Guardrail" }
+    });
+    expect(bootstrap.statusCode).toBe(200);
+
+    const seededState = bootstrap.json().state as Record<string, unknown>;
+    seededState.scope_clarification_pending = true;
+    seededState.scope_finalized = false;
+    seededState.prep_pending = false;
+    seededState.scope_pending = false;
+    seededState.scope_questions = [
+      {
+        question_number: 1,
+        question: "4-month refund trend and 2-month vs prior 2-month comparison",
+        clarification: "Confirm month window and date anchor column.",
+        answer: null,
+        metric_key: null,
+        metric_display_name: null,
+        metric_definition_draft: null,
+        metric_source_columns: []
+      },
+      {
+        question_number: 2,
+        question: "[Suggested] Which product categories account for the most refunds in this window?",
+        clarification: "Confirm whether to include the suggested product-category cut.",
+        answer: null,
+        metric_key: null,
+        metric_display_name: null,
+        metric_definition_draft: null,
+        metric_source_columns: []
+      }
+    ];
+
+    const response = await app.inject({
+      method: "POST",
+      url: "/api/chat",
+      payload: {
+        message: "Use Nov-Feb on order_date and include February partial month. That works.",
+        state: seededState
+      }
+    });
+
+    expect(response.statusCode).toBe(200);
+    const body = response.json();
+    expect(body.state.scope_clarification_pending).toBe(true);
+    expect(body.state.prep_pending).toBe(false);
+    expect(body.state.scope_questions[0].answer).toContain("Nov-Feb");
+    expect(body.state.scope_questions[1].answer).toBe(null);
+    expect(body.assistant_message).toContain("Still pending:");
+    expect(body.assistant_message).toContain("Q2");
+
+    await app.close();
+  });
+
+  it("accepts explicit confirmation for a single remaining suggested scope question", async () => {
+    const app = buildWebApp({
+      conversation_client: createPassthroughConversationClient()
+    });
+
+    const bootstrap = await app.inject({
+      method: "POST",
+      url: "/api/chat",
+      payload: { message: "set name: Single Suggested Confirmation" }
+    });
+    expect(bootstrap.statusCode).toBe(200);
+
+    const seededState = bootstrap.json().state as Record<string, unknown>;
+    seededState.scope_clarification_pending = true;
+    seededState.scope_finalized = false;
+    seededState.prep_pending = false;
+    seededState.scope_pending = false;
+    seededState.scope_questions = [
+      {
+        question_number: 1,
+        question: "4-month refund trend and 2-month vs prior 2-month comparison",
+        clarification: "Confirm month window and date anchor column.",
+        answer: "Use Nov-Feb with Feb partial and order_date anchor.",
+        metric_key: null,
+        metric_display_name: null,
+        metric_definition_draft: null,
+        metric_source_columns: []
+      },
+      {
+        question_number: 2,
+        question: "[Suggested] Which product categories account for the most refunds in this window?",
+        clarification: "Confirm whether to include the suggested product-category cut.",
+        answer: null,
+        metric_key: null,
+        metric_display_name: null,
+        metric_definition_draft: null,
+        metric_source_columns: []
+      }
+    ];
+
+    const response = await app.inject({
+      method: "POST",
+      url: "/api/chat",
+      payload: {
+        message: "I like your clarification, go ahead with it.",
+        state: seededState
+      }
+    });
+
+    expect(response.statusCode).toBe(200);
+    const body = response.json();
+    expect(body.state.scope_clarification_pending).toBe(false);
+    expect(body.state.scope_finalized).toBe(true);
+    expect(body.state.prep_pending).toBe(true);
+    expect(body.state.scope_questions[1].answer).toBeTruthy();
+    expect(body.assistant_message).toContain("Scope clarifications captured for all questions.");
+    expect(body.assistant_message.toLowerCase()).not.toContain("need clarification");
+
+    await app.close();
+  });
+
+  it("maps unnumbered clarification text for generated long-form scope questions", async () => {
+    const app = buildWebApp({
+      conversation_client: createPassthroughConversationClient()
+    });
+
+    const bootstrap = await app.inject({
+      method: "POST",
+      url: "/api/chat",
+      payload: { message: "set name: Long-form Unnumbered Mapping" }
+    });
+    expect(bootstrap.statusCode).toBe(200);
+
+    const seededState = bootstrap.json().state as Record<string, unknown>;
+    seededState.scope_clarification_pending = true;
+    seededState.scope_finalized = false;
+    seededState.prep_pending = false;
+    seededState.scope_pending = false;
+    seededState.scope_questions = [
+      {
+        question_number: 1,
+        question:
+          "4-Month Monthly Refund Trend: How many orders had status='refunded' each month from Nov 2025 to Feb 2026, and what is the refunded revenue trend?",
+        clarification:
+          "Confirm whether to include February partial month and anchor on order_date for month buckets.",
+        answer: null,
+        metric_key: null,
+        metric_display_name: null,
+        metric_definition_draft: null,
+        metric_source_columns: []
+      },
+      {
+        question_number: 2,
+        question:
+          "Past 2 Months vs Prior 2 Months Refund Comparison: Compare Jan-Feb 2026 vs Nov-Dec 2025 deltas.",
+        clarification:
+          "Confirm comparison metric and date windows.",
+        answer: null,
+        metric_key: null,
+        metric_display_name: null,
+        metric_definition_draft: null,
+        metric_source_columns: []
+      },
+      {
+        question_number: 3,
+        question:
+          "Cities with Highest Refund Rate: Rank top cities by refund rate in the same Nov-Feb window.",
+        clarification:
+          "Confirm refund rate formula: refunded revenue / total revenue vs refunded orders / total orders.",
+        answer: null,
+        metric_key: null,
+        metric_display_name: null,
+        metric_definition_draft: null,
+        metric_source_columns: []
+      }
+    ];
+
+    const response = await app.inject({
+      method: "POST",
+      url: "/api/chat",
+      payload: {
+        message:
+          "Go ahead with timeline including February partial month. Use refund rate as refunded revenue / total revenue. Also can you show me top city for each of the top 3 issue types for refunded orders?",
+        state: seededState
+      }
+    });
+
+    expect(response.statusCode).toBe(200);
+    const body = response.json();
+    expect(body.state.scope_clarification_pending).toBe(true);
+    expect(body.state.prep_pending).toBe(false);
+    expect(body.state.scope_questions[0].answer).toContain("February partial month");
+    expect(body.state.scope_questions[2].answer).toContain("refunded revenue / total revenue");
+    expect(body.state.scope_questions.length).toBeGreaterThanOrEqual(4);
+    const lastQuestionText = String(
+      body.state.scope_questions[body.state.scope_questions.length - 1]?.question ?? ""
+    ).toLowerCase();
+    expect(lastQuestionText).toContain("top city");
+    expect(lastQuestionText).not.toContain("go ahead with timeline");
+    expect(body.state.scope_questions.some((entry: { answer: string | null }) => !entry.answer)).toBe(true);
+    expect(body.assistant_message).toContain("Recorded so far:");
+    expect(body.assistant_message).toContain("Still pending:");
+
+    await app.close();
+  });
+
+  it("falls back to structured deep-analysis scoping when router decision is unavailable", async () => {
+    let conversationCalls = 0;
+    const fetchImpl: typeof fetch = async (input, init) => {
+      const url = typeof input === "string" ? input : input instanceof URL ? input.toString() : input.url;
+      const method = init?.method?.toUpperCase() ?? "GET";
+
+      if (url.endsWith("/connections/catalog") && method === "GET") {
+        return new Response(
+          JSON.stringify({
+            business_id: "biz_fallback",
+            business_context: "",
+            cataloged_at: "2026-02-01T00:00:00.000Z",
+            tables: [
+              {
+                table_id: "tbl_orders",
+                qualified_name: "public.orders",
+                relation_type: "TABLE",
+                summary: "Orders",
+                columns: [
+                  { column_name: "order_date", data_type: "timestamp with time zone", is_nullable: false },
+                  { column_name: "status", data_type: "text", is_nullable: false },
+                  { column_name: "total_amount", data_type: "numeric", is_nullable: false }
+                ],
+                low_cardinality_columns: []
+              }
+            ]
+          }),
+          {
+            status: 200,
+            headers: { "content-type": "application/json" }
+          }
+        );
+      }
+
+      return new Response(JSON.stringify({ message: `Unhandled request: ${method} ${url}` }), {
+        status: 404,
+        headers: { "content-type": "application/json" }
+      });
+    };
+
+    const app = buildWebApp({
+      api_base_url: "http://api.local",
+      fetch_impl: fetchImpl,
+      query_router: {
+        provider: "openrouter",
+        mode: "provider",
+        async decide() {
+          throw new Error("router unavailable");
+        }
+      },
+      conversation_client: {
+        provider: "openrouter",
+        mode: "provider",
+        async respond() {
+          conversationCalls += 1;
+          return { message: "LLM layer rewrote the scoped-clarification prompt." };
+        }
+      }
+    });
+
+    const response = await app.inject({
+      method: "POST",
+      url: "/api/chat",
+      payload: {
+        message:
+          "I want a 4 month refund trend along with comparison of past 2 months vs prior 2 months for refunds. Also tell me cities with highest refund rate and top support ticket reasons."
+      }
+    });
+
+    expect(response.statusCode).toBe(200);
+    expect(response.json().state.scope_clarification_pending).toBe(true);
+    expect(response.json().state.prep_pending).toBe(false);
+    expect(response.json().state.scope_questions.length).toBeGreaterThanOrEqual(2);
+    expect(response.json().assistant_message).toContain("LLM layer rewrote the scoped-clarification prompt.");
+    expect(conversationCalls).toBe(1);
+
+    await app.close();
+  });
+
+  it("does not lock into prep_pending from free-form 'good to go' phrasing", async () => {
+    const fetchImpl: typeof fetch = async (input, init) => {
+      const url = typeof input === "string" ? input : input instanceof URL ? input.toString() : input.url;
+      const method = init?.method?.toUpperCase() ?? "GET";
+
+      if (url.endsWith("/connections/catalog") && method === "GET") {
+        return new Response(JSON.stringify({ tables: [], business_context: "", cataloged_at: null }), {
+          status: 200,
+          headers: { "content-type": "application/json" }
+        });
+      }
+
+      return new Response(JSON.stringify({ message: `Unhandled request: ${method} ${url}` }), {
+        status: 404,
+        headers: { "content-type": "application/json" }
+      });
+    };
+
+    const app = buildWebApp({
+      api_base_url: "http://api.local",
+      fetch_impl: fetchImpl,
+      conversation_client: {
+        provider: "openrouter",
+        mode: "provider",
+        async respond() {
+          return {
+            message: [
+              "Great set of questions.",
+              "Before we lock scope, should we anchor on order_date and use refunded orders only?",
+              "Let me know and we'll be good to go."
+            ].join(" ")
+          };
+        }
+      }
+    });
+
+    const response = await app.inject({
+      method: "POST",
+      url: "/api/chat",
+      payload: {
+        message: "hello",
+        state: {
+          draft: {
+            name: "Refund analysis",
+            audience: "Executive",
+            timezone: "UTC",
+            schedule_cron: null,
+            sql_template: "SELECT * FROM public.orders",
+            metric_ids: ["metric_refunds"],
+            dimension_ids: ["city"],
+            allowed_relations: ["public.orders"],
+            allowed_schemas: ["public"],
+            insight_mode: "business"
+          },
+          scope_questions: [
+            {
+              question_number: 1,
+              question: "Time window?",
+              clarification: "Confirm window",
+              answer: "Last 4 months"
+            }
+          ]
+        }
+      }
+    });
+
+    expect(response.statusCode).toBe(200);
+    expect(response.json().state.prep_pending).toBe(false);
+    expect(response.json().state.scope_pending).toBe(false);
 
     await app.close();
   });
@@ -2844,13 +4175,25 @@ describe("web chat interface", () => {
     expect(first.statusCode).toBe(200);
     expect(first.json().state.scope_clarification_pending).toBe(true);
 
+    const firstState = first.json().state;
+    const generatedAnswers = (firstState.scope_questions as Array<{ question_number: number }>)
+      .map((entry) => {
+        if (entry.question_number === 1) {
+          return "Q1: Use order_date and last 6 full calendar months.";
+        }
+        if (entry.question_number === 2) {
+          return "Q2: Compare against the previous 6 full months and include refunded status only.";
+        }
+        return `Q${entry.question_number}: Use standard defaults and keep the same 6-month timeline.`;
+      })
+      .join(" ");
+
     const second = await app.inject({
       method: "POST",
       url: "/api/chat",
       payload: {
-        message:
-          "Q1: Use order_date and last 6 full calendar months. Q2: Compare against the previous 6 full months and include refunded status only.",
-        state: first.json().state
+        message: generatedAnswers,
+        state: firstState
       }
     });
 
@@ -2859,6 +4202,419 @@ describe("web chat interface", () => {
     expect(second.json().state.prep_pending).toBe(true);
 
     await app.close();
+  });
+
+  it("sets prep_pending when assistant says scope is locked and ready to move to data preparation", async () => {
+    const app = buildWebApp({
+      api_base_url: "http://api.local",
+      fetch_impl: async (input, init) => {
+        const url = typeof input === "string" ? input : input instanceof URL ? input.toString() : input.url;
+        const method = init?.method?.toUpperCase() ?? "GET";
+        if (url.endsWith("/connections/catalog") && method === "GET") {
+          return new Response(JSON.stringify({ tables: [], business_context: "", cataloged_at: null }), {
+            status: 200,
+            headers: { "content-type": "application/json" }
+          });
+        }
+        return new Response(JSON.stringify({ message: `Unhandled request: ${method} ${url}` }), {
+          status: 404,
+          headers: { "content-type": "application/json" }
+        });
+      },
+      conversation_client: {
+        provider: "openrouter",
+        mode: "provider",
+        async respond() {
+          return {
+            message: "Scope is locked — ready to move to data preparation when you are."
+          };
+        }
+      }
+    });
+
+    const bootstrap = await app.inject({
+      method: "POST",
+      url: "/api/chat",
+      payload: { message: "set name: Prep Button Recovery" }
+    });
+    expect(bootstrap.statusCode).toBe(200);
+
+    const seededState = bootstrap.json().state as Record<string, unknown>;
+    seededState.scope_clarification_pending = false;
+    seededState.scope_finalized = true;
+    seededState.prep_pending = false;
+    seededState.prep_complete = false;
+    seededState.scope_pending = false;
+    seededState.scope_questions = [
+      {
+        question_number: 1,
+        question: "Refund trend",
+        clarification: "Confirm date range",
+        answer: "Use Nov-Feb",
+        metric_key: null,
+        metric_display_name: null,
+        metric_definition_draft: null,
+        metric_source_columns: []
+      }
+    ];
+
+    const response = await app.inject({
+      method: "POST",
+      url: "/api/chat",
+      payload: {
+        message: "ok",
+        state: seededState
+      }
+    });
+
+    expect(response.statusCode).toBe(200);
+    expect(response.json().state.prep_pending).toBe(true);
+    expect(response.json().state.scope_clarification_pending).toBe(false);
+    expect(response.json().state.scope_pending).toBe(false);
+
+    await app.close();
+  });
+
+  it("promotes to prep decision when assistant explicitly locks scope", async () => {
+    const app = buildWebApp({
+      api_base_url: "http://api.local",
+      fetch_impl: async (input, init) => {
+        const url = typeof input === "string" ? input : input instanceof URL ? input.toString() : input.url;
+        const method = init?.method?.toUpperCase() ?? "GET";
+        if (url.endsWith("/connections/catalog") && method === "GET") {
+          return new Response(JSON.stringify({ tables: [], business_context: "", cataloged_at: null }), {
+            status: 200,
+            headers: { "content-type": "application/json" }
+          });
+        }
+        return new Response(JSON.stringify({ message: `Unhandled request: ${method} ${url}` }), {
+          status: 404,
+          headers: { "content-type": "application/json" }
+        });
+      },
+      conversation_client: {
+        provider: "openrouter",
+        mode: "provider",
+        async respond() {
+          return {
+            message: "All questions are confirmed. Scope is locked — ready to move to data preparation."
+          };
+        }
+      }
+    });
+
+    const bootstrap = await app.inject({
+      method: "POST",
+      url: "/api/chat",
+      payload: { message: "set name: Scope Lock Guard" }
+    });
+    expect(bootstrap.statusCode).toBe(200);
+
+    const seededState = bootstrap.json().state as Record<string, unknown>;
+    seededState.scope_clarification_pending = false;
+    seededState.scope_finalized = true;
+    seededState.prep_pending = false;
+    seededState.prep_complete = false;
+    seededState.scope_pending = false;
+    seededState.scope_questions = [
+      {
+        question_number: 1,
+        question: "Refund trend",
+        clarification: "Confirm date range",
+        answer: "Use Nov-Feb",
+        metric_key: null,
+        metric_display_name: null,
+        metric_definition_draft: null,
+        metric_source_columns: []
+      },
+      {
+        question_number: 2,
+        question: "City refund rate",
+        clarification: "Confirm formula",
+        answer: null,
+        metric_key: null,
+        metric_display_name: null,
+        metric_definition_draft: null,
+        metric_source_columns: []
+      }
+    ];
+
+    const response = await app.inject({
+      method: "POST",
+      url: "/api/chat",
+      payload: {
+        message: "ok",
+        state: seededState
+      }
+    });
+
+    expect(response.statusCode).toBe(200);
+    expect(response.json().state.scope_clarification_pending).toBe(false);
+    expect(response.json().state.scope_finalized).toBe(true);
+    expect(response.json().state.prep_pending).toBe(true);
+
+    await app.close();
+  });
+
+  it("bypasses orchestrator on pending-decision turns so user confirmations do not fail", async () => {
+    const app = buildWebApp({
+      api_base_url: "http://api.local",
+      fetch_impl: async (input, init) => {
+        const url = typeof input === "string" ? input : input instanceof URL ? input.toString() : input.url;
+        const method = init?.method?.toUpperCase() ?? "GET";
+        if (url.endsWith("/connections/catalog") && method === "GET") {
+          return new Response(JSON.stringify({ tables: [], business_context: "", cataloged_at: null }), {
+            status: 200,
+            headers: { "content-type": "application/json" }
+          });
+        }
+        return new Response(JSON.stringify({ message: `Unhandled request: ${method} ${url}` }), {
+          status: 404,
+          headers: { "content-type": "application/json" }
+        });
+      },
+      conversation_client: {
+        provider: "openrouter",
+        mode: "provider",
+        async respond() {
+          return { message: "Continue scoping acknowledged." };
+        },
+        async orchestrateTurn() {
+          throw new Error("orchestrator should not run on pending-decision turn");
+        }
+      }
+    });
+
+    const bootstrap = await app.inject({
+      method: "POST",
+      url: "/api/chat",
+      payload: { message: "set name: Pending Decision Orchestrator Bypass" }
+    });
+    expect(bootstrap.statusCode).toBe(200);
+
+    const seededState = bootstrap.json().state as Record<string, unknown>;
+    seededState.prep_pending = true;
+    seededState.scope_finalized = true;
+    seededState.scope_clarification_pending = false;
+    seededState.scope_pending = false;
+
+    const response = await app.inject({
+      method: "POST",
+      url: "/api/chat",
+      payload: {
+        message: "continue scoping",
+        state: seededState
+      }
+    });
+
+    expect(response.statusCode).toBe(200);
+    expect(response.json().assistant_message.toLowerCase()).not.toContain("orchestrator_decision failed");
+    expect(response.json().state.scope_clarification_pending).toBe(true);
+    expect(response.json().state.prep_pending).toBe(false);
+
+    await app.close();
+  });
+
+  it("recovers stale analysis-decision state back to prep decision when scope is locked", async () => {
+    const app = buildWebApp({
+      api_base_url: "http://api.local",
+      fetch_impl: async (input, init) => {
+        const url = typeof input === "string" ? input : input instanceof URL ? input.toString() : input.url;
+        const method = init?.method?.toUpperCase() ?? "GET";
+        if (url.endsWith("/connections/catalog") && method === "GET") {
+          return new Response(JSON.stringify({ tables: [], business_context: "", cataloged_at: null }), {
+            status: 200,
+            headers: { "content-type": "application/json" }
+          });
+        }
+        return new Response(JSON.stringify({ message: `Unhandled request: ${method} ${url}` }), {
+          status: 404,
+          headers: { "content-type": "application/json" }
+        });
+      },
+      conversation_client: {
+        provider: "openrouter",
+        mode: "provider",
+        async respond() {
+          return { message: "Scope is locked — ready to move to data preparation when you are." };
+        }
+      }
+    });
+
+    const bootstrap = await app.inject({
+      method: "POST",
+      url: "/api/chat",
+      payload: { message: "set name: Stale Scope Pending Recovery" }
+    });
+    expect(bootstrap.statusCode).toBe(200);
+
+    const seededState = bootstrap.json().state as Record<string, unknown>;
+    seededState.scope_pending = true;
+    seededState.prep_pending = false;
+    seededState.prep_complete = false;
+    seededState.scope_finalized = true;
+    seededState.scope_clarification_pending = false;
+    seededState.scope_questions = [
+      {
+        question_number: 1,
+        question: "Refund trend",
+        clarification: "Confirm timeline",
+        answer: "Use Nov-Feb",
+        metric_key: null,
+        metric_display_name: null,
+        metric_definition_draft: null,
+        metric_source_columns: []
+      }
+    ];
+
+    const response = await app.inject({
+      method: "POST",
+      url: "/api/chat",
+      payload: {
+        message: "ok",
+        state: seededState
+      }
+    });
+
+    expect(response.statusCode).toBe(200);
+    expect(response.json().state.scope_pending).toBe(false);
+    expect(response.json().state.prep_pending).toBe(true);
+    expect(response.json().state.scope_clarification_pending).toBe(false);
+
+    await app.close();
+  });
+
+  it("recovers stale scope_clarification_pending when assistant confirms scope is fully locked", async () => {
+    const app = buildWebApp({
+      api_base_url: "http://api.local",
+      fetch_impl: async (input, init) => {
+        const url = typeof input === "string" ? input : input instanceof URL ? input.toString() : input.url;
+        const method = init?.method?.toUpperCase() ?? "GET";
+        if (url.endsWith("/connections/catalog") && method === "GET") {
+          return new Response(JSON.stringify({ tables: [], business_context: "", cataloged_at: null }), {
+            status: 200,
+            headers: { "content-type": "application/json" }
+          });
+        }
+        return new Response(JSON.stringify({ message: `Unhandled request: ${method} ${url}` }), {
+          status: 404,
+          headers: { "content-type": "application/json" }
+        });
+      },
+      conversation_client: {
+        provider: "openrouter",
+        mode: "provider",
+        async respond() {
+          return {
+            message:
+              "All six questions are fully confirmed. Scope is locked — here's the final plan."
+          };
+        }
+      }
+    });
+
+    const bootstrap = await app.inject({
+      method: "POST",
+      url: "/api/chat",
+      payload: { message: "set name: Stale Scope Clarification Recovery" }
+    });
+    expect(bootstrap.statusCode).toBe(200);
+
+    const seededState = bootstrap.json().state as Record<string, unknown>;
+    seededState.scope_pending = false;
+    seededState.prep_pending = false;
+    seededState.prep_complete = false;
+    seededState.scope_finalized = true;
+    seededState.scope_clarification_pending = true;
+    seededState.scope_questions = [
+      {
+        question_number: 1,
+        question: "Refund trend",
+        clarification: "Confirm timeline",
+        answer: "Use Nov-Feb",
+        metric_key: null,
+        metric_display_name: null,
+        metric_definition_draft: null,
+        metric_source_columns: []
+      },
+      {
+        question_number: 2,
+        question: "City refund rate",
+        clarification: "Confirm formula",
+        answer: "Use refunded revenue / total revenue",
+        metric_key: null,
+        metric_display_name: null,
+        metric_definition_draft: null,
+        metric_source_columns: []
+      }
+    ];
+
+    const response = await app.inject({
+      method: "POST",
+      url: "/api/chat",
+      payload: {
+        message: "ok",
+        state: seededState
+      }
+    });
+
+    expect(response.statusCode).toBe(200);
+    expect(response.json().state.scope_clarification_pending).toBe(false);
+    expect(response.json().state.scope_finalized).toBe(true);
+    expect(response.json().state.prep_pending).toBe(true);
+
+    await app.close();
+  });
+
+  it("does not clear scoped questions when LLM draft updates arrive after scope answers", () => {
+    const state = parseChatState(undefined);
+    state.draft.name = "";
+    state.draft.audience = "Executive";
+    state.draft.timezone = "UTC";
+    state.draft.sql_template = "SELECT * FROM public.demo_orders";
+    state.draft.metric_ids = ["metric_refunds"];
+    state.draft.dimension_ids = ["city"];
+    state.draft.allowed_relations = ["public.demo_orders"];
+    state.draft.allowed_schemas = ["public"];
+    state.scope_clarification_pending = false;
+    state.scope_finalized = true;
+    state.scope_questions = [
+      {
+        question_number: 1,
+        question:
+          "What is the monthly refund trend for the last 4 complete months and 2v2 comparison?",
+        clarification: "Confirm 4 complete months and compare recent 2 months vs prior 2 months.",
+        answer:
+          "Use the last 4 complete months and compare the most recent 2 complete months vs the prior 2 complete months.",
+        metric_key: null,
+        metric_display_name: null,
+        metric_definition_draft: null,
+        metric_source_columns: []
+      }
+    ];
+    state.question_registry = [
+      {
+        question_number: 1,
+        question_id: null,
+        question_text: state.scope_questions[0]!.question,
+        status: "scoped",
+        group_id: null,
+        clarification_needed: state.scope_questions[0]!.clarification,
+        clarification_answer: state.scope_questions[0]!.answer,
+        scope_clarified: true
+      }
+    ];
+
+    const next = applyLlmDraftUpdates(state, {
+      name: "Refund Trend & Support Analysis",
+      allowed_relations: ["public.demo_orders", "public.demo_support_tickets"],
+      allowed_schemas: ["public"]
+    });
+
+    expect(next.scope_questions).toHaveLength(1);
+    expect(next.scope_questions[0]?.answer).toContain("last 4 complete months");
+    expect(next.question_registry).toHaveLength(1);
+    expect(next.scope_finalized).toBe(true);
   });
 
   it("advances to preparation when scope is already fully answered", async () => {
@@ -3177,7 +4933,326 @@ describe("web chat interface", () => {
     await app.close();
   });
 
-  it("keeps prep decision pending and does not execute ad-hoc query text while prep is pending", async () => {
+  it("runs preparation from UI prep command even when prep_pending drifted false but scope is finalized", async () => {
+    const requests: string[] = [];
+    const fetchImpl: typeof fetch = async (input, init) => {
+      const url = typeof input === "string" ? input : input instanceof URL ? input.toString() : input.url;
+      const method = init?.method?.toUpperCase() ?? "GET";
+      requests.push(`${method} ${url}`);
+
+      if (url.endsWith("/report-contracts/contract_direct_prep/prepare") && method === "POST") {
+        return new Response(
+          JSON.stringify({
+            contract_id: "contract_direct_prep",
+            planner_summary: "Prepared payloads",
+            prepared_payloads: [
+              {
+                question_id: "q1",
+                question_number: 1,
+                question: "Refund trend",
+                purpose: "Trend",
+                row_count_before_reduction: 300,
+                prepared_row_count: 120,
+                preparation_notes: [],
+                warnings: []
+              }
+            ]
+          }),
+          {
+            status: 200,
+            headers: { "content-type": "application/json" }
+          }
+        );
+      }
+
+      if (url.endsWith("/connections/catalog") && method === "GET") {
+        return new Response(
+          JSON.stringify({
+            business_id: "biz_test",
+            business_context: "",
+            cataloged_at: "2026-02-01T00:00:00.000Z",
+            tables: [
+              {
+                table_id: "tbl_orders",
+                qualified_name: "public.demo_orders",
+                relation_type: "TABLE",
+                summary: "Orders",
+                columns: [
+                  { column_name: "order_date", data_type: "timestamp with time zone", is_nullable: false }
+                ],
+                low_cardinality_columns: [],
+                sample_rows: [],
+                row_count_estimate: 1000
+              }
+            ]
+          }),
+          {
+            status: 200,
+            headers: { "content-type": "application/json" }
+          }
+        );
+      }
+
+      if (url.endsWith("/connections/tables") && method === "GET") {
+        return new Response(
+          JSON.stringify({
+            relations: [
+              {
+                qualified_name: "public.demo_orders",
+                relation_type: "TABLE",
+                status: "OK",
+                has_rls: false,
+                force_rls: false,
+                rls_active_for_me: false,
+                policies_count_for_me: 0
+              }
+            ]
+          }),
+          {
+            status: 200,
+            headers: { "content-type": "application/json" }
+          }
+        );
+      }
+
+      if (url.endsWith("/connections/query") && method === "POST") {
+        return new Response(
+          JSON.stringify({
+            rows: [{ row_count: 1000 }],
+            row_count: 1,
+            governed_sql: "SELECT COUNT(*) AS row_count FROM public.demo_orders",
+            warnings: []
+          }),
+          {
+            status: 200,
+            headers: { "content-type": "application/json" }
+          }
+        );
+      }
+
+      return new Response(JSON.stringify({ message: `Unhandled request: ${method} ${url}` }), {
+        status: 404,
+        headers: { "content-type": "application/json" }
+      });
+    };
+
+    const app = buildWebApp({
+      api_base_url: "http://api.local",
+      fetch_impl: fetchImpl,
+      conversation_client: createPassthroughConversationClient()
+    });
+
+    const initial = await app.inject({
+      method: "POST",
+      url: "/api/chat",
+      payload: { message: "set name: Drifted Prep State" }
+    });
+    expect(initial.statusCode).toBe(200);
+
+    const response = await app.inject({
+      method: "POST",
+      url: "/api/chat",
+      payload: {
+        message: "__ui_run_data_preparation__",
+        state: {
+          ...initial.json().state,
+          contract_id: "contract_direct_prep",
+          prep_pending: false,
+          prep_complete: false,
+          scope_pending: false,
+          scope_finalized: true,
+          scope_clarification_pending: false,
+          draft: {
+            ...initial.json().state.draft,
+            audience: "Executive",
+            sql_template: "SELECT * FROM public.demo_orders",
+            metric_ids: ["metric_refunds"],
+            dimension_ids: ["city"],
+            allowed_relations: ["public.demo_orders"],
+            allowed_schemas: ["public"]
+          },
+          scope_questions: [
+            {
+              question_number: 1,
+              question: "Refund trend over last 4 months",
+              clarification: "Use order_date and refunded status",
+              answer: "Use last 4 months and refunded status",
+              metric_key: null,
+              metric_display_name: null,
+              metric_definition_draft: null,
+              metric_source_columns: []
+            }
+          ]
+        }
+      }
+    });
+
+    expect(response.statusCode).toBe(200);
+    expect(response.json().state.prep_complete).toBe(true);
+    expect(response.json().state.scope_pending).toBe(true);
+    expect(requests.some((entry) => entry.endsWith("POST http://api.local/report-contracts/contract_direct_prep/prepare"))).toBe(true);
+
+    await app.close();
+  });
+
+  it("drops unavailable tables from scope when valid relations remain and continues to prep pending", async () => {
+    const fetchImpl: typeof fetch = async (input, init) => {
+      const url = typeof input === "string" ? input : input instanceof URL ? input.toString() : input.url;
+      const method = init?.method?.toUpperCase() ?? "GET";
+
+      if (url.endsWith("/connections/catalog") && method === "GET") {
+        return new Response(
+          JSON.stringify({
+            business_id: "biz_test",
+            business_context: "",
+            cataloged_at: "2026-02-01T00:00:00.000Z",
+            tables: [
+              {
+                table_id: "tbl_orders",
+                qualified_name: "public.demo_orders",
+                relation_type: "TABLE",
+                summary: "Orders",
+                columns: [
+                  { column_name: "order_date", data_type: "timestamp with time zone", is_nullable: false }
+                ],
+                low_cardinality_columns: [],
+                sample_rows: [],
+                row_count_estimate: 1000
+              }
+            ]
+          }),
+          {
+            status: 200,
+            headers: { "content-type": "application/json" }
+          }
+        );
+      }
+
+      if (url.endsWith("/connections/tables") && method === "GET") {
+        return new Response(
+          JSON.stringify({
+            relations: [
+              {
+                qualified_name: "public.demo_orders",
+                relation_type: "TABLE",
+                status: "OK",
+                has_rls: false,
+                force_rls: false,
+                rls_active_for_me: false,
+                policies_count_for_me: 0
+              }
+            ]
+          }),
+          {
+            status: 200,
+            headers: { "content-type": "application/json" }
+          }
+        );
+      }
+
+      if (url.endsWith("/connections/query") && method === "POST") {
+        return new Response(
+          JSON.stringify({
+            rows: [{ row_count: 1000 }],
+            row_count: 1,
+            governed_sql: "SELECT COUNT(*) AS row_count FROM public.demo_orders",
+            warnings: []
+          }),
+          {
+            status: 200,
+            headers: { "content-type": "application/json" }
+          }
+        );
+      }
+
+      return new Response(JSON.stringify({ message: `Unhandled request: ${method} ${url}` }), {
+        status: 404,
+        headers: { "content-type": "application/json" }
+      });
+    };
+
+    const app = buildWebApp({
+      api_base_url: "http://api.local",
+      fetch_impl: fetchImpl,
+      conversation_client: createPassthroughConversationClient()
+    });
+
+    const response = await app.inject({
+      method: "POST",
+      url: "/api/chat",
+      payload: {
+        message: "looks good",
+        state: {
+          draft: {
+            name: "Mixed Scope Report",
+            audience: "Executive",
+            timezone: "UTC",
+            schedule_cron: null,
+            sql_template: "SELECT * FROM public.demo_orders",
+            metric_ids: ["metric_refunds"],
+            dimension_ids: ["city"],
+            allowed_relations: ["public.demo_orders", "analytics.sales"],
+            allowed_schemas: ["public", "analytics"],
+            insight_mode: "business"
+          },
+          contract_id: null,
+          last_run_id: null,
+          last_query_id: null,
+          last_exec_brief: null,
+          conversation_history: [],
+          prep_pending: false,
+          prep_complete: false,
+          scope_pending: false,
+          scope_finalized: false,
+          scope_clarification_pending: true,
+          scope_source_prompt: "refund scope",
+          scope_questions: [
+            {
+              question_number: 1,
+              question: "Refund trend",
+              clarification: "Use last 4 months",
+              answer: "Use Nov-Feb",
+              metric_key: null,
+              metric_display_name: null,
+              metric_definition_draft: null,
+              metric_source_columns: []
+            }
+          ],
+          question_registry: [],
+          pending_query_sql: null,
+          pending_query_limit: null,
+          pending_single_query_request: null,
+          last_single_query_snapshot: null,
+          single_query_log: [],
+          planner_summary: null,
+          preparation_summary: null,
+          prepared_payloads: [],
+          awaiting_pdf_confirmation: false,
+          awaiting_post_run_refinement: false,
+          refinement_active: false,
+          refinement_questions_remaining: 0,
+          awaiting_save_confirmation: false,
+          awaiting_schedule_confirmation: false,
+          awaiting_schedule_mode_selection: false,
+          schedule_mode_pending: null,
+          schedule_day_kind: null,
+          awaiting_custom_day_input: false,
+          last_concise_summary: null,
+          last_token_usage: null
+        }
+      }
+    });
+
+    expect(response.statusCode).toBe(200);
+    expect(response.json().state.prep_pending).toBe(true);
+    expect(response.json().state.scope_clarification_pending).toBe(false);
+    expect(response.json().state.draft.allowed_relations).toEqual(["public.demo_orders"]);
+    expect(response.json().assistant_message).toContain("Ignored unavailable tables from scope: analytics.sales.");
+
+    await app.close();
+  });
+
+  it("accepts typed refinement while prep decision is pending and still blocks ad-hoc query execution", async () => {
     let queryCalls = 0;
     const fetchImpl: typeof fetch = async (input, init) => {
       const url = typeof input === "string" ? input : input instanceof URL ? input.toString() : input.url;
@@ -3230,14 +5305,14 @@ describe("web chat interface", () => {
     });
 
     expect(response.statusCode).toBe(200);
-    expect(response.json().assistant_message).toContain("Data preparation decision pending");
-    expect(response.json().state.prep_pending).toBe(true);
+    expect(response.json().assistant_message).not.toContain("Data preparation decision pending");
+    expect(response.json().assistant_message).not.toContain("Query completed");
     expect(queryCalls).toBe(0);
 
     await app.close();
   });
 
-  it("keeps analysis decision pending and does not execute ad-hoc query text while analysis is pending", async () => {
+  it("accepts typed refinement while analysis decision is pending and still blocks ad-hoc query text", async () => {
     let queryCalls = 0;
     const fetchImpl: typeof fetch = async (input, init) => {
       const url = typeof input === "string" ? input : input instanceof URL ? input.toString() : input.url;
@@ -3301,8 +5376,8 @@ describe("web chat interface", () => {
     });
 
     expect(response.statusCode).toBe(200);
-    expect(response.json().assistant_message).toContain("Analysis decision pending");
-    expect(response.json().state.scope_pending).toBe(true);
+    expect(response.json().assistant_message).not.toContain("Analysis decision pending");
+    expect(response.json().assistant_message).not.toContain("Query completed");
     expect(queryCalls).toBe(0);
 
     await app.close();
@@ -4194,6 +6269,128 @@ describe("web chat interface", () => {
     expect(response.json().assistant_message).toContain("generating your report");
     expect(response.json().state.scope_pending).toBe(false);
     expect(response.json().state.pending_run_id).toBe("run_retry_ok");
+
+    await app.close();
+  });
+
+  it("returns to scoping from analysis decision and requires fresh data preparation", async () => {
+    const app = buildWebApp({
+      api_base_url: "http://api.local",
+      fetch_impl: async (input, init) => {
+        const url = typeof input === "string" ? input : input instanceof URL ? input.toString() : input.url;
+        const method = init?.method?.toUpperCase() ?? "GET";
+        if (url.endsWith("/connections/catalog") && method === "GET") {
+          return new Response(JSON.stringify({ tables: [], business_context: "", cataloged_at: null }), {
+            status: 200,
+            headers: { "content-type": "application/json" }
+          });
+        }
+        return new Response(JSON.stringify({ message: `Unhandled request: ${method} ${url}` }), {
+          status: 404,
+          headers: { "content-type": "application/json" }
+        });
+      },
+      conversation_client: createPassthroughConversationClient()
+    });
+
+    const bootstrap = await app.inject({
+      method: "POST",
+      url: "/api/chat",
+      payload: { message: "set name: Continue Scoping Report" }
+    });
+    expect(bootstrap.statusCode).toBe(200);
+
+    const seededState = bootstrap.json().state as Record<string, unknown>;
+    seededState.scope_pending = true;
+    seededState.prep_complete = true;
+    seededState.prep_pending = false;
+    seededState.scope_finalized = true;
+    seededState.scope_clarification_pending = false;
+
+    const response = await app.inject({
+      method: "POST",
+      url: "/api/chat",
+      payload: {
+        message: "__ui_continue_scoping__",
+        state: seededState
+      }
+    });
+
+    expect(response.statusCode).toBe(200);
+    const body = response.json();
+    expect(body.state.scope_pending).toBe(false);
+    expect(body.state.scope_clarification_pending).toBe(true);
+    expect(body.state.scope_finalized).toBe(false);
+    expect(body.state.prep_complete).toBe(false);
+    expect(body.state.prep_pending).toBe(false);
+    expect(body.assistant_message).toContain("what looked off in the prepared data");
+
+    await app.close();
+  });
+
+  it("treats typed feedback during analysis decision as scope refinement and clears stale prep", async () => {
+    const app = buildWebApp({
+      api_base_url: "http://api.local",
+      fetch_impl: async (input, init) => {
+        const url = typeof input === "string" ? input : input instanceof URL ? input.toString() : input.url;
+        const method = init?.method?.toUpperCase() ?? "GET";
+        if (url.endsWith("/connections/catalog") && method === "GET") {
+          return new Response(JSON.stringify({ tables: [], business_context: "", cataloged_at: null }), {
+            status: 200,
+            headers: { "content-type": "application/json" }
+          });
+        }
+        return new Response(JSON.stringify({ message: `Unhandled request: ${method} ${url}` }), {
+          status: 404,
+          headers: { "content-type": "application/json" }
+        });
+      },
+      conversation_client: createPassthroughConversationClient()
+    });
+
+    const bootstrap = await app.inject({
+      method: "POST",
+      url: "/api/chat",
+      payload: { message: "set name: Scope Refinement From Analysis" }
+    });
+    expect(bootstrap.statusCode).toBe(200);
+
+    const seededState = bootstrap.json().state as Record<string, unknown>;
+    seededState.scope_pending = true;
+    seededState.prep_complete = true;
+    seededState.prep_pending = false;
+    seededState.scope_finalized = true;
+    seededState.scope_clarification_pending = false;
+    seededState.scope_questions = [
+      {
+        question_number: 1,
+        question: "Monthly refund trend",
+        clarification: "Confirm month range and comparison windows",
+        answer: "Use Nov-Feb and compare Jan-Feb vs Nov-Dec",
+        metric_key: null,
+        metric_display_name: null,
+        metric_definition_draft: null,
+        metric_source_columns: []
+      }
+    ];
+
+    const response = await app.inject({
+      method: "POST",
+      url: "/api/chat",
+      payload: {
+        message: "Q1: keep Nov-Feb but exclude partial February from comparison.",
+        state: seededState
+      }
+    });
+
+    expect(response.statusCode).toBe(200);
+    const body = response.json();
+    expect(body.state.scope_pending).toBe(false);
+    expect(body.state.scope_clarification_pending).toBe(false);
+    expect(body.state.scope_finalized).toBe(true);
+    expect(body.state.prep_complete).toBe(false);
+    expect(body.state.prep_pending).toBe(true);
+    expect(body.assistant_message).toContain("Ready to prepare data for:");
 
     await app.close();
   });

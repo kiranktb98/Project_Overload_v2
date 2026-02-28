@@ -32,11 +32,13 @@ const TURN_INPUT: ConversationTurnInput = {
     prep_pending: false,
     prep_complete: false,
     scope_pending: false,
+    scope_finalized: false,
     metric_definitions: [],
     pending_metric_confirmations: [],
     pending_metric_resume_message: null,
     pending_metric_resume_mode: null,
     scope_clarification_pending: false,
+    scope_business_context: null,
     scope_source_prompt: null,
     scope_questions: [],
     pending_query_sql: null,
@@ -61,7 +63,12 @@ const TURN_INPUT: ConversationTurnInput = {
     pending_schedule: null,
     last_concise_summary: null,
     pending_run_id: null,
-    last_token_usage: null
+    last_token_usage: null,
+    orchestrator_context_version: 1,
+    orchestrator_summary: null,
+    last_orchestrator_decision: null,
+    pending_inputs: [],
+    question_registry: []
   }
 };
 
@@ -85,7 +92,6 @@ describe("conversation client", () => {
     const client = createConversationClient({
       provider: "openrouter",
       openrouter_api_key: "key",
-      fallback_to_deterministic: false,
       fetch_impl: async (input, init) => {
         calls.push({ input, init });
 
@@ -117,18 +123,16 @@ describe("conversation client", () => {
     expect(rawBody).toContain("CURRENT UTC DATE/TIME:");
   });
 
-  it("falls back to deterministic when provider call fails and fallback is enabled", async () => {
+  it("throws when provider call fails", async () => {
     const client = createConversationClient({
       provider: "openai",
       openai_api_key: "key",
-      fallback_to_deterministic: true,
       fetch_impl: async () => {
         throw new Error("network down");
       }
     });
 
-    const response = await client.respond(TURN_INPUT);
-    expect(response.message).toBe("Base response");
+    await expect(client.respond(TURN_INPUT)).rejects.toThrow("network down");
   });
 
   it("throws when strict provider mode is enabled without keys", () => {

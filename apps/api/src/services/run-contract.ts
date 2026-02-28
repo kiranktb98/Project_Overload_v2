@@ -2,7 +2,9 @@ import { randomUUID } from "node:crypto";
 import { z } from "zod";
 import {
   ExecBriefSchema,
+  PerQuestionAnalysisSummarySchema,
   type ExecBrief,
+  type PerQuestionAnalysisSummary,
   ReportRunSchema,
   type ReportContract,
   type ReportRun,
@@ -19,10 +21,18 @@ import type {
   QueryStrategistClient,
   ReportComposerClient,
   ReportComposerInput,
+  SuperSummaryClient,
   TokenUsageEvent
 } from "@project-overload/llm-client";
 import { extractReferencedRelations } from "@project-overload/sql-guard";
-import type { BatchAnalysis, KpiWatchlistItem, PlannerOutput, QueryStrategyOutput, SqlDialect } from "@project-overload/shared";
+import type {
+  BatchAnalysis,
+  KpiWatchlistItem,
+  PlannerOutput,
+  QueryStrategyInput,
+  QueryStrategyOutput,
+  SqlDialect
+} from "@project-overload/shared";
 import type { MetadataStore } from "../store";
 
 const PREPARATION_ROW_CAP = 10_000;
@@ -32,8 +42,15 @@ const PREPARATION_SAMPLE_ROW_CAP = 5;
 const MAX_SQL_REPAIR_ATTEMPTS = 3;
 const MIN_QUERY_QUALITY_SCORE = 45;
 const MIN_ANALYSIS_GROUNDING_SCORE = 0.45;
+const ANALYST_ADDITIONAL_QUERY_MAX_ROUNDS = 1;
+const ANALYST_ADDITIONAL_QUERY_MAX_QUERIES = 2;
+const MIN_PAYLOAD_QA_SCORE = 3;
+const MIN_PAYLOAD_QA_COVERAGE = 0.55;
+const MIN_PAYLOAD_QA_NOVEL_TOKEN_COUNT = 2;
+const MIN_PAYLOAD_QA_NOVEL_TOKEN_RATIO = 0.35;
 const DEFAULT_SQL_DIALECT: SqlDialect = "postgres";
 const ANALYST_ROW_CAP = 200; // Max rows sent to analyst per call; batch if exceeded
+const MERGED_QUERY_PLANNING_ENABLED = isMergedQueryPlanningEnabled();
 
 type CatalogModel = {
   table_columns: Map<string, Set<string>>;
@@ -50,6 +67,12 @@ type TemporalSampleProfile = {
   notes: string[];
   warnings: string[];
 };
+
+const INTERNAL_REPORT_TERM_PATTERNS = [
+  /\butc\s*offset\b/i,
+  /\bmislabels?\b/i,
+  /\bautofixes?\b/i
+];
 
 type MonthKeyOptions = {
   strict?: boolean;
@@ -174,6 +197,7 @@ export type RunPayloadQaResult = {
   answer: string;
   citations: string[];
   grounded: boolean;
+  requires_new_analysis: boolean;
 };
 
 function parseCatalogSummary(catalogSummary: string): CatalogModel {
@@ -245,6 +269,11 @@ function normalizeSqlDialect(value: SqlDialect | string | undefined): SqlDialect
   return "postgres";
 }
 
+function isMergedQueryPlanningEnabled(): boolean {
+  const raw = (process.env.API_ENABLE_MERGED_QUERY_PLANNER ?? "true").trim().toLowerCase();
+  return raw !== "false" && raw !== "0" && raw !== "off";
+}
+
 export async function prepareReportContractData(input: {
   contract: ReportContract;
   tenant_id?: string;
@@ -305,7 +334,7 @@ export async function prepareReportContractData(input: {
       ).join("\n")
     : "";
 
-  const strategy = await input.query_strategist.planQueries({
+  const strategyInput: QueryStrategyInput = {
     catalog_summary: input.catalog_summary || "No catalog available.",
     report_goal: [
       input.contract.name,
@@ -320,6 +349,17 @@ export async function prepareReportContractData(input: {
     allowed_relations: input.contract.guardrails.allowed_relations,
     planner_context: plannerContext,
     sql_dialect: sqlDialect
+  };
+  const mergedPlan = MERGED_QUERY_PLANNING_ENABLED && input.query_strategist.planMergedQueries
+    ? await input.query_strategist.planMergedQueries(strategyInput)
+    : toMergedQueryPlanOutputFromLegacy(await input.query_strategist.planQueries(strategyInput));
+  collectClientUsage(input.query_strategist, tokenUsage);
+  const strategyFromMerged = mergedQueryPlanToLegacyStrategy(mergedPlan);
+  const strategy = await ensureScopedQuestionCoverage({
+    strategy: strategyFromMerged,
+    scope_clarifications: scopeClarifications,
+    strategy_input: strategyInput,
+    query_strategist: input.query_strategist
   });
   collectClientUsage(input.query_strategist, tokenUsage);
   console.log("[data-prep] strategist returned %d queries, groups: %s",
@@ -330,6 +370,8 @@ export async function prepareReportContractData(input: {
     "query_strategy",
     {
       contract_id: input.contract.id,
+      merged_question_count: mergedPlan.questions.length,
+      merged_group_ids: mergedPlan.questions.map((question) => question.group_id),
       query_count: strategy.queries.length,
       questions: strategy.queries.map((q) => q.question),
       grouped: groupPlannedQueries(strategy.queries).map((group) => ({
@@ -383,6 +425,7 @@ export async function runReportContractPipeline(input: {
   analyst_client: AnalystClient;
   query_strategist: QueryStrategistClient;
   report_composer: ReportComposerClient;
+  super_summary_client?: SuperSummaryClient;
   planner_client: PlannerClient;
   catalog_summary: string;
   sql_dialect?: SqlDialect;
@@ -412,8 +455,12 @@ export async function runReportContractPipeline(input: {
   };
 
   const scoredAnalyses: ScoredAnalysis[] = [];
+  const perQuestionSummaries: PerQuestionAnalysisSummary[] = [];
+  const businessContext = extractBusinessContextFromCatalogSummary(input.catalog_summary);
+  let analystTriggeredAdditionalQueries = false;
 
-  for (const payload of preparation.prepared_payloads) {
+  for (let payloadIndex = 0; payloadIndex < preparation.prepared_payloads.length; payloadIndex += 1) {
+    let payload = preparation.prepared_payloads[payloadIndex]!;
     const questionLabel = [
       `Q${payload.question_number}. ${payload.question}`,
       `Report: "${input.contract.name}" | Audience: ${input.contract.audience} | Mode: ${insightMode}`
@@ -421,46 +468,99 @@ export async function runReportContractPipeline(input: {
     const coverageGap = describeCoverageGap(payload);
 
     if (payload.prepared_rows.length === 0) {
+      const sanitizedWarnings = sanitizeCustomerFacingLines(payload.warnings);
+      const fallbackEntry: ReportComposerInput["analyses"][number] = {
+        question: questionLabel,
+        highlights: [],
+        risks:
+          sanitizedWarnings.length > 0
+            ? sanitizedWarnings
+            : [`No rows were available for ${questionLabel}.`],
+        recommendations: ["Refine scope and verify source tables before re-running this question."],
+        data_summary: buildPayloadDataSummary(payload)
+      };
       scoredAnalyses.push({
         question_id: payload.question_id,
-        entry: {
-          question: questionLabel,
-          highlights: [],
-          risks: payload.warnings.length > 0 ? payload.warnings : [`No rows were available for ${questionLabel}.`],
-          recommendations: ["Refine scope and verify source tables before re-running this question."],
-          data_summary: buildPayloadDataSummary(payload)
-        },
+        entry: fallbackEntry,
         confidence_score: 0
       });
+      perQuestionSummaries.push(
+        PerQuestionAnalysisSummarySchema.parse({
+          question_id: payload.question_id,
+          question_text: payload.question,
+          findings: [],
+          drivers: [],
+          anomalies: sanitizedWarnings,
+          coverage_status: "insufficient",
+          coverage_notes: ["No prepared rows available for analyst stage."],
+          evidence_refs: [`${payload.question_id}:no_rows`],
+          confidence_notes: ["No evidence rows were available for analysis."]
+        })
+      );
       continue;
     }
 
     if (coverageGap) {
+      const sanitizedWarnings = sanitizeCustomerFacingLines(payload.warnings);
+      const coverageEntry: ReportComposerInput["analyses"][number] = {
+        question: questionLabel,
+        highlights: [coverageGap.highlight],
+        risks: [...sanitizeCustomerFacingLines(coverageGap.risks), ...sanitizedWarnings],
+        recommendations: [
+          "Re-scope timeline or refresh source data to cover the full requested period before final decisioning."
+        ],
+        data_summary: buildPayloadDataSummary(payload)
+      };
       scoredAnalyses.push({
         question_id: payload.question_id,
-        entry: {
-          question: questionLabel,
-          highlights: [coverageGap.highlight],
-          risks: [...coverageGap.risks, ...payload.warnings],
-          recommendations: [
-            "Re-scope timeline or refresh source data to cover the full requested period before final decisioning."
-          ],
-          data_summary: buildPayloadDataSummary(payload)
-        },
+        entry: coverageEntry,
         confidence_score: 0.2
       });
+      perQuestionSummaries.push(
+        PerQuestionAnalysisSummarySchema.parse({
+          question_id: payload.question_id,
+          question_text: payload.question,
+          findings: coverageEntry.highlights,
+          drivers: [],
+          anomalies: coverageEntry.risks,
+          coverage_status: "partial",
+          coverage_notes: coverageGap.risks,
+          evidence_refs: [`${payload.question_id}:coverage_gap`],
+          confidence_notes: ["Coverage gap detected before analyst execution."]
+        })
+      );
       continue;
     }
 
-    const analysis = await runAnalystWithBatching({
+    const analystResult = await runAnalystWithOptionalAdditionalQueries({
       analyst_client: input.analyst_client,
+      query_strategist: input.query_strategist,
+      data_plane: input.data_plane,
+      store: input.store,
+      tenant_id: tenantId,
+      contract: input.contract,
       payload,
       question_label: questionLabel,
       insight_mode: insightMode,
       contract_id: input.contract.id,
-      data_context: buildAnalystDataContext(payload)
+      sql_dialect: normalizeSqlDialect(input.sql_dialect),
+      catalog_summary: input.catalog_summary,
+      data_context: buildAnalystDataContext(payload, {
+        business_context: businessContext,
+        contract_name: input.contract.name,
+        audience: input.contract.audience,
+        insight_mode: insightMode
+      })
     });
     collectClientUsage(input.analyst_client, tokenUsage);
+    collectClientUsage(input.query_strategist, tokenUsage);
+    payload = analystResult.payload;
+    preparation.prepared_payloads[payloadIndex] = payload;
+    if (analystResult.query_details.length > 0) {
+      preparation.query_details.push(...analystResult.query_details);
+      analystTriggeredAdditionalQueries = true;
+    }
+    const analysis = analystResult.analysis;
     const hardened = hardenBatchAnalysisOutput(payload, analysis, questionLabel);
 
     scoredAnalyses.push({
@@ -468,6 +568,21 @@ export async function runReportContractPipeline(input: {
       entry: hardened.entry,
       confidence_score: hardened.confidence_score
     });
+    perQuestionSummaries.push(
+      PerQuestionAnalysisSummarySchema.parse({
+        question_id: payload.question_id,
+        question_text: payload.question,
+        findings: hardened.entry.highlights,
+        drivers: hardened.entry.recommendations,
+        anomalies: hardened.entry.risks,
+        coverage_status: "complete",
+        coverage_notes: payload.validation
+          ? [`Observed months: ${payload.validation.observed_months}`]
+          : ["Coverage metadata not provided."],
+        evidence_refs: analysis.appendix_refs,
+        confidence_notes: [`Analyst confidence score: ${analysis.confidence_score.toFixed(2)}`]
+      })
+    );
   }
 
   const analyses: ReportComposerInput["analyses"] = scoredAnalyses.length > 0
@@ -479,6 +594,25 @@ export async function runReportContractPipeline(input: {
         recommendations: ["Review query strategy and data scope, then run again."],
         data_summary: "No sections produced."
       }];
+  const superSummary = await buildSuperSummaryForReport({
+    super_summary_client: input.super_summary_client,
+    contract: input.contract,
+    tenant_id: tenantId,
+    store: input.store,
+    data_plane: input.data_plane,
+    query_strategist: input.query_strategist,
+    sql_dialect: normalizeSqlDialect(input.sql_dialect),
+    title: input.contract.name,
+    audience: input.contract.audience,
+    insight_mode: insightMode,
+    analyses,
+    per_question_summaries: perQuestionSummaries,
+    query_details: preparation.query_details,
+    prepared_payloads: preparation.prepared_payloads,
+    catalog_summary: input.catalog_summary,
+    allow_context_queries: !analystTriggeredAdditionalQueries
+  });
+  collectClientUsage(input.super_summary_client ?? {}, tokenUsage);
 
   const conciseSummary = buildConciseSummary(input.contract.name, analyses);
   const globalMetricDefs = await loadGlobalMetricDefinitions(input.store, storeContext);
@@ -496,6 +630,8 @@ export async function runReportContractPipeline(input: {
       title: input.contract.name,
       audience: input.contract.audience,
       insight_mode: insightMode,
+      super_summary: superSummary?.summary,
+      consultant_actions: superSummary?.issue_detected ? superSummary.intervention_actions : [],
       metric_definitions: metricDefinitions,
       analyses,
       catalog_summary: input.catalog_summary || ""
@@ -533,8 +669,19 @@ export async function runReportContractPipeline(input: {
       insight_mode: insightMode,
       previous_run_id: previousRun?.id ?? null,
       metric_definitions: metricDefinitions,
+      super_summary: superSummary
+        ? {
+            summary: superSummary.summary,
+            issue_detected: superSummary.issue_detected,
+            intervention_actions: superSummary.intervention_actions,
+            notes: superSummary.notes
+          }
+        : null,
+      super_summary_context_queries: superSummary?.context_queries ?? [],
+      super_summary_context_results: superSummary?.context_query_results ?? [],
       prepared_payloads: preparation.prepared_payloads.map(toPreparedPayloadPublic),
       analysis_payloads: analysisPayloads,
+      per_question_summaries: perQuestionSummaries,
       kpi_results: kpiResults
     },
     exec_brief: execBrief,
@@ -563,18 +710,59 @@ export function answerRunPayloadQuestion(input: {
   if (analyses.length === 0) {
     return {
       grounded: false,
+      requires_new_analysis: true,
       citations: [],
       answer: "I don't have prepared payloads for this run yet. Please run analysis first."
     };
   }
 
+  const novelty = detectNovelPayloadQaIntent(input.question, analyses);
+  if (novelty.requires_new_analysis) {
+    return {
+      grounded: false,
+      requires_new_analysis: true,
+      citations: [],
+      answer:
+        "That follow-up introduces new analysis scope not grounded in this run payload. I need to stage it as a new scoped question and run fresh queries."
+    };
+  }
+
   const ranked = rankAnalysesByQuestion(analyses, input.question);
-  const selected = ranked.slice(0, 2).map((entry) => entry.analysis);
+  if (ranked.length === 0) {
+    return {
+      grounded: false,
+      requires_new_analysis: true,
+      citations: [],
+      answer:
+        "This follow-up needs fresh analysis data and is not grounded in the current run payload."
+    };
+  }
+
+  const top = ranked[0];
+  const minimumScore = Math.max(MIN_PAYLOAD_QA_SCORE, Math.ceil(top.query_token_count * 0.35));
+  const minimumCoverage = top.query_token_count >= 5 ? MIN_PAYLOAD_QA_COVERAGE : 0.4;
+  if (top.score < minimumScore || top.token_coverage < minimumCoverage) {
+    return {
+      grounded: false,
+      requires_new_analysis: true,
+      citations: [],
+      answer:
+        "I cannot answer that reliably from the current payload. It requires a new scoped question and fresh query execution."
+    };
+  }
+
+  const scoreFloor = Math.max(minimumScore, top.score - 2);
+  const selected = ranked
+    .filter((entry) => entry.score >= scoreFloor)
+    .slice(0, 2)
+    .map((entry) => entry.analysis);
   if (selected.length === 0) {
     return {
       grounded: false,
+      requires_new_analysis: true,
       citations: [],
-      answer: "I can't answer that from this run payload. Ask about one of the analyzed questions."
+      answer:
+        "I cannot answer that reliably from the current payload. It requires a new scoped question and fresh query execution."
     };
   }
 
@@ -592,9 +780,69 @@ export function answerRunPayloadQuestion(input: {
 
   return {
     grounded: true,
+    requires_new_analysis: false,
     citations: selected.map((entry) => entry.question_id),
     answer: lines.join("\n")
   };
+}
+
+export async function answerRunPayloadQuestionWithOrchestrator(input: {
+  run: ReportRun;
+  question: string;
+  query_strategist?: QueryStrategistClient;
+  catalog_summary?: string;
+}): Promise<RunPayloadQaResult> {
+  const deterministic = answerRunPayloadQuestion({
+    run: input.run,
+    question: input.question
+  });
+
+  if (!deterministic.requires_new_analysis || !input.query_strategist?.planMergedQueries) {
+    return deterministic;
+  }
+
+  const analyses = parseAnalysisPayloads(input.run.query_plan as Record<string, unknown>);
+  if (analyses.length === 0) {
+    return deterministic;
+  }
+
+  try {
+    const scopedPlan = await input.query_strategist.planMergedQueries({
+      catalog_summary:
+        input.catalog_summary ??
+        "No catalog summary available for QA scope planning.",
+      report_goal: [
+        "Follow-up QA requires new scoped analysis.",
+        `Follow-up question: ${input.question}`,
+        "Use existing analyzed sections as context:",
+        ...analyses.map((entry, index) => `Q${index + 1}: ${entry.question}`)
+      ].join("\n"),
+      audience: "Analyst",
+      insight_mode: "business",
+      metric_ids: [],
+      dimension_ids: [],
+      allowed_relations: [],
+      planner_context: "Generate minimal scoped question plan for follow-up request."
+    });
+
+    const nextQuestion = scopedPlan.questions[0];
+    if (!nextQuestion) {
+      return deterministic;
+    }
+
+    return {
+      grounded: false,
+      requires_new_analysis: true,
+      citations: [],
+      answer: [
+        "This follow-up needs new scoped analysis before answering.",
+        `Staged as new question: Q${nextQuestion.question_number} - ${nextQuestion.question_text}`,
+        "Proceed through scope confirmation and data preparation for this new question."
+      ].join("\n")
+    };
+  } catch {
+    return deterministic;
+  }
 }
 
 function parseAnalysisPayloads(queryPlan: Record<string, unknown>): AnalysisPayload[] {
@@ -606,8 +854,17 @@ function parseAnalysisPayloads(queryPlan: Record<string, unknown>): AnalysisPayl
 function rankAnalysesByQuestion(
   analyses: AnalysisPayload[],
   question: string
-): Array<{ analysis: AnalysisPayload; score: number }> {
+): Array<{
+  analysis: AnalysisPayload;
+  score: number;
+  token_coverage: number;
+  query_token_count: number;
+}> {
   const queryTokens = tokenize(question);
+  const queryTokenCount = queryTokens.length;
+  if (queryTokenCount === 0) {
+    return [];
+  }
   return analyses
     .map((analysis) => {
       const haystack = [
@@ -618,21 +875,95 @@ function rankAnalysesByQuestion(
         ...analysis.recommendations
       ].join(" ").toLowerCase();
 
-      let score = 0;
+      let tokenHits = 0;
       for (const token of queryTokens) {
         if (haystack.includes(token)) {
-          score += 1;
+          tokenHits += 1;
         }
       }
+      let score = tokenHits;
       if (question.toLowerCase().includes(analysis.question.toLowerCase())) {
         score += 3;
       }
+      if (analysis.question.toLowerCase().includes(question.toLowerCase())) {
+        score += 2;
+      }
 
-      return { analysis, score };
+      const tokenCoverage = tokenHits / queryTokenCount;
+
+      return { analysis, score, token_coverage: tokenCoverage, query_token_count: queryTokenCount };
     })
     .filter((entry) => entry.score > 0)
     .sort((left, right) => right.score - left.score);
 }
+
+function detectNovelPayloadQaIntent(
+  question: string,
+  analyses: AnalysisPayload[]
+): { requires_new_analysis: boolean } {
+  const lower = question.toLowerCase();
+  const expansionSignal = /\b(also|additionally|another|new|separate|extra|and also|one more)\b/.test(lower);
+  const analyticSignal =
+    /\b(compare|comparison|vs|versus|trend|breakdown|top|rank|city|region|state|country|product|category|issue|reason|ticket|driver|cohort|segment|channel|month|quarter|year)\b/.test(
+      lower
+    );
+  if (!analyticSignal) {
+    return { requires_new_analysis: false };
+  }
+
+  const questionTokens = tokenize(question).filter((token) => !PAYLOAD_QA_STOPWORDS.has(token));
+  if (questionTokens.length < 4) {
+    return { requires_new_analysis: false };
+  }
+
+  const contextTokens = new Set<string>();
+  for (const analysis of analyses) {
+    const text = [
+      analysis.question,
+      analysis.data_summary,
+      ...analysis.highlights,
+      ...analysis.risks,
+      ...analysis.recommendations
+    ].join(" ");
+    for (const token of tokenize(text)) {
+      contextTokens.add(token);
+    }
+  }
+
+  const novelTokens = questionTokens.filter((token) => !contextTokens.has(token));
+  const noveltyRatio = novelTokens.length / questionTokens.length;
+  const requiresNew =
+    novelTokens.length >= MIN_PAYLOAD_QA_NOVEL_TOKEN_COUNT &&
+    (noveltyRatio >= MIN_PAYLOAD_QA_NOVEL_TOKEN_RATIO || expansionSignal);
+
+  return { requires_new_analysis: requiresNew };
+}
+
+const PAYLOAD_QA_STOPWORDS = new Set<string>([
+  "what",
+  "which",
+  "show",
+  "tell",
+  "about",
+  "from",
+  "with",
+  "that",
+  "this",
+  "those",
+  "these",
+  "have",
+  "has",
+  "into",
+  "over",
+  "after",
+  "before",
+  "when",
+  "where",
+  "please",
+  "could",
+  "would",
+  "should"
+]);
 
 function tokenize(value: string): string[] {
   return Array.from(new Set(
@@ -642,6 +973,189 @@ function tokenize(value: string): string[] {
       .map((part) => part.trim())
       .filter((part) => part.length >= 3)
   ));
+}
+
+type ScopeClarificationItem = NonNullable<ReportContract["scope_clarifications"]>[number];
+
+async function ensureScopedQuestionCoverage(input: {
+  strategy: QueryStrategyOutput;
+  scope_clarifications: ScopeClarificationItem[];
+  strategy_input: QueryStrategyInput;
+  query_strategist: QueryStrategistClient;
+}): Promise<QueryStrategyOutput> {
+  const scoped = input.scope_clarifications ?? [];
+  if (scoped.length <= 1) {
+    return input.strategy;
+  }
+
+  const queries = [...input.strategy.queries];
+  const covered = detectCoveredScopeQuestions(queries, scoped);
+  const missing = scoped.filter((item) => !covered.has(item.question_number));
+  if (missing.length === 0) {
+    return input.strategy;
+  }
+
+  for (const scopeItem of missing.slice(0, 6)) {
+    const scopedInput: QueryStrategyInput = {
+      ...input.strategy_input,
+      report_goal: [
+        input.strategy_input.report_goal,
+        "",
+        "SCOPED QUESTION (must produce query for this question only):",
+        `Q${scopeItem.question_number}: ${scopeItem.question}`,
+        `Clarification: ${scopeItem.answer}`
+      ].join("\n")
+    };
+
+    try {
+      const supplement = MERGED_QUERY_PLANNING_ENABLED && input.query_strategist.planMergedQueries
+        ? mergedQueryPlanToLegacyStrategy(await input.query_strategist.planMergedQueries(scopedInput))
+        : await input.query_strategist.planQueries(scopedInput);
+      const additions = supplement.queries
+        .slice(0, 3)
+        .map((query) => ({
+          ...query,
+          group_id: query.group_id && query.group_id.trim().length > 0
+            ? query.group_id
+            : `scope_q${scopeItem.question_number}`
+        }));
+      if (additions.length > 0) {
+        queries.push(...additions);
+        continue;
+      }
+    } catch {
+      // Ignore and apply deterministic fallback below.
+    }
+
+    const fallbackRelation = input.strategy_input.allowed_relations[0] ?? "public.unknown_table";
+    queries.push({
+      question: scopeItem.question,
+      purpose: scopeItem.answer,
+      group_id: `scope_q${scopeItem.question_number}`,
+      sql: `SELECT * FROM ${fallbackRelation} LIMIT 200`
+    });
+  }
+
+  return {
+    queries
+  };
+}
+
+function detectCoveredScopeQuestions(
+  queries: QueryStrategyOutput["queries"],
+  scopeClarifications: ScopeClarificationItem[]
+): Set<number> {
+  const covered = new Set<number>();
+  const byNumber = new Map(scopeClarifications.map((item) => [item.question_number, item]));
+
+  for (const query of queries) {
+    const groupMatch = query.group_id?.match(/scope[_-]?q?(\d+)/i);
+    if (groupMatch) {
+      const number = Number.parseInt(groupMatch[1] ?? "", 10);
+      if (Number.isFinite(number) && byNumber.has(number)) {
+        covered.add(number);
+        continue;
+      }
+    }
+
+    const queryTokens = new Set(tokenize(`${query.question} ${query.purpose}`));
+    for (const scopeItem of scopeClarifications) {
+      if (covered.has(scopeItem.question_number)) {
+        continue;
+      }
+      const scopeTokens = tokenize(scopeItem.question);
+      if (scopeTokens.length === 0) {
+        continue;
+      }
+      let hits = 0;
+      for (const token of scopeTokens) {
+        if (queryTokens.has(token)) {
+          hits += 1;
+        }
+      }
+      const coverage = hits / scopeTokens.length;
+      if (coverage >= 0.65 || query.question.toLowerCase().includes(scopeItem.question.toLowerCase())) {
+        covered.add(scopeItem.question_number);
+      }
+    }
+  }
+
+  return covered;
+}
+
+function toMergedQueryPlanOutputFromLegacy(strategy: QueryStrategyOutput): {
+  plan_id: string;
+  questions: Array<{
+    question_id: string;
+    question_number: number;
+    question_text: string;
+    clarifications_used: string[];
+    group_id: string;
+    query_blocks: Array<{
+      sql: string;
+      purpose: string;
+      expected_rows: number;
+      joins_used: string[];
+      filters_used: string[];
+    }>;
+    expected_output_columns: string[];
+    success_criteria: string[];
+  }>;
+} {
+  return {
+    plan_id: `legacy_plan_${Date.now()}`,
+    questions: groupPlannedQueries(strategy.queries).map((group, index) => ({
+      question_id: `q${index + 1}`,
+      question_number: index + 1,
+      question_text: group.queries[0]?.question ?? `Question ${index + 1}`,
+      clarifications_used: group.queries.map((query) => query.purpose).filter((value) => value.length > 0),
+      group_id: group.group_id ?? `q${index + 1}_group`,
+      query_blocks: group.queries.map((query) => ({
+        sql: query.sql,
+        purpose: query.purpose,
+        expected_rows: 50,
+        joins_used: [],
+        filters_used: []
+      })),
+      expected_output_columns: [],
+      success_criteria: ["Query executes with governed policies and row caps."]
+    }))
+  };
+}
+
+function mergedQueryPlanToLegacyStrategy(input: {
+  plan_id?: string;
+  questions: Array<{
+    question_id: string;
+    question_number: number;
+    question_text: string;
+    group_id: string;
+    query_blocks: Array<{
+      sql: string;
+      purpose: string;
+    }>;
+  }>;
+}): QueryStrategyOutput {
+  const queries: QueryStrategyOutput["queries"] = [];
+
+  const orderedQuestions = [...input.questions].sort(
+    (left, right) => left.question_number - right.question_number
+  );
+
+  for (const question of orderedQuestions) {
+    for (const block of question.query_blocks) {
+      queries.push({
+        question: question.question_text,
+        purpose: block.purpose,
+        sql: block.sql,
+        group_id: question.group_id
+      });
+    }
+  }
+
+  return {
+    queries
+  };
 }
 
 function groupPlannedQueries(queries: QueryStrategyOutput["queries"]): Array<{
@@ -736,8 +1250,6 @@ async function runDataPreparationAgent(input: {
     notes.push(
       `Source query ${index + 1}/${plannedQueries.length} (${planned.question}) returned ${result.rows.length} row(s).`
     );
-    notes.push(`Source query ${index + 1} quality score: ${result.quality.score}/100.`);
-
     if (result.warnings.length > 0) {
       warnings.push(...result.warnings.map((warning) => `Source query ${index + 1}: ${warning}`));
     }
@@ -797,7 +1309,11 @@ async function runDataPreparationAgent(input: {
   }
 
   const comparisonMonths = extractExplicitMonthComparison(firstPlanned.question);
-  if (comparisonMonths) {
+  const requestedAnchorMonth = extractLatestMentionedMonthKey(firstPlanned.question);
+  const isComparisonAggregatePayload = comparisonMonths
+    ? isComparisonAggregateRowset(preparedRows, firstPlanned.question, firstPlanned.purpose)
+    : false;
+  if (comparisonMonths && !isComparisonAggregatePayload) {
     const coverage = detectMonthCoverage(preparedRows, hintedDateColumns);
     if (coverage.unique_months < comparisonMonths * 2) {
       warnings.push(
@@ -806,7 +1322,8 @@ async function runDataPreparationAgent(input: {
       const enrichmentSql = buildMonthCoverageSqlFromBase(
         primarySql,
         coverage.date_column,
-        comparisonMonths * 2
+        comparisonMonths * 2,
+        requestedAnchorMonth
       );
       if (enrichmentSql) {
         preparationSqls.push(enrichmentSql);
@@ -829,11 +1346,25 @@ async function runDataPreparationAgent(input: {
     }
   }
 
+  const cityIssueReduction = reduceTopIssueRowsPerCity(preparedRows, firstPlanned.question);
+  if (cityIssueReduction.applied) {
+    preparedRows = cityIssueReduction.rows;
+    notes.push(cityIssueReduction.note);
+  }
+
+  preparedRows = applyComparisonPeriodLabels(
+    preparedRows,
+    firstPlanned.question,
+    firstPlanned.purpose,
+    hintedDateColumns
+  );
+
   const validation = buildPreparedDataValidation(
     preparedRows,
     firstPlanned.question,
     comparisonMonths,
-    hintedDateColumns
+    hintedDateColumns,
+    requestedAnchorMonth
   );
   if (validation.expected_months !== null) {
     if (validation.missing_months.length === 0) {
@@ -1465,6 +1996,313 @@ function reduceRowsDeterministic(
   };
 }
 
+function dedupePreparedRows(rows: Record<string, unknown>[]): Record<string, unknown>[] {
+  const seen = new Set<string>();
+  const deduped: Record<string, unknown>[] = [];
+
+  for (const row of rows) {
+    const key = stableRowFingerprint(row);
+    if (seen.has(key)) {
+      continue;
+    }
+    seen.add(key);
+    deduped.push(row);
+  }
+
+  return deduped;
+}
+
+function stableRowFingerprint(row: Record<string, unknown>): string {
+  const entries = Object.entries(row).sort(([left], [right]) => left.localeCompare(right));
+  return JSON.stringify(entries);
+}
+
+function reduceTopIssueRowsPerCity(
+  rows: Record<string, unknown>[],
+  question: string
+): { applied: boolean; rows: Record<string, unknown>[]; note: string } {
+  if (rows.length === 0) {
+    return { applied: false, rows, note: "" };
+  }
+
+  const lowerQuestion = question.toLowerCase();
+  const looksLikeCityIssueCut =
+    /\bcit(?:y|ies)\b/.test(lowerQuestion) && /\b(issue|issues|reason|reasons|ticket|tickets)\b/.test(lowerQuestion);
+  if (!looksLikeCityIssueCut) {
+    return { applied: false, rows, note: "" };
+  }
+
+  const first = rows[0] ?? {};
+  const columns = Object.keys(first);
+  const cityColumn =
+    columns.find((column) => /^city$/i.test(column)) ??
+    columns.find((column) => /city/i.test(column)) ??
+    null;
+  const issueColumn =
+    columns.find((column) => /^issue_type$/i.test(column)) ??
+    columns.find((column) => /(issue|reason|type)/i.test(column)) ??
+    null;
+  if (!cityColumn || !issueColumn) {
+    return { applied: false, rows, note: "" };
+  }
+
+  const numericColumns = columns.filter((column) =>
+    rows.some((row) => toFiniteNumber(row[column]) !== null)
+  );
+  const metricColumn =
+    numericColumns.find((column) => /ticket|count|volume|cases|orders|total/i.test(column)) ??
+    numericColumns.find((column) => /(share|pct|percent|rate)/i.test(column)) ??
+    null;
+  if (!metricColumn) {
+    return { applied: false, rows, note: "" };
+  }
+
+  const explicitTop = lowerQuestion.match(/\btop\s+(\d+)\b/);
+  const topN = explicitTop
+    ? Math.max(1, Number.parseInt(explicitTop[1], 10))
+    : /\btop\s+issue\b/.test(lowerQuestion) &&
+      !/\btop\s+issues\b/.test(lowerQuestion) &&
+      !/\btop\s+issue\s+types?\b/.test(lowerQuestion)
+      ? 1
+      : 2;
+
+  const grouped = new Map<string, Record<string, unknown>[]>();
+  for (const row of rows) {
+    const cityValue = row[cityColumn];
+    const cityKey = cityValue == null ? "" : String(cityValue).trim();
+    if (!cityKey) {
+      continue;
+    }
+    const bucket = grouped.get(cityKey) ?? [];
+    bucket.push(row);
+    grouped.set(cityKey, bucket);
+  }
+
+  if (grouped.size === 0) {
+    return { applied: false, rows, note: "" };
+  }
+
+  const reduced: Record<string, unknown>[] = [];
+  for (const [, cityRows] of grouped) {
+    const ranked = [...cityRows].sort((left, right) => {
+      const leftValue = toFiniteNumber(left[metricColumn]) ?? Number.NEGATIVE_INFINITY;
+      const rightValue = toFiniteNumber(right[metricColumn]) ?? Number.NEGATIVE_INFINITY;
+      if (rightValue !== leftValue) {
+        return rightValue - leftValue;
+      }
+      const leftIssue = String(left[issueColumn] ?? "");
+      const rightIssue = String(right[issueColumn] ?? "");
+      return leftIssue.localeCompare(rightIssue);
+    });
+    reduced.push(...ranked.slice(0, topN));
+  }
+
+  if (reduced.length >= rows.length) {
+    return { applied: false, rows, note: "" };
+  }
+
+  return {
+    applied: true,
+    rows: reduced,
+    note: `Reduced city x issue breakdown to top ${topN} issue${topN === 1 ? "" : "s"} per city (${rows.length} -> ${reduced.length}).`
+  };
+}
+
+function applyComparisonPeriodLabels(
+  rows: Record<string, unknown>[],
+  question: string,
+  purpose: string,
+  hintedDateColumns: string[] = []
+): Record<string, unknown>[] {
+  if (rows.length === 0) {
+    return rows;
+  }
+
+  const lowerContext = `${question} ${purpose}`.toLowerCase();
+  if (!/\b(compare|comparison|vs|versus|period)\b/.test(lowerContext)) {
+    return rows;
+  }
+
+  const comparisonMonths = extractExplicitMonthComparison(question);
+  if (!comparisonMonths || comparisonMonths <= 0) {
+    return rows;
+  }
+
+  const window = resolveComparisonLabelWindow(rows, question, comparisonMonths, hintedDateColumns);
+  if (!window) {
+    return rows;
+  }
+
+  const first = rows[0] ?? {};
+  const labelColumn =
+    Object.keys(first).find((column) => /month_label|period_label/i.test(column)) ?? "month_label";
+  const shouldApply =
+    /\b(period|comparison|vs|versus)\b/i.test(purpose) ||
+    rows.some((row) => {
+      const marker = row._sub_query;
+      return typeof marker === "string" && /\b(period|comparison|vs|versus)\b/i.test(marker);
+    });
+  if (!shouldApply) {
+    return rows;
+  }
+
+  return rows.map((row) => {
+    const marker = row._sub_query;
+    const rowIsComparison =
+      typeof marker === "string"
+        ? /\b(period|comparison|vs|versus)\b/i.test(marker)
+        : /\b(period|comparison|vs|versus)\b/i.test(purpose);
+    if (!rowIsComparison) {
+      return row;
+    }
+
+    const monthKey = toMonthKey(row[window.month_column], {
+      strict: true,
+      allow_numeric_epoch: true
+    });
+    if (!monthKey) {
+      return row;
+    }
+
+    if (window.prior_months.includes(monthKey) || monthKey === window.prior_start) {
+      return { ...row, [labelColumn]: window.prior_label };
+    }
+    if (window.current_months.includes(monthKey) || monthKey === window.current_start) {
+      return { ...row, [labelColumn]: window.current_label };
+    }
+    return row;
+  });
+}
+
+function isComparisonAggregateRowset(
+  rows: Record<string, unknown>[],
+  question: string,
+  purpose: string = ""
+): boolean {
+  if (rows.length === 0) {
+    return false;
+  }
+
+  const lowerContext = `${question} ${purpose}`.toLowerCase();
+  if (!/\b(compare|comparison|vs|versus|period)\b/.test(lowerContext)) {
+    return false;
+  }
+
+  const first = rows[0] ?? {};
+  const rawColumns = Object.keys(first);
+  const columns = rawColumns.map((column) => column.toLowerCase());
+  const hasExplicitAggregateColumns = columns.some((column) =>
+    /\b(prior_period|current_period|period_name|window_label)\b/.test(column)
+  );
+  const hasLabelColumns = columns.some((column) => /\b(month_label|period_label)\b/.test(column));
+
+  const hasComparisonSubQuery = rows.some((row) => {
+    const marker = row._sub_query;
+    return typeof marker === "string" && /\b(period|comparison|vs|versus|prior|current)\b/i.test(marker);
+  });
+
+  const hasMonthSpanValues = rows.some((row) =>
+    Object.values(row).some((value) => {
+      if (typeof value !== "string") {
+        return false;
+      }
+      const trimmed = value.trim();
+      if (trimmed.length === 0) {
+        return false;
+      }
+      return /\b(jan|feb|mar|apr|may|jun|jul|aug|sep|sept|oct|nov|dec)[a-z]*\b\s*[-–]\s*\b(jan|feb|mar|apr|may|jun|jul|aug|sep|sept|oct|nov|dec)[a-z]*\b/i.test(trimmed);
+    })
+  );
+
+  const nonLabelTemporalHints = rawColumns.filter(
+    (column) => isDateLikeColumnName(column) && !/label/i.test(column)
+  );
+  const nonLabelCoverage = detectMonthCoverage(rows, nonLabelTemporalHints);
+  const hasStrongTemporalCoverage =
+    nonLabelCoverage.date_column !== null && nonLabelCoverage.unique_months >= 3;
+
+  if (hasExplicitAggregateColumns) {
+    return true;
+  }
+
+  if (hasLabelColumns && hasMonthSpanValues && !hasStrongTemporalCoverage) {
+    return true;
+  }
+
+  if (hasComparisonSubQuery && hasMonthSpanValues && !hasStrongTemporalCoverage) {
+    return true;
+  }
+
+  return false;
+}
+
+function resolveComparisonLabelWindow(
+  rows: Record<string, unknown>[],
+  question: string,
+  comparisonMonths: number,
+  hintedDateColumns: string[]
+): {
+  month_column: string;
+  prior_months: string[];
+  current_months: string[];
+  prior_start: string;
+  current_start: string;
+  prior_label: string;
+  current_label: string;
+} | null {
+  const coverage = detectMonthCoverage(rows, hintedDateColumns);
+  if (!coverage.date_column) {
+    return null;
+  }
+
+  const fallbackAnchor =
+    coverage.month_keys.length > 0 ? coverage.month_keys[coverage.month_keys.length - 1] : currentMonthKey();
+  const anchor = extractLatestMentionedMonthKey(question) ?? fallbackAnchor;
+  const expected = buildExpectedMonthKeys(anchor, comparisonMonths * 2);
+  if (expected.length < comparisonMonths * 2) {
+    return null;
+  }
+
+  const priorMonths = expected.slice(0, comparisonMonths);
+  const currentMonths = expected.slice(comparisonMonths);
+  if (priorMonths.length === 0 || currentMonths.length === 0) {
+    return null;
+  }
+
+  const priorLabel = formatMonthSpanLabel(priorMonths[0], priorMonths[priorMonths.length - 1]);
+  const currentLabel = formatMonthSpanLabel(currentMonths[0], currentMonths[currentMonths.length - 1]);
+
+  return {
+    month_column: coverage.date_column,
+    prior_months: priorMonths,
+    current_months: currentMonths,
+    prior_start: priorMonths[0],
+    current_start: currentMonths[0],
+    prior_label: priorLabel,
+    current_label: currentLabel
+  };
+}
+
+function formatMonthSpanLabel(startMonthKey: string, endMonthKey: string): string {
+  const start = parseMonthKey(startMonthKey);
+  const end = parseMonthKey(endMonthKey);
+  if (!start || !end) {
+    return startMonthKey;
+  }
+
+  const monthNames = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
+  const startName = monthNames[start.month - 1] ?? startMonthKey;
+  const endName = monthNames[end.month - 1] ?? endMonthKey;
+
+  if (start.year === end.year && start.month === end.month) {
+    return `${startName} ${start.year}`;
+  }
+  if (start.year === end.year) {
+    return `${startName}-${endName} ${start.year}`;
+  }
+  return `${startName} ${start.year}-${endName} ${end.year}`;
+}
+
 function extractExplicitMonthComparison(question: string): number | null {
   const normalized = question.toLowerCase();
   const exact = normalized.match(/\blast\s+(\d+)\s+months?\s+vs(?:\.|)\s+(?:the\s+)?(?:previous|prior)\s+(\d+)\s+months?\b/);
@@ -1485,6 +2323,78 @@ function extractExplicitMonthComparison(question: string): number | null {
   }
 
   return null;
+}
+
+function extractLatestMentionedMonthKey(question: string, referenceDate: Date = new Date()): string | null {
+  const normalized = question.toLowerCase();
+  const matches: Array<{ year: number; month: number }> = [];
+
+  for (const match of normalized.matchAll(/\b(20\d{2})[-/](0?[1-9]|1[0-2])\b/g)) {
+    const year = Number.parseInt(match[1], 10);
+    const month = Number.parseInt(match[2], 10);
+    if (!Number.isNaN(year) && !Number.isNaN(month)) {
+      matches.push({ year, month });
+    }
+  }
+
+  const monthMap: Record<string, number> = {
+    jan: 1,
+    january: 1,
+    feb: 2,
+    february: 2,
+    mar: 3,
+    march: 3,
+    apr: 4,
+    april: 4,
+    may: 5,
+    jun: 6,
+    june: 6,
+    jul: 7,
+    july: 7,
+    aug: 8,
+    august: 8,
+    sep: 9,
+    sept: 9,
+    september: 9,
+    oct: 10,
+    october: 10,
+    nov: 11,
+    november: 11,
+    dec: 12,
+    december: 12
+  };
+
+  const monthRegex =
+    /\b(jan(?:uary)?|feb(?:ruary)?|mar(?:ch)?|apr(?:il)?|may|jun(?:e)?|jul(?:y)?|aug(?:ust)?|sep(?:t(?:ember)?)?|oct(?:ober)?|nov(?:ember)?|dec(?:ember)?)\b(?:\s+(20\d{2}))?/g;
+  for (const match of normalized.matchAll(monthRegex)) {
+    const token = match[1]?.toLowerCase() ?? "";
+    const month = monthMap[token];
+    if (!month) {
+      continue;
+    }
+    const explicitYear = match[2] ? Number.parseInt(match[2], 10) : null;
+    const inferredYear =
+      explicitYear ??
+      (month - 1 > referenceDate.getUTCMonth()
+        ? referenceDate.getUTCFullYear() - 1
+        : referenceDate.getUTCFullYear());
+    if (!Number.isNaN(inferredYear)) {
+      matches.push({ year: inferredYear, month });
+    }
+  }
+
+  if (matches.length === 0) {
+    return null;
+  }
+
+  matches.sort((left, right) => {
+    if (left.year !== right.year) {
+      return left.year - right.year;
+    }
+    return left.month - right.month;
+  });
+  const latest = matches[matches.length - 1];
+  return `${latest.year}-${String(latest.month).padStart(2, "0")}`;
 }
 
 function detectMonthCoverage(rows: Record<string, unknown>[], hintedDateColumns: string[] = []): {
@@ -1621,6 +2531,27 @@ function toMonthKey(value: unknown, options: MonthKeyOptions = {}): string | nul
       return null;
     }
 
+    const isoMonthDate = trimmed.match(/^(\d{4})-(\d{2})(?:-(\d{2}))?(?:[T\s].*)?$/);
+    if (isoMonthDate) {
+      const year = Number.parseInt(isoMonthDate[1], 10);
+      const month = Number.parseInt(isoMonthDate[2], 10);
+      if (!Number.isNaN(year) && !Number.isNaN(month) && month >= 1 && month <= 12) {
+        if (options.strict && !isPlausibleBusinessYear(year)) {
+          return null;
+        }
+        return `${year}-${String(month).padStart(2, "0")}`;
+      }
+    }
+
+    if (looksLikeMonthSpanLabel(trimmed)) {
+      return null;
+    }
+
+    const monthNameKey = parseNamedMonthYearKey(trimmed, options.strict ?? false);
+    if (monthNameKey) {
+      return monthNameKey;
+    }
+
     if (isMonthKey(trimmed)) {
       return trimmed;
     }
@@ -1650,6 +2581,58 @@ function toMonthKey(value: unknown, options: MonthKeyOptions = {}): string | nul
   return null;
 }
 
+function looksLikeMonthSpanLabel(value: string): boolean {
+  return /\b(jan|feb|mar|apr|may|jun|jul|aug|sep|sept|oct|nov|dec)[a-z]*\b\s*[-–]\s*\b(jan|feb|mar|apr|may|jun|jul|aug|sep|sept|oct|nov|dec)[a-z]*\b/i.test(
+    value
+  );
+}
+
+function parseNamedMonthYearKey(value: string, strict: boolean): string | null {
+  const match = value.match(
+    /^\s*(jan(?:uary)?|feb(?:ruary)?|mar(?:ch)?|apr(?:il)?|may|jun(?:e)?|jul(?:y)?|aug(?:ust)?|sep(?:t(?:ember)?)?|oct(?:ober)?|nov(?:ember)?|dec(?:ember)?)\s+(20\d{2})(?:\s*\(.*\))?\s*$/i
+  );
+  if (!match) {
+    return null;
+  }
+
+  const token = match[1].toLowerCase();
+  const year = Number.parseInt(match[2], 10);
+  const monthMap: Record<string, number> = {
+    jan: 1,
+    january: 1,
+    feb: 2,
+    february: 2,
+    mar: 3,
+    march: 3,
+    apr: 4,
+    april: 4,
+    may: 5,
+    jun: 6,
+    june: 6,
+    jul: 7,
+    july: 7,
+    aug: 8,
+    august: 8,
+    sep: 9,
+    sept: 9,
+    september: 9,
+    oct: 10,
+    october: 10,
+    nov: 11,
+    november: 11,
+    dec: 12,
+    december: 12
+  };
+  const month = monthMap[token];
+  if (!month || Number.isNaN(year)) {
+    return null;
+  }
+  if (strict && !isPlausibleBusinessYear(year)) {
+    return null;
+  }
+  return `${year}-${String(month).padStart(2, "0")}`;
+}
+
 function isPlausibleBusinessYear(year: number): boolean {
   const currentYear = new Date().getUTCFullYear();
   return year >= currentYear - 25 && year <= currentYear + 1;
@@ -1658,10 +2641,25 @@ function isPlausibleBusinessYear(year: number): boolean {
 function buildMonthCoverageSqlFromBase(
   baseSql: string,
   dateColumn: string | null,
-  months: number
+  months: number,
+  anchorMonthKey: string | null = null
 ): string | null {
   if (!dateColumn) {
     return null;
+  }
+
+  const window = resolveMonthCoverageWindow(months, anchorMonthKey);
+  if (window) {
+    return [
+      `WITH base AS (${stripTrailingLimit(baseSql)})`,
+      `SELECT TO_CHAR(date_trunc('month', ${quoteIdentifier(dateColumn)} AT TIME ZONE 'UTC'), 'YYYY-MM-DD') AS period_month,`,
+      "COUNT(*) AS row_count",
+      "FROM base",
+      `WHERE ${quoteIdentifier(dateColumn)} >= DATE '${window.from_date}'`,
+      `  AND ${quoteIdentifier(dateColumn)} < DATE '${window.to_exclusive_date}'`,
+      `GROUP BY TO_CHAR(date_trunc('month', ${quoteIdentifier(dateColumn)} AT TIME ZONE 'UTC'), 'YYYY-MM-DD')`,
+      "ORDER BY period_month ASC"
+    ].join(" ");
   }
 
   return [
@@ -1675,18 +2673,47 @@ function buildMonthCoverageSqlFromBase(
   ].join(" ");
 }
 
+function resolveMonthCoverageWindow(
+  months: number,
+  anchorMonthKey: string | null
+): { from_date: string; to_exclusive_date: string } | null {
+  if (!anchorMonthKey || months <= 0) {
+    return null;
+  }
+  const parsed = parseMonthKey(anchorMonthKey);
+  if (!parsed) {
+    return null;
+  }
+
+  const anchorStart = new Date(Date.UTC(parsed.year, parsed.month - 1, 1));
+  const from = new Date(Date.UTC(parsed.year, parsed.month - months, 1));
+  const toExclusive = new Date(Date.UTC(anchorStart.getUTCFullYear(), anchorStart.getUTCMonth() + 1, 1));
+  return {
+    from_date: from.toISOString().slice(0, 10),
+    to_exclusive_date: toExclusive.toISOString().slice(0, 10)
+  };
+}
+
 function buildPreparedDataValidation(
   rows: Record<string, unknown>[],
   question: string,
   comparisonMonths: number | null,
-  hintedDateColumns: string[] = []
+  hintedDateColumns: string[] = [],
+  requestedAnchorMonth: string | null = null
 ): NonNullable<PreparedQuestionPayload["validation"]> {
   const coverage = detectMonthCoverage(rows, hintedDateColumns);
   const observedMonths = coverage.month_keys.filter((monthKey) => isMonthKey(monthKey));
   const observedSet = new Set(observedMonths);
-  const expectedMonths = comparisonMonths ? comparisonMonths * 2 : null;
+  const skipStrictTimelineCoverage =
+    comparisonMonths !== null && isComparisonAggregateRowset(rows, question);
+  const expectedMonths =
+    comparisonMonths && !skipStrictTimelineCoverage ? comparisonMonths * 2 : null;
   const expectedAnchor =
-    observedMonths.length > 0 ? observedMonths[observedMonths.length - 1] : currentMonthKey();
+    requestedAnchorMonth && isMonthKey(requestedAnchorMonth)
+      ? requestedAnchorMonth
+      : observedMonths.length > 0
+        ? observedMonths[observedMonths.length - 1]
+        : currentMonthKey();
   const expectedMonthKeys =
     expectedMonths !== null
       ? buildExpectedMonthKeys(expectedAnchor, expectedMonths).filter((monthKey) => isMonthKey(monthKey))
@@ -1836,9 +2863,25 @@ function hardenBatchAnalysisOutput(
   analysis: BatchAnalysis,
   questionLabel: string
 ): HardenedBatchAnalysisOutput {
-  const cleanedHighlights = normalizeAnalysisLines(analysis.highlights, 6);
-  const cleanedRisks = normalizeAnalysisLines(analysis.risks, 6);
-  const cleanedRecommendations = normalizeAnalysisLines(analysis.recommendations, 6);
+  const payloadTopInsights = buildPayloadTopValueInsights(payload);
+  const cleanedHighlights = filterAnalysisLinesToScope(
+    normalizeAnalysisLines(analysis.highlights, 6),
+    payload,
+    questionLabel,
+    6
+  );
+  const cleanedRisks = filterAnalysisLinesToScope(
+    normalizeAnalysisLines(analysis.risks, 6),
+    payload,
+    questionLabel,
+    6
+  );
+  const cleanedRecommendations = filterAnalysisLinesToScope(
+    normalizeAnalysisLines(analysis.recommendations, 6),
+    payload,
+    questionLabel,
+    6
+  );
 
   const grounding = computeAnalysisGroundingScore(payload, [
     ...cleanedHighlights,
@@ -1862,7 +2905,7 @@ function hardenBatchAnalysisOutput(
     return {
       entry: {
         question: questionLabel,
-        highlights: fallbackHighlights,
+        highlights: mergePreferredHighlights(fallbackHighlights, payloadTopInsights, 6),
         risks: fallbackRisks,
         recommendations: fallbackRecommendations,
         data_summary: dataSummary
@@ -1874,7 +2917,7 @@ function hardenBatchAnalysisOutput(
   return {
     entry: {
       question: questionLabel,
-      highlights: cleanedHighlights,
+      highlights: mergePreferredHighlights(cleanedHighlights, payloadTopInsights, 6),
       risks: cleanedRisks.length > 0 ? cleanedRisks : buildFallbackRisks(payload),
       recommendations:
         cleanedRecommendations.length > 0 ? cleanedRecommendations : buildFallbackRecommendations(payload),
@@ -1884,15 +2927,75 @@ function hardenBatchAnalysisOutput(
   };
 }
 
+function mergePreferredHighlights(primary: string[], payloadInsights: string[], maxItems: number): string[] {
+  return normalizeAnalysisLines([...payloadInsights, ...primary], maxItems);
+}
+
+function filterAnalysisLinesToScope(
+  lines: string[],
+  payload: PreparedQuestionPayload,
+  questionLabel: string,
+  maxItems: number
+): string[] {
+  if (lines.length === 0) {
+    return [];
+  }
+
+  const scopeTokens = new Set<string>([
+    ...tokenize(questionLabel),
+    ...tokenize(payload.question),
+    ...tokenize(payload.purpose)
+  ]);
+  const evidenceTokens = buildEvidenceTokenSet(payload);
+
+  const filtered: string[] = [];
+  for (const line of lines) {
+    const tokens = tokenize(line);
+    let scopeHits = 0;
+    let evidenceHits = 0;
+    for (const token of tokens) {
+      if (scopeTokens.has(token)) {
+        scopeHits += 1;
+      }
+      if (evidenceTokens.has(token)) {
+        evidenceHits += 1;
+      }
+    }
+    const hasNumericClaim = extractComparableNumbers(line).length > 0;
+
+    if (scopeHits >= 1 || evidenceHits >= 2 || (hasNumericClaim && evidenceHits >= 1)) {
+      filtered.push(line);
+    }
+  }
+
+  if (filtered.length === 0) {
+    return normalizeAnalysisLines(lines, Math.min(2, maxItems));
+  }
+
+  return normalizeAnalysisLines(filtered, maxItems);
+}
+
 function normalizeAnalysisLines(lines: string[] | undefined, maxItems: number): string[] {
   if (!lines || lines.length === 0) {
     return [];
   }
 
   const deduped = new Set<string>();
+  const blockedPatterns = [
+    /pending full export/i,
+    /to be confirmed upon full/i,
+    /not yet exported/i,
+    /will be confirmed/i
+  ];
   for (const raw of lines) {
-    const normalized = raw.replace(/\s+/g, " ").trim();
+    const normalized = sanitizeCustomerFacingText(raw.replace(/\s+/g, " ").trim());
     if (normalized.length === 0) {
+      continue;
+    }
+    if (containsInternalReportTerm(normalized)) {
+      continue;
+    }
+    if (blockedPatterns.some((pattern) => pattern.test(normalized))) {
       continue;
     }
     deduped.add(normalized);
@@ -1902,6 +3005,25 @@ function normalizeAnalysisLines(lines: string[] | undefined, maxItems: number): 
   }
 
   return Array.from(deduped);
+}
+
+function containsInternalReportTerm(value: string): boolean {
+  return INTERNAL_REPORT_TERM_PATTERNS.some((pattern) => pattern.test(value));
+}
+
+function sanitizeCustomerFacingText(value: string): string {
+  return value
+    .replace(/\butc\s*offset\b[:\s-]*/gi, "")
+    .replace(/\bmislabels?\b/gi, "label mismatch")
+    .replace(/\bautofixes?\b/gi, "auto-corrections")
+    .replace(/\s{2,}/g, " ")
+    .trim();
+}
+
+function sanitizeCustomerFacingLines(lines: string[]): string[] {
+  return lines
+    .map((line) => sanitizeCustomerFacingText(line))
+    .filter((line) => line.length > 0 && !containsInternalReportTerm(line));
 }
 
 function computeAnalysisGroundingScore(
@@ -2071,12 +3193,22 @@ function buildFallbackHighlights(payload: PreparedQuestionPayload, questionLabel
     highlights.push(prepNote);
   }
 
+  const topValueInsights = buildPayloadTopValueInsights(payload).slice(0, 2);
+  for (const insight of topValueInsights) {
+    highlights.push(insight);
+  }
+
   return normalizeAnalysisLines(highlights, 4);
 }
 
 function buildFallbackRisks(payload: PreparedQuestionPayload): string[] {
   if (payload.warnings.length > 0) {
-    return normalizeAnalysisLines(payload.warnings, 4);
+    const sanitizedWarnings = payload.warnings
+      .map((warning) => sanitizeCustomerFacingText(warning))
+      .filter((warning) => warning.length > 0 && !containsInternalReportTerm(warning));
+    if (sanitizedWarnings.length > 0) {
+      return normalizeAnalysisLines(sanitizedWarnings, 4);
+    }
   }
 
   if (payload.validation?.missing_months.length) {
@@ -2417,8 +3549,11 @@ async function composeReportHtmlWithFallback(input: {
   for (let attempt = 1; attempt <= 3; attempt += 1) {
     try {
       const html = await input.report_composer.composeReport(input.compose_input);
-      if (looksLikeHtmlDocument(html)) {
+      if (looksLikeHtmlDocument(html) && !hasUnresolvedReportPlaceholders(html)) {
         return html;
+      }
+      if (looksLikeHtmlDocument(html)) {
+        throw new Error("Report composer returned unresolved placeholder output.");
       }
       throw new Error("Report composer returned non-HTML output.");
     } catch (error) {
@@ -2438,6 +3573,19 @@ function looksLikeHtmlDocument(value: string): boolean {
   return normalized.startsWith("<!doctype html") || normalized.startsWith("<html") || normalized.includes("<body");
 }
 
+function hasUnresolvedReportPlaceholders(html: string): boolean {
+  const normalized = html.toLowerCase();
+  const unresolvedPatterns = [
+    /pending full export/i,
+    /not yet exported/i,
+    /to be confirmed upon full/i,
+    /will be confirmed upon/i,
+    /pending\s+export/i,
+    /pending full result/i
+  ];
+  return unresolvedPatterns.some((pattern) => pattern.test(normalized));
+}
+
 async function delay(ms: number): Promise<void> {
   await new Promise((resolve) => setTimeout(resolve, ms));
 }
@@ -2455,13 +3603,15 @@ function injectMetricDefinitionsIntoHtml(
   const items = definitions
     .slice(0, 8)
     .map((definition) => {
+      const cleanDefinition = sanitizeMetricDefinitionNarrative(definition.definition);
+      const cleanFilterDescription = sanitizeMetricDefinitionNarrative(definition.filter_description);
       const sqlFilter = buildMetricSqlFilter(definition);
-      const filterLine = definition.filter_description.length > 0
-        ? ` (${definition.filter_description}${sqlFilter.length > 0 ? ` — ${sqlFilter}` : ""})`
+      const filterLine = cleanFilterDescription.length > 0
+        ? ` (${cleanFilterDescription}${sqlFilter.length > 0 ? ` - ${sqlFilter}` : ""})`
         : sqlFilter.length > 0
           ? ` (filter: ${sqlFilter})`
           : "";
-      return `<li><strong>${escapeHtml(definition.display_name)}</strong>: ${escapeHtml(definition.definition)}${escapeHtml(filterLine)}</li>`;
+      return `<li><strong>${escapeHtml(definition.display_name)}</strong>: ${escapeHtml(cleanDefinition)}${escapeHtml(filterLine)}</li>`;
     })
     .join("");
 
@@ -2484,6 +3634,14 @@ function injectMetricDefinitionsIntoHtml(
     return html.replace(/<\/body>/i, `${section}</body>`);
   }
   return `${html}\n${section}`;
+}
+
+function sanitizeMetricDefinitionNarrative(value: string): string {
+  return value
+    .replace(/\b(incomplete|partial)\s+(data|coverage|months?|periods?)\b/gi, "data")
+    .replace(/\bmissing\s+(data|coverage|months?|periods?)\b/gi, "data")
+    .replace(/\s{2,}/g, " ")
+    .trim();
 }
 
 function escapeHtml(value: string): string {
@@ -2685,7 +3843,150 @@ function buildPayloadDataSummary(payload: PreparedQuestionPayload): string {
     }
   }
 
+  const topValueInsights = buildPayloadTopValueInsights(payload);
+  if (topValueInsights.length > 0) {
+    lines.push(topValueInsights.slice(0, 2).join(" "));
+  }
+
   return lines.filter((line) => line.trim().length > 0).join(" ");
+}
+
+function buildPayloadTopValueInsights(payload: PreparedQuestionPayload): string[] {
+  const rows = payload.prepared_rows.slice(0, 500);
+  if (rows.length === 0) {
+    return [];
+  }
+
+  const sample = rows[0] ?? {};
+  const columns = Object.keys(sample).filter((column) => !column.startsWith("_"));
+  const numericColumns = columns.filter((column) => columnLooksNumeric(rows, column));
+  const dimensionCandidates = columns.filter((column) => {
+    if (numericColumns.includes(column)) {
+      return false;
+    }
+    if (isDateLikeColumnName(column)) {
+      return false;
+    }
+    return rows.some((row) => typeof row[column] === "string" && String(row[column]).trim().length > 0);
+  });
+
+  if (dimensionCandidates.length === 0 || numericColumns.length === 0) {
+    return [];
+  }
+
+  const preferredDimension = pickPreferredDimensionColumn(dimensionCandidates, payload.question);
+  const preferredMetric = pickPreferredMetricColumn(numericColumns, payload.question, payload.validation?.metric_column ?? null);
+  if (!preferredDimension || !preferredMetric) {
+    return [];
+  }
+
+  const aggregated = new Map<string, number>();
+  for (const row of rows) {
+    const dimensionRaw = row[preferredDimension];
+    const dimensionValue = typeof dimensionRaw === "string" ? dimensionRaw.trim() : String(dimensionRaw ?? "").trim();
+    if (dimensionValue.length === 0) {
+      continue;
+    }
+    const numeric = toFiniteNumber(row[preferredMetric]);
+    if (numeric === null) {
+      continue;
+    }
+    aggregated.set(dimensionValue, (aggregated.get(dimensionValue) ?? 0) + numeric);
+  }
+
+  const ranked = Array.from(aggregated.entries())
+    .sort((left, right) => right[1] - left[1])
+    .slice(0, 3);
+  if (ranked.length === 0) {
+    return [];
+  }
+
+  const formatted = ranked.map(([name, value]) => `${name} (${formatInsightNumber(value)})`).join(", ");
+  return [`Top ${preferredDimension} by ${preferredMetric}: ${formatted}.`];
+}
+
+function pickPreferredDimensionColumn(columns: string[], question: string): string | null {
+  const lowerQuestion = question.toLowerCase();
+  const priorityTokens = [
+    "city",
+    "region",
+    "state",
+    "country",
+    "product",
+    "category",
+    "issue",
+    "reason",
+    "channel",
+    "segment"
+  ];
+
+  for (const token of priorityTokens) {
+    if (!lowerQuestion.includes(token)) {
+      continue;
+    }
+    const matched = columns.find((column) => column.toLowerCase().includes(token));
+    if (matched) {
+      return matched;
+    }
+  }
+
+  return columns[0] ?? null;
+}
+
+function pickPreferredMetricColumn(
+  numericColumns: string[],
+  question: string,
+  validationMetricColumn: string | null
+): string | null {
+  if (validationMetricColumn && numericColumns.includes(validationMetricColumn)) {
+    return validationMetricColumn;
+  }
+
+  const lowerQuestion = question.toLowerCase();
+  const priorityTokens = [
+    "refund_rate",
+    "refund",
+    "amount",
+    "value",
+    "revenue",
+    "sales",
+    "count",
+    "orders",
+    "tickets"
+  ];
+  for (const token of priorityTokens) {
+    if (!lowerQuestion.includes(token.replace("_", " "))) {
+      continue;
+    }
+    const matched = numericColumns.find((column) => column.toLowerCase().includes(token));
+    if (matched) {
+      return matched;
+    }
+  }
+
+  return numericColumns[0] ?? null;
+}
+
+function formatInsightNumber(value: number): string {
+  if (!Number.isFinite(value)) {
+    return String(value);
+  }
+  if (Math.abs(value) >= 1000) {
+    return value.toLocaleString("en-US", { maximumFractionDigits: 2 });
+  }
+  return value.toLocaleString("en-US", { maximumFractionDigits: 4 });
+}
+
+function extractBusinessContextFromCatalogSummary(catalogSummary: string): string {
+  if (!catalogSummary || catalogSummary.trim().length === 0) {
+    return "";
+  }
+
+  const match = catalogSummary.match(/BUSINESS_CONTEXT:\s*(.+)/i);
+  if (!match || !match[1]) {
+    return "";
+  }
+  return match[1].trim();
 }
 
 function describeCoverageGap(payload: PreparedQuestionPayload): {
@@ -2694,6 +3995,10 @@ function describeCoverageGap(payload: PreparedQuestionPayload): {
 } | null {
   const validation = payload.validation;
   if (!validation || validation.expected_months === null) {
+    return null;
+  }
+
+  if (isComparisonAggregateRowset(payload.prepared_rows, payload.question, payload.purpose)) {
     return null;
   }
 
@@ -2726,6 +4031,170 @@ function buildConciseSummary(
   }
 
   return [`${contractName} summary`, ...points].join("\n");
+}
+
+type SuperSummaryRunResult = {
+  summary: string;
+  issue_detected: boolean;
+  intervention_actions: string[];
+  context_queries: string[];
+  context_query_results: Array<{
+    sql: string;
+    row_count: number;
+    sample_rows: Array<Record<string, unknown>>;
+    error?: string;
+  }>;
+  notes: string[];
+};
+
+async function buildSuperSummaryForReport(input: {
+  super_summary_client?: SuperSummaryClient;
+  contract: ReportContract;
+  tenant_id: string;
+  store: MetadataStore;
+  data_plane: DataPlane;
+  query_strategist: QueryStrategistClient;
+  sql_dialect: SqlDialect;
+  title: string;
+  audience: string;
+  insight_mode: "business" | "data";
+  analyses: ReportComposerInput["analyses"];
+  per_question_summaries: PerQuestionAnalysisSummary[];
+  query_details: DataPreparationResult["query_details"];
+  prepared_payloads: PreparedQuestionPayload[];
+  catalog_summary: string;
+  allow_context_queries?: boolean;
+}): Promise<SuperSummaryRunResult | null> {
+  if (!input.super_summary_client) {
+    return null;
+  }
+
+  try {
+    const baseInput = {
+      title: input.title,
+      audience: input.audience,
+      insight_mode: input.insight_mode,
+      analyses: input.analyses,
+      per_question_summaries: input.per_question_summaries,
+      query_details: input.query_details.map((detail) => ({
+        question_number: detail.question_number,
+        question: detail.question,
+        sql: detail.sql,
+        row_count: detail.row_count
+      })),
+      prepared_payloads: input.prepared_payloads.map((payload) => ({
+        question_number: payload.question_number,
+        question: payload.question,
+        prepared_row_count: payload.prepared_row_count,
+        warnings: payload.warnings,
+        validation_note: buildPayloadDataSummary(payload)
+      })),
+      catalog_summary: input.catalog_summary
+    };
+
+    const firstPass = await input.super_summary_client.summarize({
+      ...baseInput,
+      allow_query_planning: input.allow_context_queries ?? true
+    });
+
+    if (!(input.allow_context_queries ?? true)) {
+      return {
+        summary: firstPass.summary,
+        issue_detected: firstPass.issue_detected,
+        intervention_actions: firstPass.intervention_actions,
+        context_queries: [],
+        context_query_results: [],
+        notes: firstPass.notes
+      };
+    }
+
+    if (!firstPass.issue_detected) {
+      return {
+        summary: firstPass.summary,
+        issue_detected: false,
+        intervention_actions: [],
+        context_queries: [],
+        context_query_results: [],
+        notes: firstPass.notes
+      };
+    }
+
+    const contextQueries = (firstPass.context_queries ?? []).slice(0, 2);
+    if (contextQueries.length === 0) {
+      return {
+        summary: firstPass.summary,
+        issue_detected: firstPass.issue_detected,
+        intervention_actions: firstPass.intervention_actions,
+        context_queries: [],
+        context_query_results: [],
+        notes: firstPass.notes
+      };
+    }
+
+    const contextQueryResults: SuperSummaryRunResult["context_query_results"] = [];
+    for (const [index, rawQuery] of contextQueries.entries()) {
+      try {
+        const compiled = await compileSqlForDialect({
+          query_strategist: input.query_strategist,
+          sql: rawQuery,
+          dialect: input.sql_dialect,
+          question: `Super summary context query ${index + 1}`,
+          contract: input.contract,
+          catalog_summary: input.catalog_summary
+        });
+        const safeSql = sanitizeLlmSql(compiled.sql, 50);
+        const execution = await executeQueryWithPolicy({
+          tenant_id: input.tenant_id,
+          contract: input.contract,
+          store: input.store,
+          data_plane: input.data_plane,
+          question: `super_summary_context_q${index + 1}`,
+          sql: safeSql,
+          row_cap: 50
+        });
+
+        contextQueryResults.push({
+          sql: safeSql,
+          row_count: execution.rows.length,
+          sample_rows: execution.rows.slice(0, 5),
+          ...(execution.error ? { error: execution.error } : {})
+        });
+      } catch (error) {
+        contextQueryResults.push({
+          sql: rawQuery,
+          row_count: 0,
+          sample_rows: [],
+          error: error instanceof Error ? error.message : "Context query failed"
+        });
+      }
+    }
+
+    const finalPass = await input.super_summary_client.summarize({
+      ...baseInput,
+      allow_query_planning: false,
+      context_query_results: contextQueryResults
+    });
+
+    return {
+      summary: finalPass.summary,
+      issue_detected: finalPass.issue_detected,
+      intervention_actions: finalPass.intervention_actions,
+      context_queries: contextQueries,
+      context_query_results: contextQueryResults,
+      notes: finalPass.notes
+    };
+  } catch (error) {
+    const message = error instanceof Error ? error.message : "Super summary failed";
+    await input.store.appendAuditLog(
+      "super_summary_failed",
+      {
+        contract_id: input.contract.id,
+        error: message
+      },
+      { tenant_id: input.tenant_id }
+    );
+    return null;
+  }
 }
 
 function pickEmoji(text: string): string {
@@ -2841,7 +4310,8 @@ async function runAnalystWithBatching(input: {
       risks: [],
       recommendations: [],
       confidence_score: 0,
-      appendix_refs: []
+      appendix_refs: [],
+      additional_query_requests: []
     };
   }
 
@@ -2895,6 +4365,208 @@ async function runAnalystWithBatching(input: {
   return mergeBatchAnalyses(results, `${contract_id}_${payload.question_id}`);
 }
 
+async function runAnalystWithOptionalAdditionalQueries(input: {
+  analyst_client: AnalystClient;
+  query_strategist: QueryStrategistClient;
+  data_plane: DataPlane;
+  store: MetadataStore;
+  tenant_id: string;
+  contract: ReportContract;
+  payload: PreparedQuestionPayload;
+  question_label: string;
+  insight_mode: "business" | "data";
+  contract_id: string;
+  data_context: string;
+  sql_dialect: SqlDialect;
+  catalog_summary: string;
+}): Promise<{
+  analysis: BatchAnalysis;
+  payload: PreparedQuestionPayload;
+  query_details: DataPreparationResult["query_details"];
+}> {
+  let analysis = await runAnalystWithBatching({
+    analyst_client: input.analyst_client,
+    payload: input.payload,
+    question_label: input.question_label,
+    insight_mode: input.insight_mode,
+    contract_id: input.contract_id,
+    data_context: input.data_context
+  });
+  let workingPayload = input.payload;
+  const emittedQueryDetails: DataPreparationResult["query_details"] = [];
+  const catalogModel = parseCatalogSummary(input.catalog_summary);
+
+  for (let round = 0; round < ANALYST_ADDITIONAL_QUERY_MAX_ROUNDS; round += 1) {
+    const requests = (analysis.additional_query_requests ?? [])
+      .filter((request) => request.reason.trim().length > 0 && request.question.trim().length > 0)
+      .slice(0, ANALYST_ADDITIONAL_QUERY_MAX_QUERIES);
+
+    if (requests.length === 0) {
+      break;
+    }
+
+    await input.store.appendAuditLog(
+      "analyst_additional_query_requested",
+      {
+        contract_id: input.contract.id,
+        question_id: workingPayload.question_id,
+        question_number: workingPayload.question_number,
+        requests
+      },
+      { tenant_id: input.tenant_id }
+    );
+
+    const strategyInput: QueryStrategyInput = {
+      catalog_summary: input.catalog_summary || "No catalog available.",
+      report_goal: [
+        `Scoped question: ${workingPayload.question}`,
+        `Purpose: ${workingPayload.purpose}`,
+        "Batch analyst requested additional evidence for missing data.",
+        ...requests.map((request, index) => [
+          `Request ${index + 1}: ${request.reason}`,
+          `Question: ${request.question}`,
+          request.required_fields.length > 0
+            ? `Required fields: ${request.required_fields.join(", ")}`
+            : "Required fields: not specified"
+        ].join("\n")),
+        `Timeline and filters must stay aligned with the scoped question for Q${workingPayload.question_number}.`,
+        `Return at most ${ANALYST_ADDITIONAL_QUERY_MAX_QUERIES} SELECT queries.`
+      ].join("\n\n"),
+      audience: input.contract.audience,
+      insight_mode: input.insight_mode,
+      metric_ids: input.contract.metric_ids,
+      dimension_ids: input.contract.dimension_ids,
+      allowed_relations: input.contract.guardrails.allowed_relations,
+      planner_context: `Additional evidence planning for ${workingPayload.question_id}`,
+      sql_dialect: input.sql_dialect
+    };
+
+    let followUpPlan: QueryStrategyOutput;
+    try {
+      followUpPlan = await input.query_strategist.planQueries(strategyInput);
+    } catch (error) {
+      await input.store.appendAuditLog(
+        "analyst_additional_query_plan_failed",
+        {
+          contract_id: input.contract.id,
+          question_id: workingPayload.question_id,
+          error: error instanceof Error ? error.message : "Unknown planning error"
+        },
+        { tenant_id: input.tenant_id }
+      );
+      break;
+    }
+
+    const followUpQueries = followUpPlan.queries
+      .slice(0, ANALYST_ADDITIONAL_QUERY_MAX_QUERIES)
+      .filter((query) => query.sql.trim().length > 0);
+
+    if (followUpQueries.length === 0) {
+      break;
+    }
+
+    const additionalRows: Record<string, unknown>[] = [];
+    const additionalWarnings: string[] = [];
+    const additionalNotes: string[] = [];
+    const additionalSqls: string[] = [];
+    let additionalRawRowCount = 0;
+
+    for (const [queryIndex, query] of followUpQueries.entries()) {
+      const result = await runPreparedQueryWithHardening({
+        tenant_id: input.tenant_id,
+        contract: input.contract,
+        data_plane: input.data_plane,
+        store: input.store,
+        question: `${workingPayload.question} (analyst follow-up ${queryIndex + 1})`,
+        source_sql: query.sql,
+        row_cap: PREPARATION_LOCAL_CAP,
+        catalog_model: catalogModel,
+        query_strategist: input.query_strategist,
+        sql_dialect: input.sql_dialect,
+        catalog_summary: input.catalog_summary
+      });
+
+      additionalSqls.push(result.sql);
+      additionalRawRowCount += result.rows.length;
+      additionalNotes.push(
+        `Analyst follow-up query ${queryIndex + 1}/${followUpQueries.length} returned ${result.rows.length} row(s).`
+      );
+      additionalWarnings.push(...result.warnings);
+
+      if (result.error) {
+        additionalWarnings.push(`Analyst follow-up query ${queryIndex + 1} failed: ${result.error}`);
+        continue;
+      }
+
+      for (const row of result.rows) {
+        additionalRows.push({
+          ...row,
+          _sub_query: `Analyst follow-up: ${query.purpose || query.question}`
+        });
+      }
+
+      emittedQueryDetails.push({
+        question_id: workingPayload.question_id,
+        question_number: workingPayload.question_number,
+        question: workingPayload.question,
+        sql: result.sql,
+        row_count: result.rows.length,
+        group_id: workingPayload.group_id
+      });
+    }
+
+    if (additionalRows.length === 0) {
+      break;
+    }
+
+    let mergedRows = dedupePreparedRows([...workingPayload.prepared_rows, ...additionalRows]);
+    if (mergedRows.length > PREPARATION_LOCAL_CAP) {
+      const reduced = reduceRowsDeterministic(mergedRows, PREPARATION_LOCAL_CAP);
+      mergedRows = reduced.rows;
+      additionalNotes.push(...reduced.notes);
+    }
+
+    const comparisonMonths = extractExplicitMonthComparison(workingPayload.question);
+    const requestedAnchorMonth = extractLatestMentionedMonthKey(workingPayload.question);
+    const validation = buildPreparedDataValidation(
+      mergedRows,
+      workingPayload.question,
+      comparisonMonths,
+      [],
+      requestedAnchorMonth
+    );
+
+    workingPayload = PreparedQuestionPayloadSchema.parse({
+      ...workingPayload,
+      preparation_sqls: [...workingPayload.preparation_sqls, ...additionalSqls],
+      row_count_before_reduction: workingPayload.row_count_before_reduction + additionalRawRowCount,
+      prepared_row_count: mergedRows.length,
+      prepared_rows: mergedRows,
+      validation,
+      preparation_notes: [...workingPayload.preparation_notes, ...additionalNotes],
+      warnings: [...workingPayload.warnings, ...additionalWarnings]
+    });
+
+    analysis = await runAnalystWithBatching({
+      analyst_client: input.analyst_client,
+      payload: workingPayload,
+      question_label: input.question_label,
+      insight_mode: input.insight_mode,
+      contract_id: input.contract_id,
+      data_context: `${input.data_context}\n\nAnalyst follow-up evidence: ${additionalRows.length} supplemental row(s) added.`
+    });
+  }
+
+  return {
+    analysis: {
+      ...analysis,
+      additional_query_requests: []
+    },
+    payload: workingPayload,
+    query_details: emittedQueryDetails
+  };
+}
+
 function mergeBatchAnalyses(
   results: import("@project-overload/shared").BatchAnalysis[],
   requestId: string
@@ -2908,7 +4580,8 @@ function mergeBatchAnalyses(
       risks: [],
       recommendations: [],
       confidence_score: 0,
-      appendix_refs: []
+      appendix_refs: [],
+      additional_query_requests: []
     };
   }
 
@@ -2929,12 +4602,46 @@ function mergeBatchAnalyses(
     risks,
     recommendations,
     confidence_score: Number(avgConfidence.toFixed(2)),
-    appendix_refs: Array.from(new Set(results.flatMap((r) => r.appendix_refs)))
+    appendix_refs: Array.from(new Set(results.flatMap((r) => r.appendix_refs))),
+    additional_query_requests: []
   };
 }
 
-function buildAnalystDataContext(payload: PreparedQuestionPayload): string {
+function buildAnalystDataContext(
+  payload: PreparedQuestionPayload,
+  options?: {
+    business_context?: string;
+    contract_name?: string;
+    audience?: string;
+    insight_mode?: "business" | "data";
+  }
+): string {
   const parts: string[] = [];
+
+  if (options?.business_context && options.business_context.trim().length > 0) {
+    parts.push("BUSINESS CONTEXT:");
+    parts.push(options.business_context.trim());
+    parts.push("");
+  }
+
+  if (options?.contract_name || options?.audience || options?.insight_mode) {
+    const header = [
+      options.contract_name ? `Report: ${options.contract_name}` : "",
+      options.audience ? `Audience: ${options.audience}` : "",
+      options.insight_mode ? `Mode: ${options.insight_mode}` : ""
+    ]
+      .filter((value) => value.length > 0)
+      .join(" | ");
+    if (header.length > 0) {
+      parts.push(header);
+    }
+  }
+  parts.push(`Question number: Q${payload.question_number}`);
+  parts.push(`Scoped question: ${payload.question}`);
+  parts.push(`Question purpose: ${payload.purpose}`);
+  if (payload.preparation_sqls.length > 0) {
+    parts.push(`Preparation query count: ${payload.preparation_sqls.length}`);
+  }
 
   // When multiple sub-queries feed one question, describe the structure upfront
   const subQueryCount = payload.source_query_count ?? 1;
@@ -2950,11 +4657,6 @@ function buildAnalystDataContext(payload: PreparedQuestionPayload): string {
       }
     }
     parts.push("");
-  }
-
-  parts.push(`Rows fetched: ${payload.row_count_before_reduction}`);
-  if (payload.row_count_before_reduction !== payload.prepared_row_count) {
-    parts.push(`Rows after reduction: ${payload.prepared_row_count}`);
   }
 
   const validation = payload.validation;
@@ -2990,6 +4692,8 @@ function buildAnalystDataContext(payload: PreparedQuestionPayload): string {
 
   const keyNotes = payload.preparation_notes
     .filter((n) => /reduction|aggregation|coverage|repair/i.test(n))
+    .map((n) => sanitizeCustomerFacingText(n))
+    .filter((n) => n.length > 0 && !containsInternalReportTerm(n))
     .slice(0, 3);
   if (keyNotes.length > 0) {
     parts.push(`\nPreparation notes:`);
@@ -2999,9 +4703,15 @@ function buildAnalystDataContext(payload: PreparedQuestionPayload): string {
   }
 
   if (payload.warnings.length > 0) {
-    parts.push(`\nData warnings:`);
-    for (const w of payload.warnings.slice(0, 4)) {
-      parts.push(`  - ${w}`);
+    const sanitizedWarnings = payload.warnings
+      .map((warning) => sanitizeCustomerFacingText(warning))
+      .filter((warning) => warning.length > 0 && !containsInternalReportTerm(warning))
+      .slice(0, 4);
+    if (sanitizedWarnings.length > 0) {
+      parts.push(`\nData warnings:`);
+      for (const w of sanitizedWarnings) {
+        parts.push(`  - ${w}`);
+      }
     }
   }
 

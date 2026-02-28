@@ -1,4 +1,8 @@
 import type { ChatHistoryTurn, ChatState } from "./chat";
+import {
+  ConversationOrchestratorDecisionSchema,
+  type ConversationOrchestratorDecision
+} from "@project-overload/shared";
 
 export type ConversationProvider = "stub" | "openai" | "openrouter";
 
@@ -32,8 +36,16 @@ export type ConversationTitleResponse = {
 
 export type ConversationTurnInput = {
   user_message: string;
-  /** Structured context from action execution — serves as fallback response if LLM is unavailable. */
+  /** Structured context from action execution to keep responses grounded in actual run state. */
   action_context: string;
+  state: ChatState;
+  history: ChatHistoryTurn[];
+  catalog_summary?: string;
+  business_context?: string;
+};
+
+export type ConversationOrchestratorInput = {
+  user_message: string;
   state: ChatState;
   history: ChatHistoryTurn[];
   catalog_summary?: string;
@@ -42,8 +54,9 @@ export type ConversationTurnInput = {
 
 export interface ConversationClient {
   provider: ConversationProvider;
-  mode: "provider" | "deterministic";
+  mode: "provider";
   respond(input: ConversationTurnInput): Promise<ConversationResponse>;
+  orchestrateTurn?(input: ConversationOrchestratorInput): Promise<ConversationOrchestratorDecision>;
   nameConversation?(input: ConversationTitleInput): Promise<ConversationTitleResponse>;
 }
 
@@ -59,7 +72,6 @@ export type CreateConversationClientOptions = {
   openai_model?: string;
   openrouter_model?: string;
   timeout_ms?: number;
-  fallback_to_deterministic?: boolean;
   require_provider?: boolean;
   fetch_impl?: Fetcher;
 };
@@ -78,12 +90,37 @@ const DEFAULT_OPENROUTER_BASE_URL = "https://openrouter.ai/api/v1";
 export function createPassthroughConversationClient(): ConversationClient {
   return {
     provider: "stub",
-    mode: "deterministic",
+    mode: "provider",
     async respond(input: ConversationTurnInput): Promise<ConversationResponse> {
       return { message: input.action_context };
     },
     async nameConversation(input: ConversationTitleInput): Promise<ConversationTitleResponse> {
       return { title: buildDeterministicConversationTitle(input.first_user_messages) };
+    },
+    async orchestrateTurn(input: ConversationOrchestratorInput): Promise<ConversationOrchestratorDecision> {
+      const pendingInputs = extractPendingInputsFromState(input.state);
+      return ConversationOrchestratorDecisionSchema.parse({
+        intent_parts: [
+          {
+            type: "other",
+            text: input.user_message
+          }
+        ],
+        resolved_scope_answers: [],
+        new_scope_questions: [],
+        follow_up_requests: [],
+        pending_inputs: pendingInputs,
+        next_owner: pendingInputs.length > 0 ? "wait_for_user" : "conversation_orchestrator",
+        tool_calls: [],
+        state_updates: {
+          mark_scope_complete: false,
+          append_new_questions: false,
+          clear_pending_inputs: false,
+          summary: pendingInputs.length > 0
+            ? "Pending clarifications remain before planning."
+            : "Stub orchestrator passthrough."
+        }
+      });
     }
   };
 }
@@ -95,11 +132,7 @@ export function createConversationClientFromEnv(
   const requireProvider =
     typeof overrides.require_provider === "boolean"
       ? overrides.require_provider
-      : parseBoolean(process.env.WEB_CHAT_REQUIRE_PROVIDER ?? "false");
-  const fallbackToDeterministic =
-    typeof overrides.fallback_to_deterministic === "boolean"
-      ? overrides.fallback_to_deterministic
-      : parseBoolean(process.env.WEB_CHAT_FALLBACK_TO_DETERMINISTIC ?? "true");
+      : parseBoolean(process.env.WEB_CHAT_REQUIRE_PROVIDER ?? "true");
 
   const timeoutFromEnv = Number.parseInt(process.env.LLM_TIMEOUT_MS ?? "", 10);
 
@@ -113,7 +146,6 @@ export function createConversationClientFromEnv(
     openai_model: overrides.openai_model ?? process.env.OPENAI_MODEL,
     openrouter_model: overrides.openrouter_model ?? process.env.MODEL_GPT,
     timeout_ms: overrides.timeout_ms ?? (Number.isNaN(timeoutFromEnv) ? undefined : timeoutFromEnv),
-    fallback_to_deterministic: fallbackToDeterministic,
     require_provider: requireProvider,
     fetch_impl: overrides.fetch_impl
   };
@@ -122,50 +154,46 @@ export function createConversationClientFromEnv(
 }
 
 export function createConversationClient(options: CreateConversationClientOptions): ConversationClient {
-  const provider = options.provider ?? "stub";
+  const provider = options.provider ?? "openrouter";
   const timeoutMs = options.timeout_ms ?? DEFAULT_TIMEOUT_MS;
-  const fallback = options.fallback_to_deterministic ?? true;
   const requireProvider = options.require_provider ?? false;
   const fetcher = options.fetch_impl ?? fetch;
-  const passthrough = createPassthroughConversationClient();
 
   if (provider === "stub") {
-    return passthrough;
+    throw new Error("LLM provider 'stub' is disabled in runtime. Set LLM_PROVIDER=openrouter or openai.");
   }
 
   if (provider === "openai") {
     if (!options.openai_api_key) {
-      if (requireProvider) {
-        throw new Error("WEB_CHAT_REQUIRE_PROVIDER is true but OPENAI_API_KEY is missing.");
-      }
-      return passthrough;
+      throw new Error(
+        requireProvider
+          ? "WEB_CHAT_REQUIRE_PROVIDER is true but OPENAI_API_KEY is missing."
+          : "OPENAI_API_KEY is missing for provider=openai."
+      );
     }
 
-    const remote = createRemoteConversationClient({
+    return createRemoteConversationClient({
       provider,
       fetcher,
       timeout_ms: timeoutMs,
       request_factory: (input) => buildOpenAiRequest(input, options)
     });
-
-    return fallback ? withDeterministicFallback(remote, passthrough) : remote;
   }
 
   if (!options.openrouter_api_key) {
-    if (requireProvider) {
-      throw new Error("WEB_CHAT_REQUIRE_PROVIDER is true but OPENROUTER_API_KEY is missing.");
-    }
-    return passthrough;
+    throw new Error(
+      requireProvider
+        ? "WEB_CHAT_REQUIRE_PROVIDER is true but OPENROUTER_API_KEY is missing."
+        : "OPENROUTER_API_KEY is missing for provider=openrouter."
+    );
   }
 
-  const remote = createRemoteConversationClient({
+  return createRemoteConversationClient({
     provider: "openrouter",
     fetcher,
     timeout_ms: timeoutMs,
     request_factory: (input) => buildOpenRouterRequest(input, options)
   });
-
-  return fallback ? withDeterministicFallback(remote, passthrough) : remote;
 }
 
 type RemoteConversationClientOptions = {
@@ -249,33 +277,43 @@ function createRemoteConversationClient(
       }
 
       return { title: sanitizeConversationTitle(textPayload) };
-    }
-  };
-}
-
-function withDeterministicFallback(
-  remote: ConversationClient,
-  fallback: ConversationClient
-): ConversationClient {
-  return {
-    provider: remote.provider,
-    mode: remote.mode,
-    async respond(input: ConversationTurnInput): Promise<ConversationResponse> {
-      try {
-        return await remote.respond(input);
-      } catch {
-        return fallback.respond(input);
-      }
     },
-    async nameConversation(input: ConversationTitleInput): Promise<ConversationTitleResponse> {
-      if (!remote.nameConversation || !fallback.nameConversation) {
-        return { title: buildDeterministicConversationTitle(input.first_user_messages) };
+    async orchestrateTurn(input: ConversationOrchestratorInput): Promise<ConversationOrchestratorDecision> {
+      const orchestrationTurn: ConversationTurnInput = {
+        user_message: input.user_message,
+        action_context: "",
+        state: input.state,
+        history: input.history,
+        catalog_summary: input.catalog_summary,
+        business_context: input.business_context
+      };
+      const request = options.request_factory(orchestrationTurn);
+      request.payload = withOrchestratorPayload(request.payload, orchestrationTurn);
+
+      const response = await fetchWithTimeout(
+        options.fetcher,
+        request.endpoint,
+        {
+          method: "POST",
+          headers: request.headers,
+          body: JSON.stringify(request.payload)
+        },
+        options.timeout_ms
+      );
+
+      if (!response.ok) {
+        const text = await response.text();
+        throw new Error(`${options.provider} orchestrator request failed (${response.status}): ${text}`);
       }
-      try {
-        return await remote.nameConversation(input);
-      } catch {
-        return fallback.nameConversation(input);
+
+      const payload = (await response.json()) as unknown;
+      const textPayload = extractTextPayload(payload);
+      if (!textPayload) {
+        throw new Error("Unable to parse provider orchestrator response.");
       }
+
+      const parsed = parseJsonObjectFromText(textPayload);
+      return ConversationOrchestratorDecisionSchema.parse(parsed);
     }
   };
 }
@@ -498,6 +536,130 @@ function conversationalUserPrompt(input: ConversationTurnInput): string {
   ].join("\n");
 }
 
+function withOrchestratorPayload(
+  providerPayload: Record<string, unknown>,
+  input: ConversationTurnInput
+): Record<string, unknown> {
+  const system = orchestrationSystemPrompt(input);
+  const user = orchestrationUserPrompt(input);
+
+  if (Array.isArray(providerPayload.input)) {
+    return {
+      ...providerPayload,
+      input: [
+        {
+          role: "system",
+          content: [{ type: "text", text: system }]
+        },
+        {
+          role: "user",
+          content: [{ type: "text", text: user }]
+        }
+      ],
+      temperature: 0
+    };
+  }
+
+  if (Array.isArray(providerPayload.messages)) {
+    return {
+      ...providerPayload,
+      messages: [
+        { role: "system", content: system },
+        { role: "user", content: user }
+      ],
+      temperature: 0
+    };
+  }
+
+  return providerPayload;
+}
+
+function orchestrationSystemPrompt(input: ConversationTurnInput): string {
+  const nowUtcIso = new Date().toISOString();
+  return [
+    "You are the Conversation Orchestrator for Project Overload.",
+    `CURRENT UTC DATE/TIME: ${nowUtcIso}`,
+    `Report timezone: ${input.state.draft.timezone || "UTC"}`,
+    "Treat CURRENT UTC DATE/TIME as 'today' for relative windows unless the user explicitly anchors a date.",
+    "Decide the next owner/tool call for this turn and return STRICT JSON.",
+    "You must process mixed intent in one message: new questions + clarifications + follow-ups can coexist.",
+    "Never use context from other conversations.",
+    "Use only this chat's structured state and recent turns.",
+    "If a follow-up requires new data, emit it as a new scoped question (do not overwrite prior questions).",
+    "Prefer safe default assumptions first (timeline anchor, top-N, standard metric formula) and proceed.",
+    "Only ask pending_inputs when ambiguity would materially change the answer.",
+    "If pending scope items remain, keep next_owner=wait_for_user and include pending_inputs.",
+    "",
+    "Output schema:",
+    '{"intent_parts":[{"type":"new_question|clarification_answer|follow_up_request|duplicate|chitchat|other","text":"...","question_ref":"Q1?"}],"resolved_scope_answers":[{"question_number":1,"answer":"..."}],"new_scope_questions":[{"question_text":"...","clarification":"...","reason":"..."}],"follow_up_requests":[{"question_text":"...","requires_new_data":true,"grounded_in_existing_payload":false,"referenced_question_ids":["q1"]}],"pending_inputs":[{"input_key":"...","prompt":"...","reason":"...","question_number":1}],"next_owner":"conversation_orchestrator|query_planning_agent|data_prep_orchestrator|batch_analyst|super_summary|report_composer|qa|wait_for_user","tool_calls":[{"tool_name":"...","reason":"...","payload":{}}],"state_updates":{"mark_scope_complete":false,"append_new_questions":false,"clear_pending_inputs":false,"summary":"..."}}',
+    "",
+    `Current timezone: ${input.state.draft.timezone || "UTC"}`,
+    "Only ask pending_inputs when ambiguity is high-impact and cannot be safely handled with standard assumptions."
+  ].join("\n");
+}
+
+function orchestrationUserPrompt(input: ConversationTurnInput): string {
+  const recentHistory = serializeHistory(input.history);
+  const scopeQuestions = input.state.scope_questions
+    .map((entry) => ({
+      question_number: entry.question_number,
+      question: entry.question,
+      clarification: entry.clarification,
+      answer: entry.answer ?? null
+    }))
+    .slice(-20);
+  const metricDefinitions = input.state.metric_definitions.map((entry) => ({
+    metric_key: entry.metric_key,
+    display_name: entry.display_name,
+    definition: entry.definition,
+    confirmed: entry.confirmed
+  }));
+
+  return [
+    "USER_MESSAGE:",
+    input.user_message,
+    "",
+    "RECENT_CHAT_HISTORY:",
+    recentHistory.length > 0 ? recentHistory : "(empty)",
+    "",
+    "STRUCTURED_STATE:",
+    JSON.stringify(
+      {
+        draft: {
+          name: input.state.draft.name,
+          audience: input.state.draft.audience,
+          timezone: input.state.draft.timezone,
+          insight_mode: input.state.draft.insight_mode,
+          metric_ids: input.state.draft.metric_ids,
+          dimension_ids: input.state.draft.dimension_ids,
+          allowed_relations: input.state.draft.allowed_relations,
+          allowed_schemas: input.state.draft.allowed_schemas
+        },
+        scope_questions: scopeQuestions,
+        pending_flags: {
+          scope_clarification_pending: input.state.scope_clarification_pending,
+          prep_pending: input.state.prep_pending,
+          scope_pending: input.state.scope_pending
+        },
+        question_registry: input.state.question_registry ?? [],
+        pending_inputs: input.state.pending_inputs ?? [],
+        last_orchestrator_decision: input.state.last_orchestrator_decision ?? null
+      },
+      null,
+      2
+    ),
+    "",
+    "BUSINESS_CONTEXT:",
+    input.business_context && input.business_context.trim().length > 0 ? input.business_context : "(none)",
+    "",
+    "CATALOG_SUMMARY:",
+    input.catalog_summary && input.catalog_summary.trim().length > 0 ? input.catalog_summary : "(none)",
+    "",
+    "METRIC_DEFINITIONS:",
+    metricDefinitions.length > 0 ? JSON.stringify(metricDefinitions, null, 2) : "(none)"
+  ].join("\n");
+}
+
 function withTitleNamingPayload(
   providerPayload: Record<string, unknown>,
   firstUserMessages: string[]
@@ -606,11 +768,13 @@ function createTitleStateSkeleton() {
     prep_pending: false,
     prep_complete: false,
     scope_pending: false,
+    scope_finalized: false,
     metric_definitions: [],
     pending_metric_confirmations: [],
     pending_metric_resume_message: null,
     pending_metric_resume_mode: null,
     scope_clarification_pending: false,
+    scope_business_context: null,
     scope_source_prompt: null,
     scope_questions: [],
     pending_query_sql: null,
@@ -635,7 +799,12 @@ function createTitleStateSkeleton() {
     pending_schedule: null,
     last_concise_summary: null,
     pending_run_id: null,
-    last_token_usage: null
+    last_token_usage: null,
+    orchestrator_context_version: 1,
+    orchestrator_summary: null,
+    last_orchestrator_decision: null,
+    pending_inputs: [],
+    question_registry: []
   };
 }
 
@@ -671,7 +840,7 @@ export function buildDeterministicConversationTitle(firstUserMessages: string[])
 
 function parseProvider(rawProvider: string | ConversationProvider | undefined): ConversationProvider {
   if (!rawProvider) {
-    return "stub";
+    return "openrouter";
   }
 
   const normalized = String(rawProvider).toLowerCase();
@@ -682,7 +851,7 @@ function parseProvider(rawProvider: string | ConversationProvider | undefined): 
     return "openrouter";
   }
 
-  return "stub";
+  return "openrouter";
 }
 
 function parseBoolean(value: string): boolean {
@@ -766,7 +935,7 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 }
 
 function serializeHistory(history: ChatHistoryTurn[]): string {
-  const recent = history.slice(-8);
+  const recent = history.slice(-20);
   if (recent.length === 0) {
     return "";
   }
@@ -774,6 +943,37 @@ function serializeHistory(history: ChatHistoryTurn[]): string {
   return recent
     .map((turn) => `${turn.role}: ${turn.content}`)
     .join("\n");
+}
+
+function parseJsonObjectFromText(text: string): unknown {
+  const trimmed = text.trim();
+  if (trimmed.startsWith("{") && trimmed.endsWith("}")) {
+    return JSON.parse(trimmed);
+  }
+
+  const open = trimmed.indexOf("{");
+  const close = trimmed.lastIndexOf("}");
+  if (open === -1 || close === -1 || close <= open) {
+    throw new Error("No JSON object found in model output.");
+  }
+  return JSON.parse(trimmed.slice(open, close + 1));
+}
+
+function extractPendingInputsFromState(state: ChatState): Array<{
+  input_key: string;
+  prompt: string;
+  reason?: string;
+  question_number?: number;
+}> {
+  const pending = state.scope_questions
+    .filter((entry) => !entry.answer || entry.answer.trim().length === 0)
+    .map((entry) => ({
+      input_key: `q${entry.question_number}`,
+      prompt: entry.clarification || entry.question,
+      reason: "scope_clarification",
+      question_number: entry.question_number
+    }));
+  return pending.slice(0, 8);
 }
 
 const DRAFT_OPEN_FENCE = "<<<DRAFT_UPDATES>>>";

@@ -12,13 +12,19 @@ import {
   type SqlDialect
 } from "@project-overload/shared";
 import type { DataPlane } from "@project-overload/dataplane";
-import type { AnalystClient, PlannerClient, QueryStrategistClient, ReportComposerClient } from "@project-overload/llm-client";
+import type {
+  AnalystClient,
+  PlannerClient,
+  QueryStrategistClient,
+  ReportComposerClient,
+  SuperSummaryClient
+} from "@project-overload/llm-client";
 import { renderExecBriefHtml, renderPdfFromHtml } from "@project-overload/report-render";
 import type { MetadataStore } from "../store";
 import type { RuntimeConnectionManager } from "../dataplane/connection-manager";
 import { resolveRequestContext } from "../security/request-context";
 import {
-  answerRunPayloadQuestion,
+  answerRunPayloadQuestionWithOrchestrator,
   prepareReportContractData,
   runReportContractPipeline
 } from "../services/run-contract";
@@ -31,6 +37,7 @@ export function registerContractRoutes(
   analystClient: AnalystClient,
   queryStrategist: QueryStrategistClient,
   reportComposer: ReportComposerClient,
+  superSummaryClient: SuperSummaryClient,
   plannerClient: PlannerClient,
   connectionManager: RuntimeConnectionManager
 ): void {
@@ -264,6 +271,7 @@ export function registerContractRoutes(
           analyst_client: analystClient,
           query_strategist: queryStrategist,
           report_composer: reportComposer,
+          super_summary_client: superSummaryClient,
           planner_client: plannerClient,
           catalog_summary: catalogSummary,
           sql_dialect: sqlDialect
@@ -426,9 +434,11 @@ export function registerContractRoutes(
       return reply.code(404).send({ message: "Report run not found" });
     }
 
-    const answer = answerRunPayloadQuestion({
+    const answer = await answerRunPayloadQuestionWithOrchestrator({
       run,
-      question: parsed.data.question
+      question: parsed.data.question,
+      query_strategist: queryStrategist,
+      catalog_summary: buildCatalogSummary(connectionManager)
     });
     return reply.code(200).send(answer);
   });
@@ -738,6 +748,9 @@ function buildCatalogSummary(connectionManager: RuntimeConnectionManager, allowe
 
   const sections: string[] = [];
   sections.push(`BUSINESS_ID: ${catalog.business_id}`);
+  if (typeof catalog.business_context === "string" && catalog.business_context.trim().length > 0) {
+    sections.push(`BUSINESS_CONTEXT: ${catalog.business_context.trim()}`);
+  }
   sections.push("");
 
   for (const table of candidateTables.slice(0, 20)) {

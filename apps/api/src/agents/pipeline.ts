@@ -276,7 +276,8 @@ export function agentF_aggregate(input: {
     risks: analysis.anomalies,
     recommendations: analysis.drivers,
     confidence_score: analysis.confidence,
-    appendix_refs: analysis.evidence_refs
+    appendix_refs: analysis.evidence_refs,
+    additional_query_requests: []
   }));
 
   const legacyBrief = aggregateBatchAnalyses(legacyAnalyses);

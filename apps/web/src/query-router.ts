@@ -1,6 +1,6 @@
 import { z } from "zod";
 
-export type QueryRouterProvider = "stub" | "openai" | "openrouter";
+export type QueryRouterProvider = "openai" | "openrouter";
 
 export type QueryRoutingInput = {
   message: string;
@@ -137,7 +137,7 @@ export type MetricDefinitionOutput = {
 
 export interface QueryRouterClient {
   provider: QueryRouterProvider;
-  mode: "provider" | "deterministic";
+  mode: "provider";
   decide(input: QueryRoutingInput): Promise<QueryRoutingDecision>;
   compile_sql?(input: DialectCompileInput): Promise<DialectCompileOutput>;
   narrate_single_query?(input: SingleQueryNarrationInput): Promise<string>;
@@ -159,7 +159,7 @@ type CreateQueryRouterClientOptions = {
 };
 
 const DEFAULT_TIMEOUT_MS = 900_000;
-const DEFAULT_OPENROUTER_MODEL = "anthropic/claude-opus-4-6";
+const DEFAULT_OPENROUTER_MODEL = "openai/gpt-5.2";
 const DEFAULT_OPENROUTER_BASE_URL = "https://openrouter.ai/api/v1";
 
 const QueryRoutingDecisionSchema = z
@@ -228,15 +228,19 @@ const ScopeAnswerResolutionOutputSchema = z.object({
   unresolved_question_numbers: z.array(z.number().int().min(1)).max(12).default([])
 });
 
+function isTestRuntime(): boolean {
+  return process.env.NODE_ENV === "test" || process.env.VITEST === "true";
+}
+
 export function createNoopQueryRouterClient(): QueryRouterClient {
   return {
-    provider: "stub",
-    mode: "deterministic",
+    provider: "openrouter",
+    mode: "provider",
     async decide() {
       return {
         route: "none",
-        reason: "LLM query router disabled.",
-        confidence: 1
+        reason: "LLM query router unavailable in test runtime.",
+        confidence: 0
       };
     }
   };
@@ -278,11 +282,28 @@ export function createQueryRouterClientFromEnv(
 }
 
 export function createQueryRouterClient(options: CreateQueryRouterClientOptions): QueryRouterClient {
-  const provider = options.provider ?? "stub";
+  const provider = options.provider ?? "openrouter";
   const enabled = options.enabled ?? true;
 
-  if (!enabled || provider !== "openrouter" || !options.openrouter_api_key) {
-    return createNoopQueryRouterClient();
+  if (!enabled) {
+    if (isTestRuntime()) {
+      return createNoopQueryRouterClient();
+    }
+    throw new Error("WEB_CHAT_LLM_QUERY_ROUTER is false. Query router requires live LLM provider mode.");
+  }
+
+  if (provider !== "openrouter") {
+    if (isTestRuntime()) {
+      return createNoopQueryRouterClient();
+    }
+    throw new Error(`Unsupported query router provider: ${provider}. Use provider=openrouter.`);
+  }
+
+  if (!options.openrouter_api_key) {
+    if (isTestRuntime()) {
+      return createNoopQueryRouterClient();
+    }
+    throw new Error("OPENROUTER_API_KEY is required for query router provider mode.");
   }
 
   const fetcher = options.fetch_impl ?? fetch;
@@ -294,50 +315,42 @@ export function createQueryRouterClient(options: CreateQueryRouterClientOptions)
     provider: "openrouter",
     mode: "provider",
     async decide(input: QueryRoutingInput): Promise<QueryRoutingDecision> {
-      try {
-        const response = await fetchWithTimeout(
-          fetcher,
-          `${baseUrl}/chat/completions`,
-          {
-            method: "POST",
-            headers: {
-              "content-type": "application/json",
-              Authorization: `Bearer ${options.openrouter_api_key}`,
-              ...(options.openrouter_app_name ? { "X-Title": options.openrouter_app_name } : {}),
-              ...(options.openrouter_app_url ? { "HTTP-Referer": options.openrouter_app_url } : {})
-            },
-            body: JSON.stringify({
-              model,
-              temperature: 0,
-              messages: [
-                { role: "system", content: queryRouterSystemPrompt() },
-                { role: "user", content: queryRouterUserPrompt(input) }
-              ]
-            })
+      const response = await fetchWithTimeout(
+        fetcher,
+        `${baseUrl}/chat/completions`,
+        {
+          method: "POST",
+          headers: {
+            "content-type": "application/json",
+            Authorization: `Bearer ${options.openrouter_api_key}`,
+            ...(options.openrouter_app_name ? { "X-Title": options.openrouter_app_name } : {}),
+            ...(options.openrouter_app_url ? { "HTTP-Referer": options.openrouter_app_url } : {})
           },
-          timeoutMs
-        );
+          body: JSON.stringify({
+            model,
+            temperature: 0,
+            messages: [
+              { role: "system", content: queryRouterSystemPrompt() },
+              { role: "user", content: queryRouterUserPrompt(input) }
+            ]
+          })
+        },
+        timeoutMs
+      );
 
-        if (!response.ok) {
-          const body = await response.text();
-          throw new Error(`query router failed (${response.status}): ${body}`);
-        }
-
-        const payload = (await response.json()) as unknown;
-        const text = extractTextPayload(payload);
-        if (!text) {
-          throw new Error("unable to parse query router response text");
-        }
-
-        const parsed = parseJsonObjectFromText(text);
-        return QueryRoutingDecisionSchema.parse(parsed);
-      } catch {
-        return {
-          route: "none",
-          reason: "Router fallback: unable to produce a safe LLM routing decision.",
-          confidence: 0
-        };
+      if (!response.ok) {
+        const body = await response.text();
+        throw new Error(`query router failed (${response.status}): ${body}`);
       }
+
+      const payload = (await response.json()) as unknown;
+      const text = extractTextPayload(payload);
+      if (!text) {
+        throw new Error("unable to parse query router response text");
+      }
+
+      const parsed = parseJsonObjectFromText(text);
+      return QueryRoutingDecisionSchema.parse(parsed);
     },
     async compile_sql(input: DialectCompileInput): Promise<DialectCompileOutput> {
       const response = await fetchWithTimeout(
@@ -588,7 +601,7 @@ function queryRouterSystemPrompt(): string {
 
 function queryRouterUserPrompt(input: QueryRoutingInput): string {
   const history = input.conversation_history
-    .slice(-8)
+    .slice(-20)
     .map((turn) => `${turn.role}: ${turn.content}`)
     .join("\n");
 
@@ -688,29 +701,34 @@ function singleQueryNarratorUserPrompt(input: SingleQueryNarrationInput): string
 }
 
 function scopeClarificationSystemPrompt(mode: ScopeClarificationInput["mode"]): string {
+  const deepMode = mode === "deep_analysis";
   return [
     "You are a senior analytics scoping assistant.",
     `Mode: ${mode}.`,
     "",
-    "STEP 1 — DECOMPOSE: Break the user request into distinct sub-analyses.",
+    "STEP 1 - DECOMPOSE: Break the user request into distinct sub-analyses.",
     "A complex request like 'refund trend + city comparison + support ticket analysis' has 3+ sub-analyses.",
     "Each sub-analysis becomes its own scoped question.",
     "",
-    "STEP 2 — CLARIFY: For each sub-analysis, write ONE conversational clarifying question that:",
-    "- Confirms the exact metric formula, aggregation method, or filter logic",
-    "- Nails down comparison windows, time boundaries, ranking cutoffs, or join logic",
-    "- Is specific and natural, not generic or template-like",
+    "STEP 2 - ASSUME BY DEFAULT: apply safe, common assumptions first (timeline anchor, refund status, top-N, join preference).",
+    "Only ask a clarification when execution would materially change and you cannot safely proceed.",
     "",
     "Rules:",
-    "- Generate one question per sub-analysis — do NOT skip any, even if details seem explicit.",
-    "- Always confirm formulas (e.g. 'refund rate = refunded orders / total orders × 100?').",
-    "- Always confirm comparison boundaries (e.g. 'past 2 months vs prior 2 months — which exact months?').",
-    "- Always confirm ranking/cutoff criteria (e.g. 'top N cities — all or a specific cutoff?').",
+    "- Do not ask generic confirmation questions.",
+    "- Prefer explicit assumptions and proceed.",
+    deepMode
+      ? "- For deep_analysis, return 3-4 core scoped questions derived from the user request."
+      : "- For single_query, return at most 1 scoped clarification question when required.",
+    deepMode
+      ? "- For deep_analysis, add 1-2 smart suggested questions that improve decision quality (clearly label them with '[Suggested]')."
+      : "- If the single query is already clear, return zero clarification questions.",
+    deepMode
+      ? "- Total deep_analysis questions should usually be 4-6."
+      : "- Keep single-query clarifications minimal.",
     "- Look at the FULL conversation history, not just the latest message. The user's original",
-    "  request may contain multiple analysis topics. Cover ALL of them — do not drop any.",
+    "  request may contain multiple analysis topics. Cover ALL of them - do not drop any.",
     "- If the conversation already discussed analysis angles (e.g. refund trends, city rankings,",
-    "  support tickets), generate clarifying questions for EACH angle mentioned.",
-    "- Maximum 6 questions.",
+    "  support tickets), generate scoped questions for EACH angle mentioned.",
     "- Return strict JSON only:",
     '  {"questions":[{"question_number":1,"question":"...","clarification":"..."}]}',
     "  No markdown and no extra keys."
@@ -719,7 +737,7 @@ function scopeClarificationSystemPrompt(mode: ScopeClarificationInput["mode"]): 
 
 function scopeClarificationUserPrompt(input: ScopeClarificationInput): string {
   const history = input.conversation_history
-    .slice(-8)
+    .slice(-20)
     .map((turn) => `${turn.role}: ${turn.content}`)
     .join("\n");
 
@@ -766,8 +784,10 @@ function scopeAnswerResolutionSystemPrompt(): string {
     "- Use explicit references (Q1, Q2, 'for question 1') AND implicit intent.",
     "- Users often answer conversationally — 'Yes for Q1, thats how you compute it. Q2 use the same window' answers BOTH questions.",
     "- If the user says 'yes', 'confirm', 'correct', 'thats right' about a question's proposed approach, extract that as confirmation of the approach described in the clarification.",
-    "- Be AGGRESSIVE about matching. If the user's reply contains enough context to resolve a question, assign it even if the reference is indirect.",
-    "- Only leave a question unresolved if the user truly did not address it at all.",
+    "- Be precise, not aggressive: only assign when the user's message contains direct evidence for that question.",
+    "- Do NOT infer answers for unaddressed questions. If unclear, keep unresolved.",
+    "- If the message adds a new question/follow-up ask, do not treat that ask as an answer to existing clarification items.",
+    "- If one clause could map to multiple pending questions, map it only when the user explicitly indicates 'same for all' or equivalent intent.",
     "- Keep extracted answers concise and execution-ready.",
     "",
     "Return strict JSON only:",
@@ -778,7 +798,7 @@ function scopeAnswerResolutionSystemPrompt(): string {
 
 function scopeAnswerResolutionUserPrompt(input: ScopeAnswerResolutionInput): string {
   const history = input.conversation_history
-    .slice(-10)
+    .slice(-20)
     .map((turn) => `${turn.role}: ${turn.content}`)
     .join("\n");
   const questions = input.scope_questions
@@ -822,7 +842,7 @@ function metricDefinitionSystemPrompt(mode: MetricDefinitionInput["mode"]): stri
 
 function metricDefinitionUserPrompt(input: MetricDefinitionInput): string {
   const history = input.conversation_history
-    .slice(-8)
+    .slice(-20)
     .map((turn) => `${turn.role}: ${turn.content}`)
     .join("\n");
 
@@ -847,7 +867,7 @@ function metricDefinitionUserPrompt(input: MetricDefinitionInput): string {
 
 function parseProvider(rawProvider: string | QueryRouterProvider | undefined): QueryRouterProvider {
   if (!rawProvider) {
-    return "stub";
+    return "openrouter";
   }
 
   const normalized = String(rawProvider).toLowerCase();
@@ -857,7 +877,7 @@ function parseProvider(rawProvider: string | QueryRouterProvider | undefined): Q
   if (normalized === "openrouter") {
     return "openrouter";
   }
-  return "stub";
+  return "openrouter";
 }
 
 function parseBoolean(value: string): boolean {

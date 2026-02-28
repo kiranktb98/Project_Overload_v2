@@ -85,13 +85,12 @@ After `pnpm dev`:
    - `pnpm dev`
 
 ## Chat provider modes
-If you want every chat turn to require a live AI provider response, set:
+Chat runtime is provider-only (no deterministic fallback). Set:
 - `WEB_CHAT_REQUIRE_PROVIDER=true`
-- `WEB_CHAT_FALLBACK_TO_DETERMINISTIC=false`
 - `LLM_PROVIDER=openrouter` (or `openai`)
 - corresponding API key env vars in local `.env`
 
-The web header shows provider mode at runtime (`stub/openai/openrouter` + `deterministic/provider`).
+The web runtime endpoint shows provider mode at runtime (`openai/openrouter` + `provider`).
 
 ## UI database connection (Postgres/Supabase)
 Use the Database Connector module (separate page from chat):

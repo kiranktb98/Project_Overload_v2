@@ -2,11 +2,13 @@ import { analyzeBatch as analyzeBatchStub } from "@project-overload/evidence";
 import {
   AnalystInputSchema,
   BatchAnalysisSchema,
+  MergedQueryPlanOutputSchema,
   PlannerExplorationSchema,
   PlannerOutputSchema,
   QueryStrategyOutputSchema,
   type AnalystInput,
   type BatchAnalysis,
+  type MergedQueryPlanOutput,
   type PlannerExploration,
   type PlannerInput,
   type PlannerOutput,
@@ -14,6 +16,7 @@ import {
   type QueryStrategyInput,
   type QueryStrategyOutput
 } from "@project-overload/shared";
+import { z } from "zod";
 
 export type LlmProvider = "stub" | "openai" | "openrouter";
 
@@ -36,6 +39,7 @@ export interface AnalystClient {
 export interface QueryStrategistClient {
   provider: LlmProvider;
   planQueries(input: QueryStrategyInput): Promise<QueryStrategyOutput>;
+  planMergedQueries?(input: QueryStrategyInput): Promise<MergedQueryPlanOutput>;
   compileSql?(
     input: {
       sql: string;
@@ -53,6 +57,8 @@ export type ReportComposerInput = {
   title: string;
   audience: string;
   insight_mode: "business" | "data";
+  super_summary?: string;
+  consultant_actions?: string[];
   metric_definitions?: Array<{
     metric_key: string;
     display_name: string;
@@ -78,12 +84,79 @@ export interface ReportComposerClient {
   drainUsageEvents?(): TokenUsageEvent[];
 }
 
+export type SuperSummaryInput = {
+  title: string;
+  audience: string;
+  insight_mode: "business" | "data";
+  per_question_summaries: Array<{
+    question_id: string;
+    question_text: string;
+    findings: string[];
+    drivers: string[];
+    anomalies: string[];
+    coverage_status: "complete" | "partial" | "insufficient";
+    coverage_notes: string[];
+    evidence_refs: string[];
+    confidence_notes: string[];
+  }>;
+  analyses: Array<{
+    question: string;
+    highlights: string[];
+    risks: string[];
+    recommendations: string[];
+    data_summary: string;
+  }>;
+  query_details: Array<{
+    question_number: number;
+    question: string;
+    sql: string;
+    row_count: number;
+  }>;
+  prepared_payloads: Array<{
+    question_number: number;
+    question: string;
+    prepared_row_count: number;
+    warnings: string[];
+    validation_note: string;
+  }>;
+  catalog_summary: string;
+  allow_query_planning?: boolean;
+  context_query_results?: Array<{
+    sql: string;
+    row_count: number;
+    sample_rows: Array<Record<string, unknown>>;
+    error?: string;
+  }>;
+};
+
+export type SuperSummaryOutput = {
+  summary: string;
+  issue_detected: boolean;
+  intervention_actions: string[];
+  context_queries: string[];
+  notes: string[];
+};
+
+export interface SuperSummaryClient {
+  provider: LlmProvider;
+  summarize(input: SuperSummaryInput): Promise<SuperSummaryOutput>;
+  drainUsageEvents?(): TokenUsageEvent[];
+}
+
 export interface PlannerClient {
   provider: LlmProvider;
   explore(input: PlannerInput): Promise<PlannerExploration>;
   plan(input: PlannerInput & { exploration_results: string }): Promise<PlannerOutput>;
   drainUsageEvents?(): TokenUsageEvent[];
 }
+
+const SuperSummaryOutputSchema = z.object({
+  summary: z.string().min(1),
+  issue_detected: z.boolean().default(false),
+  intervention_actions: z.array(z.string().min(1)).max(8).default([]),
+  context_queries: z.array(z.string().min(1)).max(2).default([]),
+  notes: z.array(z.string().min(1)).max(8).default([])
+});
 
 export type Fetcher = typeof fetch;
 
@@ -115,6 +188,8 @@ type UsageEventBuffer = {
 const DEFAULT_TIMEOUT_MS = 900_000;
 const DEFAULT_OPENAI_MODEL = "gpt-4.1-mini";
 const DEFAULT_OPENROUTER_MODEL = "anthropic/claude-opus-4-6";
+const DEFAULT_SUPER_SUMMARY_OPENAI_MODEL = "gpt-5.2";
+const DEFAULT_SUPER_SUMMARY_OPENROUTER_MODEL = "openai/gpt-5.2";
 const DEFAULT_OPENROUTER_BASE_URL = "https://openrouter.ai/api/v1";
 
 // ---------------------------------------------------------------------------
@@ -137,8 +212,11 @@ export function createAnalystClientFromEnv(overrides: Partial<CreateAnalystClien
   const provider = parseProvider(overrides.provider ?? process.env.LLM_PROVIDER);
 
   if (provider === "stub") {
-    console.log("[analyst] LLM_PROVIDER=stub, using stub client");
-    return createStubAnalystClient();
+    if (isTestRuntime()) {
+      console.log("[analyst] LLM_PROVIDER=stub in test runtime, using stub client");
+      return createStubAnalystClient();
+    }
+    throw new Error("LLM_PROVIDER=stub is disabled in runtime for analyst client.");
   }
 
   const timeoutFromEnv = Number.parseInt(
@@ -165,15 +243,18 @@ export function createAnalystClientFromEnv(overrides: Partial<CreateAnalystClien
 
 export function createAnalystClient(options: CreateAnalystClientOptions): AnalystClient {
   const timeoutMs = options.timeoutMs ?? DEFAULT_TIMEOUT_MS;
-  const fallbackToStub = options.fallbackToStub ?? true;
+  const fallbackToStub = options.fallbackToStub ?? isTestRuntime();
   const fetcher = options.fetcher ?? fetch;
   const stub = createStubAnalystClient();
   const usageBuffer = createUsageEventBuffer();
 
   if (options.provider === "openai") {
     if (!options.openaiApiKey) {
-      console.warn("[analyst] provider=openai but missing API key, using stub");
-      return stub;
+      if (isTestRuntime()) {
+        console.warn("[analyst] provider=openai but missing API key in test runtime, using stub");
+        return stub;
+      }
+      throw new Error("OPENAI_API_KEY is required for analyst provider=openai.");
     }
 
     const remote = createRemoteAnalystClient({
@@ -190,8 +271,11 @@ export function createAnalystClient(options: CreateAnalystClientOptions): Analys
 
   if (options.provider === "openrouter") {
     if (!options.openrouterApiKey) {
-      console.warn("[analyst] provider=openrouter but missing API key, using stub");
-      return stub;
+      if (isTestRuntime()) {
+        console.warn("[analyst] provider=openrouter but missing API key in test runtime, using stub");
+        return stub;
+      }
+      throw new Error("OPENROUTER_API_KEY is required for analyst provider=openrouter.");
     }
 
     const remote = createRemoteAnalystClient({
@@ -206,8 +290,11 @@ export function createAnalystClient(options: CreateAnalystClientOptions): Analys
     return fallbackToStub ? wrapAnalystWithFallback(remote, stub) : remote;
   }
 
-  console.warn("[analyst] Unsupported provider=%s, using stub", options.provider);
-  return stub;
+  if (isTestRuntime()) {
+    console.warn("[analyst] Unsupported provider=%s in test runtime, using stub", options.provider);
+    return stub;
+  }
+  throw new Error(`Unsupported analyst provider: ${String(options.provider)}.`);
 }
 
 type RemoteAnalystClientOptions = {
@@ -309,6 +396,48 @@ function parseScopedQuestions(reportGoal: string): Array<{ question: string; ans
   return results;
 }
 
+function toMergedPlanOutput(strategy: QueryStrategyOutput): MergedQueryPlanOutput {
+  const groups = new Map<string, QueryStrategyOutput["queries"]>();
+  const orderedKeys: string[] = [];
+
+  for (const [index, query] of strategy.queries.entries()) {
+    const key = query.group_id ? `group:${query.group_id}` : `single:${index}`;
+    if (!groups.has(key)) {
+      groups.set(key, []);
+      orderedKeys.push(key);
+    }
+    groups.get(key)!.push(query);
+  }
+
+  return MergedQueryPlanOutputSchema.parse({
+    plan_id: `merged_plan_${Date.now()}`,
+    questions: orderedKeys.map((key, index) => {
+      const groupQueries = groups.get(key) ?? [];
+      const first = groupQueries[0];
+      const normalizedGroupId = first?.group_id && first.group_id.trim().length > 0
+        ? first.group_id
+        : `q${index + 1}_group`;
+
+      return {
+        question_id: `q${index + 1}`,
+        question_number: index + 1,
+        question_text: first?.question ?? `Question ${index + 1}`,
+        clarifications_used: first?.purpose ? [first.purpose] : [],
+        group_id: normalizedGroupId,
+        query_blocks: groupQueries.map((query) => ({
+          sql: query.sql,
+          purpose: query.purpose,
+          expected_rows: 50,
+          joins_used: [],
+          filters_used: []
+        })),
+        expected_output_columns: [],
+        success_criteria: ["Query executes successfully within policy guardrails."]
+      };
+    })
+  });
+}
+
 export function createStubQueryStrategistClient(): QueryStrategistClient {
   return {
     provider: "stub",
@@ -380,6 +509,10 @@ export function createStubQueryStrategistClient(): QueryStrategistClient {
 
       return { queries };
     },
+    async planMergedQueries(input: QueryStrategyInput): Promise<MergedQueryPlanOutput> {
+      const strategy = await createStubQueryStrategistClient().planQueries(input);
+      return toMergedPlanOutput(strategy);
+    },
     async compileSql(input): Promise<{ sql: string; rationale: string }> {
       return {
         sql: normalizeSingleSelectStatement(input.sql),
@@ -397,8 +530,11 @@ export function createQueryStrategistClientFromEnv(
 ): QueryStrategistClient {
   const provider = parseProvider(overrides.provider ?? process.env.LLM_PROVIDER);
   if (provider === "stub") {
-    console.log("[query-strategist] LLM_PROVIDER=stub, using stub client");
-    return createStubQueryStrategistClient();
+    if (isTestRuntime()) {
+      console.log("[query-strategist] LLM_PROVIDER=stub in test runtime, using stub client");
+      return createStubQueryStrategistClient();
+    }
+    throw new Error("LLM_PROVIDER=stub is disabled in runtime for query strategist.");
   }
 
   const options = resolveClientOptions({
@@ -408,14 +544,14 @@ export function createQueryStrategistClientFromEnv(
       process.env.QUERY_STRATEGIST_MODEL ??
       process.env.DATA_PREPARATION_MODEL ??
       process.env.MODEL_GPT ??
-      "anthropic/claude-sonnet-4-6"
+      "openai/gpt-5.2"
   });
   return createQueryStrategistClient(options);
 }
 
 export function createQueryStrategistClient(options: CreateAnalystClientOptions): QueryStrategistClient {
   const timeoutMs = (options.timeoutMs ?? DEFAULT_TIMEOUT_MS) * 2; // double timeout for query planning
-  const fallbackToStub = options.fallbackToStub ?? true;
+  const fallbackToStub = options.fallbackToStub ?? isTestRuntime();
   const fetcher = options.fetcher ?? fetch;
   const stub = createStubQueryStrategistClient();
   const usageBuffer = createUsageEventBuffer();
@@ -428,9 +564,24 @@ export function createQueryStrategistClient(options: CreateAnalystClientOptions)
     );
   };
 
+  const buildMergedRequest = (input: QueryStrategyInput): ProviderRequest => {
+    return buildOpenRouterGenericRequest(
+      mergedQueryPlannerSystemPrompt(input),
+      mergedQueryPlannerUserPrompt(input),
+      options
+    );
+  };
+
   if (options.provider !== "openrouter" || !options.openrouterApiKey) {
-    console.warn("[query-strategist] Missing openrouter config (provider=%s, hasKey=%s), using stub", options.provider, Boolean(options.openrouterApiKey));
-    return stub;
+    if (isTestRuntime()) {
+      console.warn(
+        "[query-strategist] Missing openrouter config (provider=%s, hasKey=%s) in test runtime, using stub",
+        options.provider,
+        Boolean(options.openrouterApiKey)
+      );
+      return stub;
+    }
+    throw new Error("OPENROUTER_API_KEY is required for query strategist provider mode.");
   }
 
   console.log("[query-strategist] Created remote client (model=%s, timeout=%dms, fallback=%s)", options.openrouterModel, timeoutMs, fallbackToStub);
@@ -468,6 +619,34 @@ export function createQueryStrategistClient(options: CreateAnalystClientOptions)
         result.queries.length,
         result.queries.map((q) => q.question).join(" | "));
       return result;
+    },
+    async planMergedQueries(input: QueryStrategyInput): Promise<MergedQueryPlanOutput> {
+      const request = buildMergedRequest(input);
+      const response = await fetchWithTimeout(fetcher, request.endpoint, {
+        method: "POST",
+        headers: request.headers,
+        body: JSON.stringify(request.payload)
+      }, timeoutMs);
+
+      if (!response.ok) {
+        const text = await response.text();
+        throw new Error(`Merged query planner failed (${response.status}): ${text}`);
+      }
+
+      const payload = (await response.json()) as unknown;
+      recordUsageEventFromPayload(
+        usageBuffer,
+        payload,
+        "openrouter",
+        pickModelFromRequest(request),
+        "query_planning_agent"
+      );
+      const text = extractTextPayload(payload);
+      if (!text) {
+        throw new Error("Unable to parse merged query planner response.");
+      }
+      const parsed = parseJsonObjectFromText(text);
+      return MergedQueryPlanOutputSchema.parse(parsed);
     },
     async compileSql(input): Promise<{ sql: string; rationale: string }> {
       const request = buildOpenRouterGenericRequest(
@@ -534,6 +713,29 @@ function wrapStrategistWithFallback(
       } catch (error) {
         console.error("[query-strategist] LLM call failed, falling back to stub:", error instanceof Error ? error.message : error);
         return fallback.planQueries(input);
+      }
+    },
+    async planMergedQueries(input: QueryStrategyInput): Promise<MergedQueryPlanOutput> {
+      if (!remote.planMergedQueries) {
+        if (fallback.planMergedQueries) {
+          return fallback.planMergedQueries(input);
+        }
+        const basic = await fallback.planQueries(input);
+        return toMergedPlanOutput(basic);
+      }
+
+      try {
+        return await remote.planMergedQueries(input);
+      } catch (error) {
+        console.error(
+          "[query-planning-agent] merged planning failed, falling back:",
+          error instanceof Error ? error.message : error
+        );
+        if (fallback.planMergedQueries) {
+          return fallback.planMergedQueries(input);
+        }
+        const basic = await fallback.planQueries(input);
+        return toMergedPlanOutput(basic);
       }
     },
     async compileSql(input): Promise<{ sql: string; rationale: string }> {
@@ -796,6 +998,43 @@ function queryStrategistUserPrompt(input: QueryStrategyInput): string {
   return parts.join("\n");
 }
 
+function mergedQueryPlannerSystemPrompt(input: QueryStrategyInput): string {
+  const dialect = normalizeSqlDialect(input.sql_dialect).toUpperCase();
+  return [
+    `You are the Query Planning Agent for ${dialect}.`,
+    "You own planning + SQL generation per scoped question.",
+    "Use catalog summary, planner context, metric definitions, and clarifications to produce executable SQL blocks.",
+    "Return strict JSON only with this contract:",
+    '{"plan_id":"...","questions":[{"question_id":"q1","question_number":1,"question_text":"...","clarifications_used":["..."],"group_id":"grp_q1","query_blocks":[{"sql":"SELECT ...","purpose":"...","expected_rows":50,"joins_used":["..."],"filters_used":["..."]}],"expected_output_columns":["..."],"success_criteria":["..."]}]}',
+    "",
+    "Hard rules:",
+    "- Every question must have its own group_id.",
+    "- query_blocks must contain at least one SELECT-only SQL statement.",
+    "- Use only allowlisted tables and schemas from input.",
+    "- Do not merge multiple user questions into one question entry.",
+    "- Keep SQL aggregation-first and bounded with LIMIT <= 200."
+  ].join("\n");
+}
+
+function mergedQueryPlannerUserPrompt(input: QueryStrategyInput): string {
+  return [
+    `AUDIENCE: ${input.audience}`,
+    `INSIGHT_MODE: ${input.insight_mode}`,
+    `SQL_DIALECT: ${normalizeSqlDialect(input.sql_dialect)}`,
+    "",
+    `ALLOWED_RELATIONS: ${input.allowed_relations.join(", ") || "(none)"}`,
+    "",
+    "CATALOG_SUMMARY:",
+    input.catalog_summary,
+    "",
+    "PLANNER_CONTEXT:",
+    input.planner_context && input.planner_context.trim().length > 0 ? input.planner_context : "(none)",
+    "",
+    "REPORT_GOAL_WITH_SCOPED_QUESTIONS:",
+    input.report_goal
+  ].join("\n");
+}
+
 function dialectCompilerSystemPrompt(dialect: SqlDialect): string {
   const dialectGuides: Record<string, string[]> = {
     postgres: [
@@ -958,8 +1197,11 @@ export function createPlannerClientFromEnv(
 ): PlannerClient {
   const provider = parseProvider(overrides.provider ?? process.env.LLM_PROVIDER);
   if (provider === "stub") {
-    console.log("[planner] LLM_PROVIDER=stub, using stub client");
-    return createStubPlannerClient();
+    if (isTestRuntime()) {
+      console.log("[planner] LLM_PROVIDER=stub in test runtime, using stub client");
+      return createStubPlannerClient();
+    }
+    throw new Error("LLM_PROVIDER=stub is disabled in runtime for planner.");
   }
 
   const options = resolveClientOptions({
@@ -976,14 +1218,21 @@ export function createPlannerClientFromEnv(
 
 export function createPlannerClient(options: CreateAnalystClientOptions): PlannerClient {
   const timeoutMs = (options.timeoutMs ?? DEFAULT_TIMEOUT_MS) * 2; // double timeout for planning
-  const fallbackToStub = options.fallbackToStub ?? true;
+  const fallbackToStub = options.fallbackToStub ?? isTestRuntime();
   const fetcher = options.fetcher ?? fetch;
   const stub = createStubPlannerClient();
   const usageBuffer = createUsageEventBuffer();
 
   if (options.provider !== "openrouter" || !options.openrouterApiKey) {
-    console.warn("[planner] Missing openrouter config (provider=%s, hasKey=%s), using stub", options.provider, Boolean(options.openrouterApiKey));
-    return stub;
+    if (isTestRuntime()) {
+      console.warn(
+        "[planner] Missing openrouter config (provider=%s, hasKey=%s) in test runtime, using stub",
+        options.provider,
+        Boolean(options.openrouterApiKey)
+      );
+      return stub;
+    }
+    throw new Error("OPENROUTER_API_KEY is required for planner provider mode.");
   }
 
   console.log("[planner] Created remote client (model=%s, timeout=%dms, fallback=%s)", options.openrouterModel, timeoutMs, fallbackToStub);
@@ -1226,8 +1475,11 @@ export function createReportComposerClientFromEnv(
 ): ReportComposerClient {
   const provider = parseProvider(overrides.provider ?? process.env.LLM_PROVIDER);
   if (provider === "stub") {
-    console.log("[report-composer] LLM_PROVIDER=stub, using stub client");
-    return createStubReportComposerClient();
+    if (isTestRuntime()) {
+      console.log("[report-composer] LLM_PROVIDER=stub in test runtime, using stub client");
+      return createStubReportComposerClient();
+    }
+    throw new Error("LLM_PROVIDER=stub is disabled in runtime for report composer.");
   }
 
   const options = resolveClientOptions(overrides);
@@ -1236,14 +1488,21 @@ export function createReportComposerClientFromEnv(
 
 export function createReportComposerClient(options: CreateAnalystClientOptions): ReportComposerClient {
   const timeoutMs = (options.timeoutMs ?? DEFAULT_TIMEOUT_MS) * 2;
-  const fallbackToStub = options.fallbackToStub ?? true;
+  const fallbackToStub = options.fallbackToStub ?? isTestRuntime();
   const fetcher = options.fetcher ?? fetch;
   const stub = createStubReportComposerClient();
   const usageBuffer = createUsageEventBuffer();
 
   if (options.provider !== "openrouter" || !options.openrouterApiKey) {
-    console.warn("[report-composer] Missing openrouter config (provider=%s, hasKey=%s), using stub", options.provider, Boolean(options.openrouterApiKey));
-    return stub;
+    if (isTestRuntime()) {
+      console.warn(
+        "[report-composer] Missing openrouter config (provider=%s, hasKey=%s) in test runtime, using stub",
+        options.provider,
+        Boolean(options.openrouterApiKey)
+      );
+      return stub;
+    }
+    throw new Error("OPENROUTER_API_KEY is required for report composer provider mode.");
   }
 
   console.log("[report-composer] Created remote client (model=%s, timeout=%dms, fallback=%s)", options.openrouterModel, timeoutMs, fallbackToStub);
@@ -1312,6 +1571,305 @@ function wrapComposerWithFallback(
   };
 }
 
+// ---------------------------------------------------------------------------
+// Super Summary Client
+// ---------------------------------------------------------------------------
+
+export function createStubSuperSummaryClient(): SuperSummaryClient {
+  return {
+    provider: "stub",
+    async summarize(input: SuperSummaryInput): Promise<SuperSummaryOutput> {
+      const allHighlights = input.per_question_summaries.flatMap((a) => a.findings).slice(0, 3);
+      const allRisks = input.per_question_summaries.flatMap((a) => a.anomalies).slice(0, 3);
+      const allActions = input.per_question_summaries.flatMap((a) => a.drivers).slice(0, 4);
+      const summary = allHighlights.length > 0
+        ? allHighlights.map((line) => `- ${line}`).join("\n")
+        : "No material findings were available from the current analysis payload.";
+
+      return {
+        summary,
+        issue_detected: allRisks.length > 0,
+        intervention_actions: allRisks.length > 0 ? allActions : [],
+        context_queries: [],
+        notes: allRisks.length > 0 ? ["Issue signals detected from analysis risks."] : []
+      };
+    },
+    drainUsageEvents() {
+      return [];
+    }
+  };
+}
+
+export function createSuperSummaryClientFromEnv(
+  overrides: Partial<CreateAnalystClientOptions> = {}
+): SuperSummaryClient {
+  const provider = parseProvider(overrides.provider ?? process.env.LLM_PROVIDER);
+  if (provider === "stub") {
+    if (isTestRuntime()) {
+      console.log("[super-summary] LLM_PROVIDER=stub in test runtime, using stub client");
+      return createStubSuperSummaryClient();
+    }
+    throw new Error("LLM_PROVIDER=stub is disabled in runtime for super summary.");
+  }
+
+  const options = resolveClientOptions({
+    ...overrides,
+    openaiModel:
+      overrides.openaiModel ??
+      process.env.SUPER_SUMMARY_MODEL ??
+      process.env.OPENAI_SUPER_SUMMARY_MODEL ??
+      DEFAULT_SUPER_SUMMARY_OPENAI_MODEL,
+    openrouterModel:
+      overrides.openrouterModel ??
+      process.env.SUPER_SUMMARY_MODEL ??
+      process.env.OPENROUTER_SUPER_SUMMARY_MODEL ??
+      DEFAULT_SUPER_SUMMARY_OPENROUTER_MODEL
+  });
+  return createSuperSummaryClient(options);
+}
+
+export function createSuperSummaryClient(options: CreateAnalystClientOptions): SuperSummaryClient {
+  const timeoutMs = (options.timeoutMs ?? DEFAULT_TIMEOUT_MS) * 2;
+  const fallbackToStub = options.fallbackToStub ?? isTestRuntime();
+  const fetcher = options.fetcher ?? fetch;
+  const stub = createStubSuperSummaryClient();
+  const usageBuffer = createUsageEventBuffer();
+
+  if (options.provider === "openai") {
+    if (!options.openaiApiKey) {
+      if (isTestRuntime()) {
+        console.warn("[super-summary] provider=openai but missing API key in test runtime, using stub");
+        return stub;
+      }
+      throw new Error("OPENAI_API_KEY is required for super summary provider=openai.");
+    }
+
+    const remote: SuperSummaryClient = {
+      provider: "openai",
+      async summarize(input: SuperSummaryInput): Promise<SuperSummaryOutput> {
+        const request = {
+          endpoint: "https://api.openai.com/v1/responses",
+          headers: {
+            Authorization: `Bearer ${options.openaiApiKey}`,
+            "content-type": "application/json"
+          },
+          payload: {
+            model: options.openaiModel ?? DEFAULT_SUPER_SUMMARY_OPENAI_MODEL,
+            input: [
+              { role: "system", content: [{ type: "text", text: superSummarySystemPrompt(input) }] },
+              { role: "user", content: [{ type: "text", text: superSummaryUserPrompt(input) }] }
+            ],
+            temperature: 0
+          }
+        } satisfies ProviderRequest;
+
+        const response = await fetchWithTimeout(fetcher, request.endpoint, {
+          method: "POST",
+          headers: request.headers,
+          body: JSON.stringify(request.payload)
+        }, timeoutMs);
+
+        if (!response.ok) {
+          const text = await response.text();
+          throw new Error(`Super summary failed (${response.status}): ${text}`);
+        }
+
+        const payload = (await response.json()) as unknown;
+        recordUsageEventFromPayload(
+          usageBuffer,
+          payload,
+          "openai",
+          pickModelFromRequest(request),
+          "super_summary"
+        );
+        return parseSuperSummaryPayload(payload);
+      },
+      drainUsageEvents() {
+        return usageBuffer.drain();
+      }
+    };
+
+    console.log("[super-summary] Created remote client (provider=openai, model=%s, timeout=%dms, fallback=%s)", options.openaiModel ?? DEFAULT_SUPER_SUMMARY_OPENAI_MODEL, timeoutMs, fallbackToStub);
+    return fallbackToStub ? wrapSuperSummaryWithFallback(remote, stub) : remote;
+  }
+
+  if (options.provider === "openrouter") {
+    if (!options.openrouterApiKey) {
+      if (isTestRuntime()) {
+        console.warn("[super-summary] provider=openrouter but missing API key in test runtime, using stub");
+        return stub;
+      }
+      throw new Error("OPENROUTER_API_KEY is required for super summary provider=openrouter.");
+    }
+
+    const remote: SuperSummaryClient = {
+      provider: "openrouter",
+      async summarize(input: SuperSummaryInput): Promise<SuperSummaryOutput> {
+        const request = buildOpenRouterGenericRequest(
+          superSummarySystemPrompt(input),
+          superSummaryUserPrompt(input),
+          options
+        );
+        const response = await fetchWithTimeout(fetcher, request.endpoint, {
+          method: "POST",
+          headers: request.headers,
+          body: JSON.stringify(request.payload)
+        }, timeoutMs);
+
+        if (!response.ok) {
+          const text = await response.text();
+          throw new Error(`Super summary failed (${response.status}): ${text}`);
+        }
+
+        const payload = (await response.json()) as unknown;
+        recordUsageEventFromPayload(
+          usageBuffer,
+          payload,
+          "openrouter",
+          pickModelFromRequest(request),
+          "super_summary"
+        );
+        return parseSuperSummaryPayload(payload);
+      },
+      drainUsageEvents() {
+        return usageBuffer.drain();
+      }
+    };
+
+    console.log("[super-summary] Created remote client (provider=openrouter, model=%s, timeout=%dms, fallback=%s)", options.openrouterModel ?? DEFAULT_SUPER_SUMMARY_OPENROUTER_MODEL, timeoutMs, fallbackToStub);
+    return fallbackToStub ? wrapSuperSummaryWithFallback(remote, stub) : remote;
+  }
+
+  if (isTestRuntime()) {
+    console.warn("[super-summary] Unsupported provider=%s in test runtime, using stub", options.provider);
+    return stub;
+  }
+  throw new Error(`Unsupported super summary provider: ${String(options.provider)}.`);
+}
+
+function wrapSuperSummaryWithFallback(
+  remote: SuperSummaryClient,
+  fallback: SuperSummaryClient
+): SuperSummaryClient {
+  return {
+    provider: remote.provider,
+    async summarize(input: SuperSummaryInput): Promise<SuperSummaryOutput> {
+      try {
+        return await remote.summarize(input);
+      } catch (error) {
+        console.error("[super-summary] LLM call failed, falling back to stub:", error instanceof Error ? error.message : error);
+        return fallback.summarize(input);
+      }
+    },
+    drainUsageEvents() {
+      const remoteEvents = remote.drainUsageEvents ? remote.drainUsageEvents() : [];
+      const fallbackEvents = fallback.drainUsageEvents ? fallback.drainUsageEvents() : [];
+      return [...remoteEvents, ...fallbackEvents];
+    }
+  };
+}
+
+function parseSuperSummaryPayload(payload: unknown): SuperSummaryOutput {
+  const direct = SuperSummaryOutputSchema.safeParse(payload);
+  if (direct.success) {
+    return direct.data;
+  }
+
+  const text = extractTextPayload(payload);
+  if (!text) {
+    throw new Error("Unable to parse super summary response.");
+  }
+  return SuperSummaryOutputSchema.parse(parseJsonObjectFromText(text));
+}
+
+function superSummarySystemPrompt(input: SuperSummaryInput): string {
+  const allowQueryPlanning = input.allow_query_planning ?? false;
+  return [
+    "You are a top-tier strategy consultant writing an executive synthesis for a report pipeline.",
+    "Ground every statement in provided evidence. No speculation. No invented metrics.",
+    "Your output is consumed by a downstream HTML report renderer.",
+    "",
+    "Rules:",
+    "- Keep the summary concise and executive-friendly.",
+    "- Focus only on the scoped questions already analyzed.",
+    "- If issues are detected (material risks, missing coverage, or quality warnings), set issue_detected=true and provide intervention_actions.",
+    "- If no issues are detected, set issue_detected=false and intervention_actions=[].",
+    "- Do not mention confidence scores or internal model behavior.",
+    allowQueryPlanning
+      ? "- You may request up to 2 additional SQL context queries in context_queries. They must be single SELECT statements with LIMIT <= 50."
+      : "- context_queries must be an empty array.",
+    "",
+    "Return strict JSON only:",
+    '{"summary":"...", "issue_detected": true, "intervention_actions":["..."], "context_queries":["SELECT ... LIMIT 50"], "notes":["..."]}'
+  ].join("\n");
+}
+
+function superSummaryUserPrompt(input: SuperSummaryInput): string {
+  const perQuestion = input.per_question_summaries
+    .map((summary, index) => [
+      `Q${index + 1} (${summary.question_id}): ${summary.question_text}`,
+      `Findings: ${summary.findings.join("; ") || "None"}`,
+      `Drivers: ${summary.drivers.join("; ") || "None"}`,
+      `Anomalies: ${summary.anomalies.join("; ") || "None"}`,
+      `Coverage: ${summary.coverage_status}`,
+      `Coverage notes: ${summary.coverage_notes.join("; ") || "None"}`,
+      `Evidence refs: ${summary.evidence_refs.join(", ") || "None"}`
+    ].join("\n"))
+    .join("\n\n");
+
+  const analyses = input.analyses
+    .map((analysis, index) => [
+      `Q${index + 1}: ${analysis.question}`,
+      `Highlights: ${analysis.highlights.join("; ") || "None"}`,
+      `Risks: ${analysis.risks.join("; ") || "None"}`,
+      `Recommendations: ${analysis.recommendations.join("; ") || "None"}`,
+      `Data summary: ${analysis.data_summary}`
+    ].join("\n"))
+    .join("\n\n");
+
+  const queryDetails = input.query_details
+    .map((detail) => `Q${detail.question_number} (${detail.row_count} rows): ${detail.sql}`)
+    .join("\n");
+
+  const payloadCoverage = input.prepared_payloads
+    .map((payload) => `Q${payload.question_number}: rows=${payload.prepared_row_count}; warnings=${payload.warnings.join(" | ") || "none"}; validation=${payload.validation_note}`)
+    .join("\n");
+
+  const contextResults = (input.context_query_results ?? [])
+    .map((result, index) => [
+      `Context query ${index + 1}: ${result.sql}`,
+      result.error ? `Error: ${result.error}` : `Rows: ${result.row_count}`,
+      `Sample: ${JSON.stringify(result.sample_rows.slice(0, 3))}`
+    ].join("\n"))
+    .join("\n\n");
+
+  return [
+    `Report title: ${input.title}`,
+    `Audience: ${input.audience}`,
+    `Mode: ${input.insight_mode}`,
+    "",
+    "Per-question analysis summaries (primary source):",
+    perQuestion || "No per-question summaries provided.",
+    "",
+    "Analyzed sections:",
+    analyses,
+    "",
+    "Preparation/query coverage:",
+    payloadCoverage || "No payload coverage provided.",
+    "",
+    "Executed strategy queries:",
+    queryDetails || "No query details provided.",
+    "",
+    "Catalog summary:",
+    input.catalog_summary || "No catalog summary provided.",
+    input.context_query_results && input.context_query_results.length > 0
+      ? `\nAdditional context query results:\n${contextResults}`
+      : "",
+    "",
+    `allow_query_planning: ${input.allow_query_planning ? "true" : "false"}`
+  ].join("\n");
+}
+
 function reportComposerSystemPrompt(input: ReportComposerInput): string {
   const modeGuidance = input.insight_mode === "data"
     ? "This is a DATA QUALITY report. Focus on data issues, completeness, anomalies, and recommendations for fixing them. Use tables showing null rates, distribution charts, and data quality scores."
@@ -1330,7 +1888,10 @@ function reportComposerSystemPrompt(input: ReportComposerInput): string {
     "- Make it visually appealing — use cards with subtle shadows, rounded corners, clean typography.",
     "- Each analysis section should have: a clear heading, a key finding callout box (highlighted), and supporting data in tables or charts.",
     "- Include an EXECUTIVE SUMMARY section at the top with the 2-3 most important takeaways as bold callout cards.",
+    "- If super_summary is provided, render it near the top as 'Executive Super Summary'.",
     "- End with a clear 'Recommended Actions' section with numbered, prioritized actions.",
+    "- If consultant_actions is present, render it as 'AI Recommended Actions for Intervention'.",
+    "- If consultant_actions is empty, do not fabricate intervention actions.",
     "- Add a 'Metric Definitions' section when metric_definitions are provided — use a clean reference table format.",
     "- Use the system font stack (system-ui, -apple-system, sans-serif) for clean rendering.",
     "- The report must be printable and look good as a PDF — avoid dark backgrounds, use @media print friendly styles.",
@@ -1371,6 +1932,8 @@ function reportComposerUserPrompt(input: ReportComposerInput): string {
     `Report title: ${input.title}`,
     `Audience: ${input.audience}`,
     `Report type: ${input.insight_mode === "data" ? "Data Quality Assessment" : "Business Insights Report"}`,
+    `Executive super summary: ${input.super_summary && input.super_summary.trim().length > 0 ? input.super_summary : "None"}`,
+    `AI recommended actions for intervention: ${(input.consultant_actions ?? []).length > 0 ? (input.consultant_actions ?? []).join("; ") : "None"}`,
     "",
     "METRIC DEFINITIONS:",
     metricDefinitions.length > 0 ? metricDefinitions : "(none provided)",
@@ -1383,6 +1946,15 @@ function reportComposerUserPrompt(input: ReportComposerInput): string {
 }
 
 function renderStubReportHtml(input: ReportComposerInput): string {
+  const superSummarySection =
+    input.super_summary && input.super_summary.trim().length > 0
+      ? `<section class="analysis-card"><h2>Executive Super Summary</h2><p>${escapeHtml(input.super_summary.trim()).replace(/\n/g, "<br/>")}</p></section>`
+      : "";
+  const consultantActionsSection =
+    (input.consultant_actions ?? []).length > 0
+      ? `<section class="analysis-card"><h2>AI Recommended Actions for Intervention</h2><ol>${(input.consultant_actions ?? []).map((line) => `<li>${escapeHtml(line)}</li>`).join("")}</ol></section>`
+      : "";
+
   const metricDefinitions = (input.metric_definitions ?? [])
     .map((metric) => {
       let filterNote = "";
@@ -1434,6 +2006,8 @@ function renderStubReportHtml(input: ReportComposerInput): string {
     <h1>${escapeHtml(input.title)}</h1>
     <p>${escapeHtml(typeLabel)} | ${escapeHtml(input.audience)} audience</p>
   </div>
+  ${superSummarySection}
+  ${consultantActionsSection}
   ${metricDefinitions.length > 0 ? `<section class="metric-definitions"><h2>Metric Definitions</h2><ul>${metricDefinitions}</ul></section>` : ""}
   ${analysisHtml}
 </body></html>`;
@@ -1469,6 +2043,9 @@ function analystSystemPrompt(input: AnalystInput): string {
     "",
     modeGuidance,
     questionContext,
+    "Stay strictly within the scoped question and timeframe. Do not expand to extra periods, segments, or hypotheses.",
+    "If coverage is partial or data is missing, explicitly state that gap instead of inferring unseen values.",
+    "Do not introduce external benchmarks, causes, or interventions unless they are directly supported by the provided evidence.",
     "",
     "ANALYSIS QUALITY STANDARDS:",
     "- Every highlight MUST include a specific number, percentage, or comparison from the data.",
@@ -1482,13 +2059,14 @@ function analystSystemPrompt(input: AnalystInput): string {
     "DATA CONTEXT NOTE: If a DATA CONTEXT section is provided in the user message, treat it as authoritative pre-computed aggregates. Use the monthly totals to identify trends, the column statistics to understand distributions, and the preparation notes/warnings to calibrate your confidence. The sample rows are representative examples; the DATA CONTEXT captures the full dataset's shape.",
     "",
     "Return strictly valid JSON matching this shape:",
-    '{"request_id": "...", "batch_index": 0, "total_batches": 1, "highlights": ["..."], "risks": ["..."], "recommendations": ["..."], "confidence_score": 0.85, "appendix_refs": ["..."]}',
+    '{"request_id": "...", "batch_index": 0, "total_batches": 1, "highlights": ["..."], "risks": ["..."], "recommendations": ["..."], "confidence_score": 0.85, "appendix_refs": ["..."], "additional_query_requests": [{"reason":"...", "question":"...", "required_fields":["..."]}]}',
     "",
     "- highlights: The most important findings with specific numbers (3-5 items). Each highlight should be a complete insight, not a vague observation.",
     "- risks: Issues, concerns, or negative trends with quantified impact where possible (1-3 items).",
     "- recommendations: Specific, actionable next steps tied to the findings (2-4 items). Each should clearly state what to do and why.",
     "- confidence_score: 0.0-1.0 based on data quality, coverage, and sample size. Score below 0.7 if data has significant gaps or the sample is too small to draw conclusions.",
     "- appendix_refs: Reference identifiers for any data tables or charts that support the findings.",
+    "- additional_query_requests: optional (0-2). Use only when crucial evidence is missing to answer the scoped question. Each request must be precise and scoped to the same question/timeline.",
     "No markdown, no extra keys."
   ].join("\n");
 }
@@ -1884,6 +2462,10 @@ function parseProvider(rawProvider: string | LlmProvider | undefined): LlmProvid
   }
 
   return "stub";
+}
+
+function isTestRuntime(): boolean {
+  return process.env.NODE_ENV === "test" || process.env.VITEST === "true";
 }
 
 async function fetchWithTimeout(

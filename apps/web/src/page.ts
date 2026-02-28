@@ -55,12 +55,15 @@ export function renderChatPage(): string {
       .page {
         width: 100%;
         margin: 0;
+        height: 100vh;
+        overflow: hidden;
       }
 
       .layout {
         display: grid;
         grid-template-columns: 198px 248px 1fr;
         gap: 0;
+        height: 100vh;
         min-height: 100vh;
       }
 
@@ -263,6 +266,9 @@ export function renderChatPage(): string {
         flex-direction: column;
         gap: 12px;
         padding: 12px 12px 11px;
+        height: 100vh;
+        min-height: 0;
+        overflow: hidden;
       }
 
       .history-title {
@@ -302,8 +308,13 @@ export function renderChatPage(): string {
         display: flex;
         flex-direction: column;
         gap: 10px;
-        overflow-y: auto;
+        overflow-y: scroll;
         padding-right: 2px;
+        flex: 1;
+        min-height: 0;
+        scrollbar-gutter: stable;
+        scrollbar-width: thin;
+        scrollbar-color: #1c3f85 #081b45;
       }
 
       .history-list::-webkit-scrollbar {
@@ -539,6 +550,59 @@ export function renderChatPage(): string {
         border-radius: 5px;
       }
 
+      .bubble.assistant pre.md-code {
+        margin: 8px 0 10px;
+        padding: 10px 12px;
+        border-radius: 10px;
+        border: 1px solid rgba(40, 69, 142, 0.55);
+        background: rgba(4, 14, 38, 0.9);
+        color: #b8cff1;
+        font-family: "JetBrains Mono", monospace;
+        font-size: 0.8rem;
+        line-height: 1.5;
+        overflow-x: auto;
+        white-space: pre;
+      }
+
+      .bubble.assistant pre.md-code code {
+        background: transparent;
+        padding: 0;
+        border-radius: 0;
+        font-size: 1em;
+      }
+
+      .bubble.assistant table.chat-md-table {
+        width: 100%;
+        border-collapse: collapse;
+        margin: 8px 0 10px;
+        font-size: 0.79rem;
+        display: block;
+        overflow-x: auto;
+        white-space: nowrap;
+      }
+
+      .bubble.assistant table.chat-md-table thead th {
+        background: rgba(34, 61, 126, 0.45);
+        color: #bfd7fb;
+        padding: 6px 10px;
+        border-bottom: 1px solid rgba(52, 84, 162, 0.7);
+        text-align: left;
+        font-weight: 600;
+      }
+
+      .bubble.assistant table.chat-md-table tbody td {
+        color: #c7d9f2;
+        padding: 5px 10px;
+        border-bottom: 1px solid rgba(37, 63, 126, 0.35);
+        max-width: 280px;
+        overflow: hidden;
+        text-overflow: ellipsis;
+      }
+
+      .bubble.assistant table.chat-md-table tbody tr:last-child td {
+        border-bottom: none;
+      }
+
       .bubble.assistant h1,
       .bubble.assistant h2,
       .bubble.assistant h3,
@@ -558,6 +622,16 @@ export function renderChatPage(): string {
       .bubble.assistant h2 { font-size: 1.04rem; }
       .bubble.assistant h3 { font-size: 0.95rem; }
       .bubble.assistant h4 { font-size: 0.9rem; }
+
+      .bubble.assistant ul,
+      .bubble.assistant ol {
+        margin: 6px 0 10px 18px;
+        padding-left: 0;
+      }
+
+      .bubble.assistant li {
+        margin-bottom: 6px;
+      }
 
       .bubble.assistant ul,
       .bubble.assistant ol {
@@ -1466,15 +1540,24 @@ export function renderChatPage(): string {
           chatSessionTitleEl.textContent = active ? active.title : "Project Overload";
         }
 
-        function setActiveChatState(nextState) {
-          const active = getActiveChat();
-          if (!active) {
+        function setChatState(chatId, nextState) {
+          const chat = getChatById(chatId);
+          if (!chat) {
             return;
           }
-          active.state = cloneJson(nextState);
-          touchChat(active);
+          chat.state = cloneJson(nextState);
+          touchChat(chat);
           saveChatsToStorage();
           renderHistoryList();
+          if (chat.id === activeChatIdRef.value) {
+            stateRef.value = cloneJson(chat.state);
+            refreshDecisionFromState(stateRef.value);
+            renderSessionTitle();
+          }
+        }
+
+        function setActiveChatState(nextState) {
+          setChatState(activeChatIdRef.value, nextState);
         }
 
         function renderHistoryList() {
@@ -1572,9 +1655,47 @@ export function renderChatPage(): string {
         }
 
         /* â”€â”€ Markdown renderer â”€â”€ */
+        function prettifyAssistantText(rawText) {
+          if (typeof rawText !== "string") {
+            return "";
+          }
+
+          let text = rawText.replace(/\\r\\n?/g, "\\n").trim();
+          if (text.length === 0) {
+            return "";
+          }
+
+          const tripleBacktick = String.fromCharCode(96, 96, 96);
+          if (text.indexOf(tripleBacktick) !== -1) {
+            return text;
+          }
+
+          // Normalize packed bullets into line-separated bullets.
+          text = text
+            .replace(/\\s+•\\s+/g, "\\n• ")
+            .replace(/\\s+-\\s+(?=[A-ZQ]\\w)/g, "\\n- ");
+
+          const newlineCount = (text.match(/\\n/g) || []).length;
+          const looksDense = newlineCount < 4 && text.length > 240;
+          if (looksDense) {
+            // Break long single blobs into readable sections.
+            text = text
+              .replace(/\\s+(Q\\d+\\s*[—:-])/g, "\\n\\n$1")
+              .replace(
+                /\\s+(One thing worth flagging|Important note|Note:|Assumption:|Recommendation:|Coverage:|Data source:)/gi,
+                "\\n\\n$1"
+              )
+              .replace(/([.!?])\\s+(?=[A-Z][a-z])/g, "$1\\n");
+          }
+
+          return text.replace(/\\n{3,}/g, "\\n\\n");
+        }
+
         function renderMarkdown(text) {
+          const readableText = prettifyAssistantText(text);
+
           // Escape HTML entities to prevent XSS
-          const esc = text
+          const esc = readableText
             .replace(/&/g, "&amp;")
             .replace(/</g, "&lt;")
             .replace(/>/g, "&gt;");
@@ -1583,6 +1704,33 @@ export function renderChatPage(): string {
           const out = [];
           let inList = false;
           let listTag = "";
+          const fence = String.fromCharCode(96, 96, 96);
+
+          function splitTableCells(line) {
+            if (typeof line !== "string" || line.indexOf("|") === -1) {
+              return null;
+            }
+            let normalized = line.trim();
+            if (normalized.length === 0) {
+              return null;
+            }
+            if (normalized.startsWith("|")) {
+              normalized = normalized.slice(1);
+            }
+            if (normalized.endsWith("|")) {
+              normalized = normalized.slice(0, -1);
+            }
+            const cells = normalized.split("|").map((cell) => cell.trim());
+            return cells.length > 0 ? cells : null;
+          }
+
+          function isTableSeparator(line) {
+            const cells = splitTableCells(line);
+            if (!cells || cells.length === 0) {
+              return false;
+            }
+            return cells.every((cell) => /^:?-{3,}:?$/.test(cell.replace(/\\s+/g, "")));
+          }
 
           function closeList() {
             if (inList) {
@@ -1594,6 +1742,63 @@ export function renderChatPage(): string {
 
           for (let i = 0; i < lines.length; i++) {
             const line = lines[i];
+
+            // Fenced code blocks
+            if (line.trim().startsWith(fence)) {
+              closeList();
+              const codeLines = [];
+              i += 1;
+              while (i < lines.length && !lines[i].trim().startsWith(fence)) {
+                codeLines.push(lines[i]);
+                i += 1;
+              }
+              out.push('<pre class="md-code"><code>' + codeLines.join("\\n") + "</code></pre>");
+              continue;
+            }
+
+            // Markdown tables
+            const headerCells = splitTableCells(line);
+            if (headerCells && i + 1 < lines.length && isTableSeparator(lines[i + 1])) {
+              closeList();
+              const rows = [];
+              i += 2;
+              while (i < lines.length) {
+                const rowLine = lines[i];
+                if (rowLine.trim().length === 0 || rowLine.indexOf("|") === -1) {
+                  i -= 1;
+                  break;
+                }
+                if (isTableSeparator(rowLine)) {
+                  i += 1;
+                  continue;
+                }
+                const rowCells = splitTableCells(rowLine);
+                if (!rowCells || rowCells.length === 0) {
+                  i -= 1;
+                  break;
+                }
+                rows.push(rowCells);
+                i += 1;
+              }
+
+              const columnCount = Math.max(
+                headerCells.length,
+                rows.reduce((max, row) => Math.max(max, row.length), 0)
+              );
+              const normalizedHeaders = Array.from({ length: columnCount }, (_, index) => headerCells[index] ?? "");
+              const thead =
+                "<thead><tr>" +
+                normalizedHeaders.map((cell) => "<th>" + inlineFormat(cell) + "</th>").join("") +
+                "</tr></thead>";
+              const tbodyRows = rows
+                .map((rowCells) => {
+                  const normalized = Array.from({ length: columnCount }, (_, index) => rowCells[index] ?? "");
+                  return "<tr>" + normalized.map((cell) => "<td>" + inlineFormat(cell) + "</td>").join("") + "</tr>";
+                })
+                .join("");
+              out.push('<table class="chat-md-table">' + thead + "<tbody>" + tbodyRows + "</tbody></table>");
+              continue;
+            }
 
             // Headings
             const headingMatch = line.match(/^(#{1,4})\\s+(.+)$/);
@@ -1826,7 +2031,14 @@ export function renderChatPage(): string {
             };
           }
 
+          if (state.scope_clarification_pending === true && state.scope_finalized !== true) {
+            return null;
+          }
+
           if (state.prep_pending === true) {
+            if (state.scope_finalized !== true || state.scope_clarification_pending === true) {
+              return null;
+            }
             return {
               kind: "prep",
               title: "Data preparation decision pending.",
@@ -1839,6 +2051,9 @@ export function renderChatPage(): string {
           }
 
           if (state.scope_pending === true) {
+            if (state.scope_finalized !== true || state.scope_clarification_pending === true) {
+              return null;
+            }
             return {
               kind: "analysis",
               title: "Analysis decision pending.",
@@ -1852,7 +2067,7 @@ export function renderChatPage(): string {
 
           // Recovery fallback for stale state snapshots: keep workflow actionable.
           if (
-            hasAnsweredScopeItems &&
+            state.scope_finalized === true &&
             state.prep_complete !== true &&
             state.prep_pending !== true &&
             state.scope_clarification_pending !== true
@@ -1872,6 +2087,7 @@ export function renderChatPage(): string {
             state.prep_complete === true &&
             state.scope_pending !== true &&
             state.prep_pending !== true &&
+            state.scope_clarification_pending !== true &&
             Array.isArray(state.prepared_payloads) &&
             state.prepared_payloads.length > 0
           ) {
@@ -1893,7 +2109,7 @@ export function renderChatPage(): string {
           const disabled = composerStateRef.busy || composerStateRef.locked;
           sendButtonEl.disabled = disabled;
           inputEl.disabled = disabled;
-          newChatButtonEl.disabled = composerStateRef.busy;
+          newChatButtonEl.disabled = Boolean(activeRunPollId);
           inputEl.placeholder =
             composerStateRef.locked && decisionRef.value
               ? decisionRef.value.lockPlaceholder
@@ -1943,7 +2159,9 @@ export function renderChatPage(): string {
               state &&
                 (state.awaiting_custom_day_input === true ||
                   (decisionRef.value &&
-                    decisionRef.value.kind === "refinement"))
+                    (decisionRef.value.kind === "refinement" ||
+                      decisionRef.value.kind === "prep" ||
+                      decisionRef.value.kind === "analysis")))
             );
           composerStateRef.locked = Boolean(
             decisionRef.value &&
@@ -2022,7 +2240,17 @@ export function renderChatPage(): string {
                   return;
                 }
                 var s;
-                try { s = JSON.parse(result.text); } catch { setTimeout(poll, POLL_INTERVAL_MS); return; }
+                try {
+                  s = JSON.parse(result.text);
+                } catch {
+                  var trimmedText = String(result.text || "").trim();
+                  if (/^<!doctype html/i.test(trimmedText) || /^<html/i.test(trimmedText)) {
+                    abortPoll("Final analysis response was invalid. Please run analysis again.");
+                    return;
+                  }
+                  setTimeout(poll, POLL_INTERVAL_MS);
+                  return;
+                }
 
                 if (s && s.status === "succeeded") {
                   activeRunPollId = null;
@@ -2075,7 +2303,14 @@ export function renderChatPage(): string {
                   abortPoll("Report run returned an unexpected status. Please try running again.");
                 }
               })
-              .catch(function() { setTimeout(poll, POLL_INTERVAL_MS); });   // network error — retry
+              .catch(function(error) {
+                var message = error && error.message ? String(error.message) : "";
+                if (/unexpected token|doctype|not valid json|non-json/i.test(message)) {
+                  abortPoll("Final analysis response was invalid. Please run analysis again.");
+                  return;
+                }
+                setTimeout(poll, POLL_INTERVAL_MS);
+              });   // network error -> retry
           }
 
           setTimeout(poll, POLL_INTERVAL_MS);   // first poll after 3s
@@ -2427,16 +2662,15 @@ export function renderChatPage(): string {
             card.appendChild(purpose);
           }
 
-          const meta = document.createElement("div");
-          meta.className = "query-card-meta";
-          meta.innerHTML = "<span>Raw rows: <strong>" + (payload.row_count_before_reduction ?? "?") + "</strong></span><span>Prepared: <strong>" + (payload.prepared_row_count ?? "?") + "</strong></span>";
           if (payload.warnings && payload.warnings.length > 0) {
+            const meta = document.createElement("div");
+            meta.className = "query-card-meta";
             const warn = document.createElement("span");
             warn.style.color = "#f59e0b";
             warn.textContent = "\u26A0 " + payload.warnings[0];
             meta.appendChild(warn);
+            card.appendChild(meta);
           }
-          card.appendChild(meta);
 
           const sqls = payload.preparation_sqls || [];
           for (const sql of sqls.slice(0, 3)) {
@@ -2557,6 +2791,12 @@ export function renderChatPage(): string {
             return;
           }
 
+          const targetChatId = opts.chatId || activeChatIdRef.value;
+          const targetChat = getChatById(targetChatId);
+          if (!targetChat) {
+            return;
+          }
+
           const value = String(message || "").trim();
           if (!value) {
             return;
@@ -2568,9 +2808,11 @@ export function renderChatPage(): string {
               : value;
 
           appendMessage("user", displayMessage, null, null, {
+            chatId: targetChatId,
             trackForNaming: opts.trackForNaming !== false,
             rawUserMessage: value
           });
+          const requestStateSnapshot = cloneJson(targetChat.state);
           setBusy(true);
           const isRunConfirm = /^(confirm|yes|go ahead|proceed|looks good|lgtm|run it|do it|execute|approved|ok|okay|sure|start)\\b/i.test(value);
           showThinking(isRunConfirm ? "planning" : "chatting");
@@ -2581,7 +2823,7 @@ export function renderChatPage(): string {
               headers: { "content-type": "application/json" },
               body: JSON.stringify({
                 message: value,
-                state: stateRef.value
+                state: requestStateSnapshot
               })
             });
 
@@ -2589,25 +2831,41 @@ export function renderChatPage(): string {
             try {
               payload = JSON.parse(await response.text());
             } catch {
-              appendMessage("assistant", "Server error — please try again in a moment.", null, null, { trackForNaming: false });
+              appendMessage("assistant", "Server error — please try again in a moment.", null, null, {
+                chatId: targetChatId,
+                trackForNaming: false
+              });
               return;
             }
             if (!response.ok) {
               const errorText = payload && typeof payload.message === "string" ? payload.message : "Chat request failed";
-              appendMessage("assistant", "Error: " + errorText);
+              appendMessage("assistant", "Error: " + errorText, null, null, {
+                chatId: targetChatId,
+                trackForNaming: false
+              });
               return;
             }
 
-            stateRef.value = payload.state;
-            setActiveChatState(payload.state);
-            refreshDecisionFromState(stateRef.value);
+            setChatState(targetChatId, payload.state);
             appendMessage("assistant", payload.assistant_message, payload.pdf_download_url, payload.exec_brief_html, {
+              chatId: targetChatId,
               trackForNaming: false,
               prepared_payloads: Array.isArray(payload.prepared_payloads) ? payload.prepared_payloads : (payload.state && Array.isArray(payload.state.prepared_payloads) ? payload.state.prepared_payloads : null)
             });
           } catch (error) {
             const errorText = error instanceof Error ? error.message : "Unknown error";
+            if (/unexpected token|doctype|not valid json|non-json/i.test(errorText)) {
+              appendMessage(
+                "assistant",
+                "Final analysis response was invalid. Please retry the same action once.",
+                null,
+                null,
+                { chatId: targetChatId, trackForNaming: false }
+              );
+              return;
+            }
             appendMessage("assistant", "Network error: " + errorText, null, null, {
+              chatId: targetChatId,
               trackForNaming: false
             });
           } finally {
@@ -2667,6 +2925,7 @@ export function renderChatPage(): string {
             prep_pending: false,
             prep_complete: false,
             scope_pending: false,
+            scope_finalized: false,
             metric_definitions: [],
             pending_metric_confirmations: [],
             pending_metric_resume_message: null,
@@ -2832,8 +3091,26 @@ export function renderChatPage(): string {
             return;
           }
 
-          chatsRef.value = remote;
-          activeChatIdRef.value = remote[0].id;
+          const local = chatsRef.value.slice();
+          const mergedById = new Map();
+
+          for (const session of remote) {
+            mergedById.set(session.id, session);
+          }
+          for (const session of local) {
+            if (!mergedById.has(session.id)) {
+              mergedById.set(session.id, session);
+            }
+          }
+
+          const merged = Array.from(mergedById.values())
+            .sort((a, b) => Date.parse(b.updated_at) - Date.parse(a.updated_at))
+            .slice(0, MAX_STORED_CHATS);
+
+          chatsRef.value = merged;
+          if (!getChatById(activeChatIdRef.value)) {
+            activeChatIdRef.value = merged[0].id;
+          }
           saveChatsToStorage(true);
           activateChat(activeChatIdRef.value);
         }
@@ -2867,15 +3144,17 @@ export function renderChatPage(): string {
           }
         });
 
-        newChatButtonEl.addEventListener("click", () => {
-          if (runtimeStatusRef.busy) {
-            return;
-          }
-          createNewChatAndActivate();
-          if (!composerStateRef.locked) {
-            inputEl.focus();
-          }
-        });
+        if (newChatButtonEl) {
+          newChatButtonEl.addEventListener("click", () => {
+            if (activeRunPollId) {
+              return;
+            }
+            createNewChatAndActivate();
+            if (!composerStateRef.locked) {
+              inputEl.focus();
+            }
+          });
+        }
 
         initializeSessions();
         void hydrateSessionsFromServer();
@@ -2890,3 +3169,4 @@ export function renderChatPage(): string {
   </body>
 </html>`;
 }
+

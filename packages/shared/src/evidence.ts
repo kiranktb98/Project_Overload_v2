@@ -49,6 +49,12 @@ export const QueryStrategyOutputSchema = z.object({
   queries: z.array(PlannedQuerySchema).min(1).max(5)
 });
 
+export const AnalystAdditionalQueryRequestSchema = z.object({
+  reason: z.string().min(1),
+  question: z.string().min(1),
+  required_fields: z.array(z.string().min(1)).max(12).default([])
+});
+
 export const BatchAnalysisSchema = z.object({
   request_id: z.string().min(1),
   batch_index: z.number().int().min(0),
@@ -57,7 +63,8 @@ export const BatchAnalysisSchema = z.object({
   risks: z.array(z.string().min(1)).default([]),
   recommendations: z.array(z.string().min(1)).default([]),
   confidence_score: z.number().min(0).max(1),
-  appendix_refs: z.array(z.string().min(1)).default([])
+  appendix_refs: z.array(z.string().min(1)).default([]),
+  additional_query_requests: z.array(AnalystAdditionalQueryRequestSchema).max(2).default([])
 });
 
 export const ExecBriefSchema = z.object({
@@ -78,6 +85,7 @@ export type EvidenceRow = z.infer<typeof EvidenceRowSchema>;
 export type EvidencePacket = z.infer<typeof EvidencePacketSchema>;
 export type AnalystInput = z.infer<typeof AnalystInputSchema>;
 export type BatchAnalysis = z.infer<typeof BatchAnalysisSchema>;
+export type AnalystAdditionalQueryRequest = z.infer<typeof AnalystAdditionalQueryRequestSchema>;
 export type ExecBrief = z.infer<typeof ExecBriefSchema>;
 export type QueryStrategyInput = z.infer<typeof QueryStrategyInputSchema>;
 export type SqlDialect = NonNullable<QueryStrategyInput["sql_dialect"]>;
