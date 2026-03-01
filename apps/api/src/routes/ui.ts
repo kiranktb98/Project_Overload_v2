@@ -46,13 +46,19 @@ export function registerUiRoutes(app: FastifyInstance, store: MetadataStore): vo
     const username = parsed.data.username;
     let user = await store.getPlatformUserByUsername(username, context);
 
-    if (!user && username === "test123") {
-      const hashed = await hashPassword("test123");
+    const demoUsers: Record<string, { id: string; password: string }> = {
+      test123: { id: "user_test123", password: "test123" },
+      test456: { id: "user_test456", password: "test456" }
+    };
+
+    const demo = demoUsers[username];
+    if (!user && demo) {
+      const hashed = await hashPassword(demo.password);
       user = await store.upsertPlatformUser(
         {
-          id: "user_test123",
+          id: demo.id,
           tenant_id: context.tenant_id,
-          username: "test123",
+          username,
           password_salt: hashed.salt,
           password_hash: hashed.hash,
           is_active: true

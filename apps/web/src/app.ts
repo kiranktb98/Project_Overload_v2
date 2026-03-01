@@ -1,3 +1,4 @@
+import { AsyncLocalStorage } from "node:async_hooks";
 import Fastify from "fastify";
 import { z } from "zod";
 import {
@@ -51,6 +52,8 @@ class ChatStageError extends Error {
   }
 }
 
+const webUserContext = new AsyncLocalStorage<{ username: string }>();
+
 export function buildWebApp(options: WebAppDependencies = {}) {
   const app = Fastify({
     logger: {
@@ -62,7 +65,15 @@ export function buildWebApp(options: WebAppDependencies = {}) {
   );
   const apiClient = createWebApiClient({
     base_url: apiBaseUrl,
-    fetch_impl: options.fetch_impl
+    fetch_impl: options.fetch_impl,
+    header_provider: () => {
+      const ctx = webUserContext.getStore();
+      const headers: Record<string, string> = { ...buildApiAuthHeader() };
+      if (ctx?.username) {
+        headers["x-ui-user"] = ctx.username;
+      }
+      return headers;
+    }
   });
   const conversationClient =
     options.conversation_client ?? createConversationClientFromEnv({ fetch_impl: options.fetch_impl });
@@ -70,6 +81,14 @@ export function buildWebApp(options: WebAppDependencies = {}) {
     options.query_router ?? createQueryRouterClientFromEnv({ fetch_impl: options.fetch_impl });
   const authEnabled = isUiAuthEnabled();
   const orchestratorEnabled = isConversationOrchestratorEnabled();
+
+  // Thread user identity into AsyncLocalStorage so apiClient headers resolve per-user
+  app.addHook("preHandler", async (request) => {
+    const username = getAuthenticatedUsername(request.headers.cookie);
+    if (username) {
+      webUserContext.enterWith({ username });
+    }
+  });
 
   app.addHook("preHandler", async (request, reply) => {
     if (!authEnabled) {
@@ -427,149 +446,177 @@ export function buildWebApp(options: WebAppDependencies = {}) {
     }
   });
 
-  app.get("/api/db/context", async (_request, reply) => {
+  app.get("/api/db/context", async (request, reply) => {
+    const username = getAuthenticatedUsername(request.headers.cookie);
     return proxyToApi({
       fetch_impl: options.fetch_impl,
       api_base_url: apiBaseUrl,
       method: "GET",
       path: "/connections/active",
+      additional_headers: username ? { "x-ui-user": username } : undefined,
       reply
     });
   });
 
-  app.get("/api/db/tables", async (_request, reply) => {
+  app.get("/api/db/tables", async (request, reply) => {
+    const username = getAuthenticatedUsername(request.headers.cookie);
     return proxyToApi({
       fetch_impl: options.fetch_impl,
       api_base_url: apiBaseUrl,
       method: "GET",
       path: "/connections/tables",
+      additional_headers: username ? { "x-ui-user": username } : undefined,
       reply
     });
   });
 
   app.post("/api/db/test", async (request, reply) => {
+    const username = getAuthenticatedUsername(request.headers.cookie);
     return proxyToApi({
       fetch_impl: options.fetch_impl,
       api_base_url: apiBaseUrl,
       method: "POST",
       path: "/connections/test",
       body: request.body,
+      additional_headers: username ? { "x-ui-user": username } : undefined,
       reply
     });
   });
 
   app.post("/api/db/connect", async (request, reply) => {
+    const username = getAuthenticatedUsername(request.headers.cookie);
     return proxyToApi({
       fetch_impl: options.fetch_impl,
       api_base_url: apiBaseUrl,
       method: "POST",
       path: "/connections/connect",
       body: request.body,
+      additional_headers: username ? { "x-ui-user": username } : undefined,
       reply
     });
   });
 
   app.post("/api/db/allowlist", async (request, reply) => {
+    const username = getAuthenticatedUsername(request.headers.cookie);
     return proxyToApi({
       fetch_impl: options.fetch_impl,
       api_base_url: apiBaseUrl,
       method: "POST",
       path: "/connections/allowlist",
       body: request.body,
+      additional_headers: username ? { "x-ui-user": username } : undefined,
       reply
     });
   });
 
-  app.post("/api/db/validate", async (_request, reply) => {
+  app.post("/api/db/validate", async (request, reply) => {
+    const username = getAuthenticatedUsername(request.headers.cookie);
     return proxyToApi({
       fetch_impl: options.fetch_impl,
       api_base_url: apiBaseUrl,
       method: "POST",
       path: "/connections/validate",
       body: {},
+      additional_headers: username ? { "x-ui-user": username } : undefined,
       reply
     });
   });
 
   app.post("/api/db/fix-script", async (request, reply) => {
+    const username = getAuthenticatedUsername(request.headers.cookie);
     return proxyToApi({
       fetch_impl: options.fetch_impl,
       api_base_url: apiBaseUrl,
       method: "POST",
       path: "/connections/fix-script",
       body: request.body,
+      additional_headers: username ? { "x-ui-user": username } : undefined,
       reply
     });
   });
 
-  app.get("/api/db/query-logs", async (_request, reply) => {
+  app.get("/api/db/query-logs", async (request, reply) => {
+    const username = getAuthenticatedUsername(request.headers.cookie);
     return proxyToApi({
       fetch_impl: options.fetch_impl,
       api_base_url: apiBaseUrl,
       method: "GET",
       path: "/connections/query-logs",
+      additional_headers: username ? { "x-ui-user": username } : undefined,
       reply
     });
   });
 
   app.post("/api/db/query", async (request, reply) => {
+    const username = getAuthenticatedUsername(request.headers.cookie);
     return proxyToApi({
       fetch_impl: options.fetch_impl,
       api_base_url: apiBaseUrl,
       method: "POST",
       path: "/connections/query",
       body: request.body,
+      additional_headers: username ? { "x-ui-user": username } : undefined,
       reply
     });
   });
 
-  app.get("/api/db/catalog", async (_request, reply) => {
+  app.get("/api/db/catalog", async (request, reply) => {
+    const username = getAuthenticatedUsername(request.headers.cookie);
     return proxyToApi({
       fetch_impl: options.fetch_impl,
       api_base_url: apiBaseUrl,
       method: "GET",
       path: "/connections/catalog",
+      additional_headers: username ? { "x-ui-user": username } : undefined,
       reply
     });
   });
 
-  app.post("/api/db/catalog/refresh", async (_request, reply) => {
+  app.post("/api/db/catalog/refresh", async (request, reply) => {
+    const username = getAuthenticatedUsername(request.headers.cookie);
     return proxyToApi({
       fetch_impl: options.fetch_impl,
       api_base_url: apiBaseUrl,
       method: "POST",
       path: "/connections/catalog/refresh",
+      additional_headers: username ? { "x-ui-user": username } : undefined,
       reply
     });
   });
 
-  app.post("/api/db/catalogue", async (_request, reply) => {
+  app.post("/api/db/catalogue", async (request, reply) => {
+    const username = getAuthenticatedUsername(request.headers.cookie);
     return proxyToApi({
       fetch_impl: options.fetch_impl,
       api_base_url: apiBaseUrl,
       method: "POST",
       path: "/connections/catalogue",
+      additional_headers: username ? { "x-ui-user": username } : undefined,
       reply
     });
   });
 
   app.post("/api/db/business-context", async (request, reply) => {
+    const username = getAuthenticatedUsername(request.headers.cookie);
     return proxyToApi({
       fetch_impl: options.fetch_impl,
       api_base_url: apiBaseUrl,
       method: "POST",
       path: "/connections/business-context",
       body: request.body,
+      additional_headers: username ? { "x-ui-user": username } : undefined,
       reply
     });
   });
 
-  app.post("/api/db/disconnect", async (_request, reply) => {
+  app.post("/api/db/disconnect", async (request, reply) => {
+    const username = getAuthenticatedUsername(request.headers.cookie);
     return proxyToApi({
       fetch_impl: options.fetch_impl,
       api_base_url: apiBaseUrl,
       method: "POST",
       path: "/connections/disconnect",
+      additional_headers: username ? { "x-ui-user": username } : undefined,
       reply
     });
   });

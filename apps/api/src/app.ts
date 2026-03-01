@@ -23,6 +23,7 @@ import { registerConnectionRoutes } from "./routes/connections";
 import { registerUiRoutes } from "./routes/ui";
 import { registerConfigRoutes } from "./routes/config";
 import { RuntimeConnectionManager } from "./dataplane/connection-manager";
+import { UserConnectionRegistry, userContextStorage } from "./dataplane/user-connection-registry";
 import { validateApiAuth } from "./security/request-context";
 
 export type ApiDependencies = {
@@ -34,6 +35,7 @@ export type ApiDependencies = {
   super_summary_client: SuperSummaryClient;
   planner_client: PlannerClient;
   connection_manager: RuntimeConnectionManager;
+  connection_registry: UserConnectionRegistry;
 };
 
 export async function buildApiApp(options: Partial<ApiDependencies> = {}) {
@@ -64,22 +66,28 @@ export async function buildApiApp(options: Partial<ApiDependencies> = {}) {
 
   const store = options.store ?? (await createMetadataStoreFromEnv());
   const localRowProviderRuntime = createLocalRowProviderFromEnv();
+  const registryOptions = {
+    fallback_row_provider: localRowProviderRuntime.row_provider,
+    fallback_source: localRowProviderRuntime.source as "synthetic" | "postgres" | undefined,
+    default_timeout_ms: Number.parseInt(process.env.DEFAULT_QUERY_TIMEOUT_MS ?? "900000", 10),
+    default_limit: Number.parseInt(process.env.DEFAULT_QUERY_ROW_LIMIT ?? "200", 10),
+    state_store: store
+  };
+  const connectionRegistry =
+    options.connection_registry ??
+    new UserConnectionRegistry(registryOptions);
+  await connectionRegistry.initFromEnv();
+
+  // Legacy single-manager for tests that inject connection_manager directly
   const connectionManager =
     options.connection_manager ??
-    new RuntimeConnectionManager({
-      fallback_row_provider: localRowProviderRuntime.row_provider,
-      fallback_source: localRowProviderRuntime.source,
-      default_timeout_ms: Number.parseInt(process.env.DEFAULT_QUERY_TIMEOUT_MS ?? "900000", 10),
-      default_limit: Number.parseInt(process.env.DEFAULT_QUERY_ROW_LIMIT ?? "200", 10),
-      state_store: store
-    });
-  await connectionManager.initFromEnv();
+    connectionRegistry.getOrCreate("default");
 
   const dataPlane =
     options.data_plane ??
     createDataPlaneFromEnv({
       local_stub_options: {
-        row_provider: (sql) => connectionManager.rowProvider(sql)
+        row_provider: (sql) => connectionRegistry.rowProvider(sql)
       }
     });
   const analystClient = options.analyst_client ?? createAnalystClientFromEnv();
@@ -118,6 +126,14 @@ export async function buildApiApp(options: Partial<ApiDependencies> = {}) {
     }
   });
 
+  // Thread user identity into AsyncLocalStorage for per-user connection resolution
+  app.addHook("preHandler", async (request: FastifyRequest) => {
+    const uiUser = (request.headers["x-ui-user"] as string | undefined)?.trim();
+    if (uiUser) {
+      userContextStorage.enterWith({ user_id: uiUser });
+    }
+  });
+
   app.get("/health", async () => ({ status: "ok", service: "api" }));
 
   registerSemanticRoutes(app, store);
@@ -130,9 +146,9 @@ export async function buildApiApp(options: Partial<ApiDependencies> = {}) {
     reportComposer,
     superSummaryClient,
     plannerClient,
-    connectionManager
+    connectionRegistry
   );
-  registerConnectionRoutes(app, connectionManager);
+  registerConnectionRoutes(app, connectionRegistry);
   registerConfigRoutes(app, store);
   registerUiRoutes(app, store);
 
@@ -160,7 +176,7 @@ export async function buildApiApp(options: Partial<ApiDependencies> = {}) {
       rateLimiter.destroy();
     }
     await store.close();
-    await connectionManager.close();
+    await connectionRegistry.closeAll();
     await localRowProviderRuntime.close();
   });
 

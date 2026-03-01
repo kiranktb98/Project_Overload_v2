@@ -1,6 +1,6 @@
-import type { FastifyInstance } from "fastify";
+import type { FastifyInstance, FastifyRequest } from "fastify";
 import { z } from "zod";
-import type { RuntimeConnectionManager } from "../dataplane/connection-manager";
+import type { UserConnectionRegistry } from "../dataplane/user-connection-registry";
 
 const ProviderSchema = z.enum(["postgres", "supabase", "neon", "mysql", "snowflake", "bigquery"]);
 
@@ -38,18 +38,25 @@ const QueryPayloadSchema = z.object({
   limit: z.number().int().min(1).max(2000).optional()
 });
 
-export function registerConnectionRoutes(app: FastifyInstance, manager: RuntimeConnectionManager): void {
-  app.get("/connections/active", async () => {
+function resolveUserId(request: FastifyRequest): string {
+  return (request.headers["x-ui-user"] as string | undefined)?.trim() || "default";
+}
+
+export function registerConnectionRoutes(app: FastifyInstance, registry: UserConnectionRegistry): void {
+  app.get("/connections/active", async (request) => {
+    const manager = registry.getOrCreate(resolveUserId(request));
     return manager.getContext();
   });
 
-  app.get("/connections/tables", async () => {
+  app.get("/connections/tables", async (request) => {
+    const manager = registry.getOrCreate(resolveUserId(request));
     return {
       relations: manager.getTables()
     };
   });
 
   app.post("/connections/test", async (request, reply) => {
+    const manager = registry.getOrCreate(resolveUserId(request));
     const payload = TestConnectionPayloadSchema.parse(request.body);
     try {
       const result = await manager.testConnection(payload.connection_string, payload.tls_ca_pem, payload.provider);
@@ -63,6 +70,7 @@ export function registerConnectionRoutes(app: FastifyInstance, manager: RuntimeC
   });
 
   app.post("/connections/connect", async (request, reply) => {
+    const manager = registry.getOrCreate(resolveUserId(request));
     const payload = ConnectPayloadSchema.parse(request.body);
     try {
       const context = await manager.connect({
@@ -83,7 +91,8 @@ export function registerConnectionRoutes(app: FastifyInstance, manager: RuntimeC
     }
   });
 
-  app.get("/connections/catalog", async (_request, reply) => {
+  app.get("/connections/catalog", async (request, reply) => {
+    const manager = registry.getOrCreate(resolveUserId(request));
     const catalog = manager.getCatalog();
     if (!catalog) {
       return reply.code(200).send({ business_id: null, tables: [], business_context: "", cataloged_at: null });
@@ -91,7 +100,8 @@ export function registerConnectionRoutes(app: FastifyInstance, manager: RuntimeC
     return reply.code(200).send(catalog);
   });
 
-  app.post("/connections/catalog/refresh", async (_request, reply) => {
+  app.post("/connections/catalog/refresh", async (request, reply) => {
+    const manager = registry.getOrCreate(resolveUserId(request));
     try {
       const catalog = await manager.refreshCatalog();
       return reply.code(200).send(catalog ?? { tables: [], business_context: "", cataloged_at: null });
@@ -103,7 +113,8 @@ export function registerConnectionRoutes(app: FastifyInstance, manager: RuntimeC
     }
   });
 
-  app.post("/connections/catalogue", async (_request, reply) => {
+  app.post("/connections/catalogue", async (request, reply) => {
+    const manager = registry.getOrCreate(resolveUserId(request));
     try {
       const catalog = await manager.refreshCatalog();
       return reply.code(200).send(catalog ?? { business_id: null, tables: [], business_context: "", cataloged_at: null });
@@ -116,6 +127,7 @@ export function registerConnectionRoutes(app: FastifyInstance, manager: RuntimeC
   });
 
   app.post("/connections/business-context", async (request, reply) => {
+    const manager = registry.getOrCreate(resolveUserId(request));
     const payload = BusinessContextPayloadSchema.parse(request.body);
     try {
       manager.updateBusinessContext(payload.business_context);
@@ -129,6 +141,7 @@ export function registerConnectionRoutes(app: FastifyInstance, manager: RuntimeC
   });
 
   app.post("/connections/allowlist", async (request, reply) => {
+    const manager = registry.getOrCreate(resolveUserId(request));
     const payload = AllowlistPayloadSchema.parse(request.body);
     try {
       const context = manager.updateAllowlist(payload.allowed_relations);
@@ -141,7 +154,8 @@ export function registerConnectionRoutes(app: FastifyInstance, manager: RuntimeC
     }
   });
 
-  app.post("/connections/validate", async (_request, reply) => {
+  app.post("/connections/validate", async (request, reply) => {
+    const manager = registry.getOrCreate(resolveUserId(request));
     try {
       const result = await manager.validateAllowlistAccess();
       return reply.code(200).send(result);
@@ -154,6 +168,7 @@ export function registerConnectionRoutes(app: FastifyInstance, manager: RuntimeC
   });
 
   app.post("/connections/fix-script", async (request, reply) => {
+    const manager = registry.getOrCreate(resolveUserId(request));
     const payload = FixScriptPayloadSchema.parse(request.body);
     try {
       const script = manager.generateFixScript({
@@ -174,13 +189,15 @@ export function registerConnectionRoutes(app: FastifyInstance, manager: RuntimeC
     }
   });
 
-  app.get("/connections/query-logs", async (_request, reply) => {
+  app.get("/connections/query-logs", async (request, reply) => {
+    const manager = registry.getOrCreate(resolveUserId(request));
     return reply.code(200).send({
       logs: manager.getQueryLogs()
     });
   });
 
   app.post("/connections/query", async (request, reply) => {
+    const manager = registry.getOrCreate(resolveUserId(request));
     const payload = QueryPayloadSchema.parse(request.body);
     try {
       const result = await manager.runSafeQuery(payload.sql, payload.limit);
@@ -193,7 +210,8 @@ export function registerConnectionRoutes(app: FastifyInstance, manager: RuntimeC
     }
   });
 
-  app.post("/connections/disconnect", async (_request, reply) => {
+  app.post("/connections/disconnect", async (request, reply) => {
+    const manager = registry.getOrCreate(resolveUserId(request));
     try {
       await manager.disconnect();
       return reply.code(200).send({
