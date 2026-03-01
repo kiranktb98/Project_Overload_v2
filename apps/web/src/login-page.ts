@@ -137,7 +137,7 @@ export function renderLoginPage(): string {
         <button type="submit">Sign In</button>
         <div class="status" id="status"></div>
       </form>
-      <div class="hint">Demo credentials: user = <strong>test123</strong>, password = <strong>test123</strong></div>
+      <div class="hint">Demo credentials: <strong>test123</strong> / <strong>test123</strong> or <strong>test456</strong> / <strong>test456</strong></div>
     </main>
 
     <script>
@@ -157,7 +157,7 @@ export function renderLoginPage(): string {
           });
 
           if (!response.ok) {
-            statusEl.textContent = "Invalid credentials. Use test123 / test123.";
+            statusEl.textContent = "Invalid credentials. Use test123 / test123 or test456 / test456.";
             return;
           }
 

@@ -459,12 +459,15 @@ export async function runReportContractPipeline(input: {
   const businessContext = extractBusinessContextFromCatalogSummary(input.catalog_summary);
   let analystTriggeredAdditionalQueries = false;
 
+  console.log("[analyst-loop] Starting analyst loop for %d questions", preparation.prepared_payloads.length);
+
   for (let payloadIndex = 0; payloadIndex < preparation.prepared_payloads.length; payloadIndex += 1) {
     let payload = preparation.prepared_payloads[payloadIndex]!;
     const questionLabel = [
       `Q${payload.question_number}. ${payload.question}`,
       `Report: "${input.contract.name}" | Audience: ${input.contract.audience} | Mode: ${insightMode}`
     ].join("\n");
+    console.log("[analyst-loop] Processing Q%d/%d: %s (rows=%d)", payloadIndex + 1, preparation.prepared_payloads.length, payload.question, payload.prepared_rows.length);
     const coverageGap = describeCoverageGap(payload);
 
     if (payload.prepared_rows.length === 0) {
@@ -585,6 +588,13 @@ export async function runReportContractPipeline(input: {
     );
   }
 
+  console.log("[analyst-loop] Completed: %d scoredAnalyses, %d perQuestionSummaries from %d total payloads",
+    scoredAnalyses.length, perQuestionSummaries.length, preparation.prepared_payloads.length);
+  for (const sa of scoredAnalyses) {
+    console.log("[analyst-loop]   -> %s confidence=%.2f highlights=%d risks=%d recs=%d",
+      sa.question_id, sa.confidence_score, sa.entry.highlights.length, sa.entry.risks.length, sa.entry.recommendations.length);
+  }
+
   const analyses: ReportComposerInput["analyses"] = scoredAnalyses.length > 0
     ? scoredAnalyses.map((item) => item.entry)
     : [{
@@ -594,6 +604,7 @@ export async function runReportContractPipeline(input: {
         recommendations: ["Review query strategy and data scope, then run again."],
         data_summary: "No sections produced."
       }];
+  console.log("[report-composer] Sending %d analyses and %d per_question_summaries to super-summary", analyses.length, perQuestionSummaries.length);
   const superSummary = await buildSuperSummaryForReport({
     super_summary_client: input.super_summary_client,
     contract: input.contract,

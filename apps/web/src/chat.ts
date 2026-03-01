@@ -273,6 +273,7 @@ type SafeQueryResponseRecord = z.output<typeof SafeQueryResponseSchema>;
 export type CreateWebApiClientOptions = {
   base_url: string;
   fetch_impl?: typeof fetch;
+  header_provider?: () => Record<string, string>;
 };
 
 export interface WebApiClient {
@@ -1154,6 +1155,12 @@ async function verifyDataScope(
 export function createWebApiClient(options: CreateWebApiClientOptions): WebApiClient {
   const fetcher = options.fetch_impl ?? fetch;
   const baseUrl = options.base_url.replace(/\/+$/, "");
+  const dynamicHeaders = options.header_provider ?? (() => ({}));
+  const mergeHeaders = (init: RequestInit): RequestInit => {
+    const extra = dynamicHeaders();
+    if (Object.keys(extra).length === 0) return init;
+    return { ...init, headers: { ...extra, ...(init.headers as Record<string, string> | undefined) } };
+  };
   const requestWithRetry = async (
     path: string,
     init: RequestInit,
@@ -1161,6 +1168,7 @@ export function createWebApiClient(options: CreateWebApiClientOptions): WebApiCl
   ): Promise<Response> => {
     const retries = options.retries ?? 1;
     const timeoutMs = options.timeout_ms ?? DEFAULT_WEB_API_TIMEOUT_MS;
+    const merged = mergeHeaders(init);
     let lastError: unknown;
 
     for (let attempt = 0; attempt <= retries; attempt += 1) {
@@ -1168,7 +1176,7 @@ export function createWebApiClient(options: CreateWebApiClientOptions): WebApiCl
         return await fetchWithTimeout(
           fetcher,
           `${baseUrl}${path}`,
-          init,
+          merged,
           timeoutMs
         );
       } catch (error) {
@@ -1185,36 +1193,36 @@ export function createWebApiClient(options: CreateWebApiClientOptions): WebApiCl
 
   return {
     async createContract(payload) {
-      const response = await fetcher(`${baseUrl}/report-contracts`, {
+      const response = await fetcher(`${baseUrl}/report-contracts`, mergeHeaders({
         method: "POST",
         headers: { "content-type": "application/json" },
         body: JSON.stringify(payload)
-      });
+      }));
 
       return parseJsonResponse(response, ReportContractSchema);
     },
     async listContracts() {
-      const response = await fetcher(`${baseUrl}/report-contracts`, {
+      const response = await fetcher(`${baseUrl}/report-contracts`, mergeHeaders({
         method: "GET"
-      });
+      }));
 
       return parseJsonResponse(response, z.array(ReportContractSchema));
     },
     async approveContract(contractId) {
-      const response = await fetcher(`${baseUrl}/report-contracts/${encodeURIComponent(contractId)}/approve`, {
+      const response = await fetcher(`${baseUrl}/report-contracts/${encodeURIComponent(contractId)}/approve`, mergeHeaders({
         method: "POST",
         headers: { "content-type": "application/json" },
         body: "{}"
-      });
+      }));
 
       return parseJsonResponse(response, ReportContractSchema);
     },
     async lockContract(contractId) {
-      const response = await fetcher(`${baseUrl}/report-contracts/${encodeURIComponent(contractId)}/lock`, {
+      const response = await fetcher(`${baseUrl}/report-contracts/${encodeURIComponent(contractId)}/lock`, mergeHeaders({
         method: "POST",
         headers: { "content-type": "application/json" },
         body: "{}"
-      });
+      }));
 
       return parseJsonResponse(response, ReportContractSchema);
     },
@@ -1268,11 +1276,11 @@ export function createWebApiClient(options: CreateWebApiClientOptions): WebApiCl
       return response;
     },
     async askRunQuestion(runId, question) {
-      const response = await fetcher(`${baseUrl}/report-runs/${encodeURIComponent(runId)}/qa`, {
+      const response = await fetcher(`${baseUrl}/report-runs/${encodeURIComponent(runId)}/qa`, mergeHeaders({
         method: "POST",
         headers: { "content-type": "application/json" },
         body: JSON.stringify({ question })
-      });
+      }));
 
       return parseJsonResponse(response, z.object({
         answer: z.string().min(1),
@@ -1282,54 +1290,54 @@ export function createWebApiClient(options: CreateWebApiClientOptions): WebApiCl
       }));
     },
     async saveRun(runId) {
-      const response = await fetcher(`${baseUrl}/report-runs/${encodeURIComponent(runId)}/save`, {
+      const response = await fetcher(`${baseUrl}/report-runs/${encodeURIComponent(runId)}/save`, mergeHeaders({
         method: "POST",
         headers: { "content-type": "application/json" },
         body: "{}"
-      });
+      }));
 
       return parseJsonResponse(response, SaveRunResponseSchema);
     },
     async scheduleContract(contractId, payload) {
-      const response = await fetcher(`${baseUrl}/report-contracts/${encodeURIComponent(contractId)}/schedule`, {
+      const response = await fetcher(`${baseUrl}/report-contracts/${encodeURIComponent(contractId)}/schedule`, mergeHeaders({
         method: "POST",
         headers: { "content-type": "application/json" },
         body: JSON.stringify(payload)
-      });
+      }));
 
       return parseJsonResponse(response, ScheduleContractResponseSchema);
     },
     async getConnectionContext() {
-      const response = await fetcher(`${baseUrl}/connections/active`, {
+      const response = await fetcher(`${baseUrl}/connections/active`, mergeHeaders({
         method: "GET"
-      });
+      }));
 
       return parseJsonResponse(response, ConnectionContextSchema);
     },
     async runSafeQuery(sql, limit) {
-      const response = await fetcher(`${baseUrl}/connections/query`, {
+      const response = await fetcher(`${baseUrl}/connections/query`, mergeHeaders({
         method: "POST",
         headers: { "content-type": "application/json" },
         body: JSON.stringify({
           sql,
           limit
         })
-      });
+      }));
 
       return parseJsonResponse(response, SafeQueryResponseSchema);
     },
     async getCatalog() {
-      const response = await fetcher(`${baseUrl}/connections/catalog`, {
+      const response = await fetcher(`${baseUrl}/connections/catalog`, mergeHeaders({
         method: "GET"
-      });
+      }));
 
       return parseJsonResponse(response, DataCatalogSchema);
     },
     async getTableHealth() {
       try {
-        const response = await fetcher(`${baseUrl}/connections/tables`, {
+        const response = await fetcher(`${baseUrl}/connections/tables`, mergeHeaders({
           method: "GET"
-        });
+        }));
 
         if (!response.ok) return [];
         const result = await parseJsonResponse(response, TableHealthResponseSchema);

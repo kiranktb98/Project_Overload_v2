@@ -22,6 +22,7 @@ import type {
 import { renderExecBriefHtml, renderPdfFromHtml } from "@project-overload/report-render";
 import type { MetadataStore } from "../store";
 import type { RuntimeConnectionManager } from "../dataplane/connection-manager";
+import type { UserConnectionRegistry } from "../dataplane/user-connection-registry";
 import { resolveRequestContext } from "../security/request-context";
 import {
   answerRunPayloadQuestionWithOrchestrator,
@@ -39,7 +40,7 @@ export function registerContractRoutes(
   reportComposer: ReportComposerClient,
   superSummaryClient: SuperSummaryClient,
   plannerClient: PlannerClient,
-  connectionManager: RuntimeConnectionManager
+  connectionRegistry: UserConnectionRegistry
 ): void {
   app.post("/worker-events", async (request, reply) => {
     const context = resolveRequestContext(request);
@@ -256,8 +257,8 @@ export function registerContractRoutes(
     // Fire pipeline in the background — no await so the HTTP response returns instantly.
     void (async () => {
       try {
-        const catalogSummary = buildCatalogSummary(connectionManager, contract.guardrails.allowed_relations);
-        const sqlDialect = resolveSqlDialect(connectionManager);
+        const catalogSummary = buildCatalogSummary(connectionRegistry.resolveForRequest(), contract.guardrails.allowed_relations);
+        const sqlDialect = resolveSqlDialect(connectionRegistry.resolveForRequest());
 
         const result = await runReportContractPipeline({
           run_id: runId,
@@ -334,8 +335,8 @@ export function registerContractRoutes(
     }
 
     try {
-      const catalogSummary = buildCatalogSummary(connectionManager, contract.guardrails.allowed_relations);
-      const sqlDialect = resolveSqlDialect(connectionManager);
+      const catalogSummary = buildCatalogSummary(connectionRegistry.resolveForRequest(), contract.guardrails.allowed_relations);
+      const sqlDialect = resolveSqlDialect(connectionRegistry.resolveForRequest());
       const result = await prepareReportContractData({
         contract,
         tenant_id: context.tenant_id,
@@ -438,7 +439,7 @@ export function registerContractRoutes(
       run,
       question: parsed.data.question,
       query_strategist: queryStrategist,
-      catalog_summary: buildCatalogSummary(connectionManager)
+      catalog_summary: buildCatalogSummary(connectionRegistry.resolveForRequest())
     });
     return reply.code(200).send(answer);
   });
