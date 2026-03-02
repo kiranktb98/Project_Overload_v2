@@ -826,7 +826,9 @@ function applyConversationOrchestratorDecision(
   if (newQuestions.length > 0 || followUpQuestions.length > 0) {
     next.scope_questions = renumberScopeQuestions(
       removeDuplicateScopeQuestions(
-        [...next.scope_questions, ...newQuestions, ...followUpQuestions].map(sanitizeScopeQuestionLanguage)
+        splitCompoundScopeQuestions(
+          [...next.scope_questions, ...newQuestions, ...followUpQuestions].map(sanitizeScopeQuestionLanguage)
+        )
       )
     );
     next.scope_clarification_pending = true;
@@ -3070,6 +3072,94 @@ function isMetricClarificationAlreadyCovered(
   }
 
   return false;
+}
+
+type ScopeQuestionEntry = {
+  question_number: number;
+  question: string;
+  clarification: string;
+  answer: string | null;
+  metric_key: string | null;
+  metric_display_name: string | null;
+  metric_definition_draft: string | null;
+  metric_source_columns: string[];
+};
+
+/**
+ * Detect and split compound scope questions that contain multiple analytical asks.
+ * E.g. "4-month refund trend + latest 2 months vs prior 2 months comparison" should
+ * become two separate questions.
+ */
+function splitCompoundScopeQuestions(questions: ScopeQuestionEntry[]): ScopeQuestionEntry[] {
+  const result: ScopeQuestionEntry[] = [];
+
+  for (const entry of questions) {
+    const parts = trySplitCompoundQuestion(entry.question);
+    if (parts.length <= 1) {
+      result.push(entry);
+      continue;
+    }
+    // Split into multiple entries, first inherits the answer/metric, rest get null
+    for (let i = 0; i < parts.length; i++) {
+      result.push({
+        ...entry,
+        question_number: 0, // will be renumbered later
+        question: parts[i],
+        clarification: i === 0 ? entry.clarification : "Split from compound question.",
+        answer: i === 0 ? entry.answer : null,
+        metric_key: i === 0 ? entry.metric_key : null,
+        metric_display_name: i === 0 ? entry.metric_display_name : null,
+        metric_definition_draft: null,
+        metric_source_columns: i === 0 ? entry.metric_source_columns : []
+      });
+    }
+  }
+
+  return result;
+}
+
+/**
+ * Try to detect if a question contains multiple distinct analytical asks joined by
+ * connectors like "+", "and", "as well as", "also".  Only split when each part
+ * contains a recognizable analytical keyword (trend, compare, breakdown, rank, etc.).
+ */
+function trySplitCompoundQuestion(question: string): string[] {
+  // Patterns that indicate distinct analytical asks
+  const analyticalKeywords =
+    /\b(trend|compare|comparison|vs|versus|breakdown|rank|top|highest|lowest|rate|ratio|correlation|distribution)\b/i;
+
+  // Try splitting on " + ", " and also ", " as well as ", "; also "
+  const splitters = [
+    /\s*\+\s*/,
+    /\s*;\s*(?:also\s+)?/,
+    /,\s*and\s+also\s+/i,
+    /,\s*as well as\s+/i
+  ];
+
+  for (const splitter of splitters) {
+    const parts = question.split(splitter).map((p) => p.trim()).filter((p) => p.length > 10);
+    if (parts.length >= 2 && parts.every((p) => analyticalKeywords.test(p))) {
+      return parts.map((p) => {
+        // Ensure each part ends with ?
+        const trimmed = p.replace(/[.?!]+$/, "").trim();
+        return `${trimmed.charAt(0).toUpperCase()}${trimmed.slice(1)}?`;
+      });
+    }
+  }
+
+  // Try splitting on " and " but only when both halves have analytical keywords
+  // AND the question is long enough to suggest it's compound (>100 chars)
+  if (question.length > 100) {
+    const andParts = question.split(/\band\b/i).map((p) => p.trim()).filter((p) => p.length > 15);
+    if (andParts.length === 2 && andParts.every((p) => analyticalKeywords.test(p))) {
+      return andParts.map((p) => {
+        const trimmed = p.replace(/[.?!]+$/, "").trim();
+        return `${trimmed.charAt(0).toUpperCase()}${trimmed.slice(1)}?`;
+      });
+    }
+  }
+
+  return [question];
 }
 
 function renumberScopeQuestions(
