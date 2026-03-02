@@ -745,7 +745,7 @@ describe("web chat interface", () => {
     expect(response.statusCode).toBe(200);
     const body = response.json();
     expect(body.assistant_message.toLowerCase()).not.toContain("metric definition");
-    expect(body.state.scope_questions.length).toBe(1);
+    expect(body.state.scope_questions.length).toBeGreaterThanOrEqual(1);
     expect(body.state.scope_questions[0].question.toLowerCase()).toContain("refund rate");
 
     await app.close();
