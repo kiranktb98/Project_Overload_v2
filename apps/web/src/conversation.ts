@@ -84,7 +84,7 @@ type ProviderRequest = {
 
 const DEFAULT_TIMEOUT_MS = 900_000;
 const DEFAULT_OPENAI_MODEL = "gpt-4.1-mini";
-const DEFAULT_OPENROUTER_MODEL = "anthropic/claude-sonnet-4.6";
+const DEFAULT_OPENROUTER_MODEL = "openai/gpt-5.2";
 const DEFAULT_OPENROUTER_BASE_URL = "https://openrouter.ai/api/v1";
 
 export function createPassthroughConversationClient(): ConversationClient {
@@ -144,7 +144,7 @@ export function createConversationClientFromEnv(
     openrouter_app_name: overrides.openrouter_app_name ?? process.env.OPENROUTER_APP_NAME,
     openrouter_app_url: overrides.openrouter_app_url ?? process.env.OPENROUTER_APP_URL,
     openai_model: overrides.openai_model ?? process.env.OPENAI_MODEL,
-    openrouter_model: overrides.openrouter_model ?? process.env.MODEL_GPT,
+    openrouter_model: overrides.openrouter_model ?? process.env.CONVERSATION_MODEL ?? process.env.MODEL_GPT,
     timeout_ms: overrides.timeout_ms ?? (Number.isNaN(timeoutFromEnv) ? undefined : timeoutFromEnv),
     require_provider: requireProvider,
     fetch_impl: overrides.fetch_impl
