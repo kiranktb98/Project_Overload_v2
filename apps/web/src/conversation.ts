@@ -84,7 +84,7 @@ type ProviderRequest = {
 
 const DEFAULT_TIMEOUT_MS = 900_000;
 const DEFAULT_OPENAI_MODEL = "gpt-4.1-mini";
-const DEFAULT_OPENROUTER_MODEL = "google/gemini-3-flash-preview";
+const DEFAULT_OPENROUTER_MODEL = "openai/gpt-5.2";
 const DEFAULT_OPENROUTER_BASE_URL = "https://openrouter.ai/api/v1";
 
 export function createPassthroughConversationClient(): ConversationClient {

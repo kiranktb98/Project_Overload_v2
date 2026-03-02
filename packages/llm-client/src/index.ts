@@ -1208,6 +1208,7 @@ export function createPlannerClientFromEnv(
     ...overrides,
     openrouterModel:
       overrides.openrouterModel ??
+      process.env.PLANNER_MODEL ??
       process.env.DATA_PREPARATION_MODEL ??
       process.env.QUERY_STRATEGIST_MODEL ??
       process.env.MODEL_GPT ??
@@ -1482,7 +1483,13 @@ export function createReportComposerClientFromEnv(
     throw new Error("LLM_PROVIDER=stub is disabled in runtime for report composer.");
   }
 
-  const options = resolveClientOptions(overrides);
+  const options = resolveClientOptions({
+    ...overrides,
+    openrouterModel:
+      overrides.openrouterModel ??
+      process.env.REPORT_COMPOSER_MODEL ??
+      process.env.MODEL_GPT
+  });
   return createReportComposerClient(options);
 }
 
