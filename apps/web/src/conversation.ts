@@ -84,7 +84,7 @@ type ProviderRequest = {
 
 const DEFAULT_TIMEOUT_MS = 900_000;
 const DEFAULT_OPENAI_MODEL = "gpt-4.1-mini";
-const DEFAULT_OPENROUTER_MODEL = "openai/gpt-5.2";
+const DEFAULT_OPENROUTER_MODEL = "google/gemini-3-flash-preview";
 const DEFAULT_OPENROUTER_BASE_URL = "https://openrouter.ai/api/v1";
 
 export function createPassthroughConversationClient(): ConversationClient {
@@ -586,6 +586,9 @@ function orchestrationSystemPrompt(input: ConversationTurnInput): string {
     "Never use context from other conversations.",
     "Use only this chat's structured state and recent turns.",
     "If a follow-up requires new data, emit it as a new scoped question (do not overwrite prior questions).",
+    "CRITICAL: When adding new_scope_questions, ALWAYS rephrase the user's words into a clean analytical question.",
+    "Never copy raw user text into question_text. Example: user says 'give me top 5 cities by refund value' → question_text should be 'Which are the top 5 cities by total refund value over the analysis window?'",
+    "When the user modifies existing questions (e.g. 'use refund value instead of order count for Q1'), emit resolved_scope_answers with the updated parameters — do NOT create a duplicate question.",
     "Prefer safe default assumptions first (timeline anchor, top-N, standard metric formula) and proceed.",
     "Only ask pending_inputs when ambiguity would materially change the answer.",
     "If pending scope items remain, keep next_owner=wait_for_user and include pending_inputs.",

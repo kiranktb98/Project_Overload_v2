@@ -3250,12 +3250,30 @@ function sanitizeScopeQuestionLanguage(entry: {
       .replace(/^data[_\s-]*analysis task\s*:\s*/i, "")
       .replace(/\bmetric definition\b/gi, "calculation")
       .replace(/^calculation\s*:\s*/i, "")
+      // Strip leading conversational fragments (e.g. ", its a full month now...")
+      .replace(/^[,;:.\s]+/, "")
+      // Remove leading conversational prefixes the LLM might dump from user text
+      .replace(/^(?:can you|could you|please|i want|i'd like|also|and also|hey|hi)\s+/i, "")
       .replace(/\s+/g, " ")
       .trim();
 
+  let question = rewrite(entry.question);
+
+  // If the question still looks like raw conversational text rather than an
+  // analytical question, attempt to extract the core ask.  A well-formed scope
+  // question should contain a question mark or start with an interrogative word.
+  if (
+    question.length > 0 &&
+    !/\?/.test(question) &&
+    !/^(?:what|which|how|why|where|when|who|is|are|do|does|compare|show|list|rank|calculate|determine)\b/i.test(question)
+  ) {
+    // Wrap the raw text into a question form so it reads properly in the scope list
+    question = `${question.charAt(0).toUpperCase()}${question.slice(1)}${question.endsWith("?") ? "" : "?"}`;
+  }
+
   return {
     ...entry,
-    question: rewrite(entry.question),
+    question,
     clarification: rewrite(entry.clarification)
   };
 }
@@ -3786,7 +3804,7 @@ function buildClarificationForScopeQuestion(question: string): string {
   }
 
   if (isComparison && isTrend) {
-    return "Confirm exact Period A vs Period B definitions, whether current partial month is included, and the primary date column/granularity.";
+    return "Confirm exact Period A vs Period B definitions, whether the window should include data from the current in-progress month or only completed months, and the primary date column/granularity.";
   }
 
   if (isComparison) {
@@ -3837,8 +3855,13 @@ function buildProposedDefaultForScopeQuestion(
   const todayLocal = getTodayDateStringInTimezone(timezone);
   const requestedMonths = getRequestedMonthWindowFromScope(state, text);
 
+  const currentMonth = getCurrentMonthName(timezone);
+  const monthComplete = isCurrentMonthComplete(timezone);
+  const monthStatus = monthComplete
+    ? `use full completed months only (${currentMonth} just started, use the previous ${requestedMonths} complete months)`
+    : `${currentMonth} is in progress — include partial data through ${todayLocal} if user requested it, otherwise use only completed months`;
   const baseTimeline = requestedMonths
-    ? `Use a ${requestedMonths}-month window ending on ${todayLocal} (${timezone}), including current partial month.`
+    ? `Use a ${requestedMonths}-month window anchored to today ${todayLocal} (${timezone}). ${monthStatus}.`
     : `Anchor relative windows to ${todayLocal} (${timezone}) using the primary date column from catalog.`;
 
   if (/\b(support|ticket|tickets|issue|issues|reason|reasons|resolution)\b/.test(text)) {
@@ -3884,6 +3907,40 @@ function buildProposedDefaultForScopeQuestion(
       : "";
 
   return `${baseTimeline}${contextHint}`.trim();
+}
+
+function isCurrentMonthComplete(timezone: string): boolean {
+  try {
+    const now = new Date();
+    const parts = new Intl.DateTimeFormat("en-CA", {
+      timeZone: timezone || "UTC",
+      year: "numeric",
+      month: "2-digit",
+      day: "2-digit"
+    }).formatToParts(now);
+    const year = Number(parts.find((p) => p.type === "year")?.value ?? "0");
+    const month = Number(parts.find((p) => p.type === "month")?.value ?? "0");
+    const day = Number(parts.find((p) => p.type === "day")?.value ?? "0");
+    // The previous month is always complete once we're in a new month (day >= 1).
+    // "Current month complete" means: should we treat the trailing month as full?
+    // If we're early in the month (1st-3rd), the previous month just finished,
+    // so a "last N months" window should use full completed months only.
+    return day <= 3;
+  } catch {
+    return false;
+  }
+}
+
+function getCurrentMonthName(timezone: string): string {
+  try {
+    return new Intl.DateTimeFormat("en-US", {
+      timeZone: timezone || "UTC",
+      month: "long",
+      year: "numeric"
+    }).format(new Date());
+  } catch {
+    return "the current month";
+  }
 }
 
 function getTodayDateStringInTimezone(timezone: string): string {
