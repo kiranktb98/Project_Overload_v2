@@ -2701,9 +2701,9 @@ async function buildScopeClarificationStep(
     api_client: apiClient,
     query_router: queryRouter
   });
-  const allQuestions = renumberScopeQuestions(
-    removeDuplicateScopeQuestions([...scopeQuestions, ...metricQuestions]).map(sanitizeScopeQuestionLanguage)
-  );
+  const coreQuestions = removeDuplicateScopeQuestions([...scopeQuestions, ...metricQuestions]).map(sanitizeScopeQuestionLanguage);
+  const suggestedQuestions = buildSuggestedScopeQuestions(coreQuestions, nextState);
+  const allQuestions = renumberScopeQuestions([...coreQuestions, ...suggestedQuestions]);
 
   nextState.scope_questions = allQuestions;
   nextState.scope_source_prompt = rawMessage;
@@ -3230,6 +3230,78 @@ function removeDuplicateScopeQuestions(
   }
 
   return kept;
+}
+
+/**
+ * Build 1-2 suggested additional scope questions based on the core questions,
+ * business context, and catalog data. These are marked with [Suggested] prefix
+ * so the user can accept, modify, or ignore them.
+ */
+function buildSuggestedScopeQuestions(
+  coreQuestions: ScopeQuestionEntry[],
+  state: ChatState
+): ScopeQuestionEntry[] {
+  const suggestions: ScopeQuestionEntry[] = [];
+  const coreText = coreQuestions.map((q) => q.question.toLowerCase()).join(" ");
+
+  const hasTrend = /\b(trend|monthly|weekly|over time|timeline)\b/.test(coreText);
+  const hasComparison = /\b(vs|versus|compare|comparison|prior|previous)\b/.test(coreText);
+  const hasRefund = /\b(refund|refunded|return|cancel)\b/.test(coreText);
+  const hasRevenue = /\b(revenue|sales|gmv|gross)\b/.test(coreText);
+  const hasTopN = /\b(top|highest|lowest|rank|ranking)\b/.test(coreText);
+  const hasGeo = /\b(city|cities|region|state|country|location)\b/.test(coreText);
+  const hasProduct = /\b(product|category|sku|item)\b/.test(coreText);
+  const hasSupport = /\b(support|ticket|issue|complaint)\b/.test(coreText);
+
+  // Suggest a comparison if they only asked for a trend
+  if (hasTrend && !hasComparison) {
+    suggestions.push({
+      question_number: 0, // will be renumbered
+      question: "[Suggested] How does the most recent period compare to the prior equivalent period (percentage and absolute change)?",
+      clarification: "Adding a period-over-period comparison gives context to the trend direction.",
+      answer: null,
+      metric_key: null,
+      metric_display_name: null,
+      metric_definition_draft: null,
+      metric_source_columns: []
+    });
+  }
+
+  // Suggest a breakdown if they have a trend/comparison but no dimension split
+  if ((hasTrend || hasComparison) && !hasTopN && !hasGeo && !hasProduct) {
+    const dimension = hasRefund
+      ? "refund reason or product category"
+      : hasRevenue
+        ? "product category or region"
+        : "key dimension (e.g., category, region, or channel)";
+    suggestions.push({
+      question_number: 0,
+      question: `[Suggested] What is the breakdown by ${dimension} for the analyzed metric?`,
+      clarification: "A dimensional breakdown helps identify which segments drive the overall numbers.",
+      answer: null,
+      metric_key: null,
+      metric_display_name: null,
+      metric_definition_draft: null,
+      metric_source_columns: []
+    });
+  }
+
+  // Suggest support ticket correlation for refund analyses
+  if (hasRefund && !hasSupport) {
+    suggestions.push({
+      question_number: 0,
+      question: "[Suggested] What are the top support ticket reasons linked to refunded orders?",
+      clarification: "Correlating support reasons with refunds can reveal root causes.",
+      answer: null,
+      metric_key: null,
+      metric_display_name: null,
+      metric_definition_draft: null,
+      metric_source_columns: []
+    });
+  }
+
+  // Limit to 2 suggestions max
+  return suggestions.slice(0, 2);
 }
 
 function areScopeQuestionsEquivalent(
@@ -4078,6 +4150,23 @@ async function applyScopeClarificationAnswersWithLlm(
       rawMessage
     );
 
+  // --- Confirm-all shortcut: apply proposed defaults to all unanswered questions ---
+  if (isConfirmAllScopeMessage(rawMessage)) {
+    let count = 0;
+    for (const entry of state.scope_questions) {
+      if (!entry.answer || entry.answer.trim().length === 0) {
+        const proposedDefault = buildProposedDefaultForScopeQuestion(state, entry);
+        entry.answer = `Confirmed: ${proposedDefault}`;
+        count++;
+      }
+    }
+    applyMetricDefinitionAnswersFromScope(state);
+    return {
+      answered_count: count,
+      all_answered: state.scope_questions.every((entry) => Boolean(entry.answer && entry.answer.trim().length > 0))
+    };
+  }
+
   const applyAssignment = (questionNumber: number, answer: string): number => {
     const target = state.scope_questions.find((entry) => entry.question_number === questionNumber);
     if (!target) {
@@ -4367,6 +4456,22 @@ function looksLikeAffirmativeScopeConfirmation(message: string): boolean {
   }
   return /\b(?:yes|yep|yeah|ok|okay|looks good|sounds good|go ahead|proceed|works|that works|approved|confirm(?:ed)?|use it|use that|do it)\b/.test(
     lower
+  );
+}
+
+/**
+ * Detect "confirm all" / "ok with everything" style blanket confirmations.
+ * These should apply the proposed default to every unanswered scope question.
+ */
+function isConfirmAllScopeMessage(rawMessage: string): boolean {
+  const lower = rawMessage.toLowerCase().trim();
+  // Reject if there's a negation
+  if (/\b(?:not|don't|do not|skip|cancel|hold|wait|except|but)\b/.test(lower)) {
+    return false;
+  }
+  return (
+    /\b(confirm\s*all|ok\s*with\s*everything|okay\s*with\s*everything|yes\s*to\s*all|accept\s*all|approve\s*all|defaults?\s*(?:are|is|look|looks)?\s*fine|all\s*(?:good|fine|ok|okay|looks?\s*good|sounds?\s*good))\b/.test(lower) ||
+    /^(confirm all|yes to all|accept all|approve all|all good|all fine|defaults are fine|ok with everything|okay with everything)\s*[.!]?$/.test(lower)
   );
 }
 
@@ -4775,10 +4880,10 @@ function buildScopeClarificationIntroMessage(state: ChatState): string {
     `Today is ${todayLocal} in ${timezone}. Relative windows will anchor to this date unless you override.`,
     "I have prepared proposed defaults for each question, but none of them are applied until you confirm or edit.",
     businessContextLine,
-    "You can answer all at once (for example: `Q1: ... Q2: ... Q3: ...`) or across multiple messages.",
+    "Just answer naturally — no need for numbered responses. You can also say 'confirm all' to accept all defaults at once.",
     questionLines.join("\n"),
     "",
-    "Once all items are explicitly resolved, I will proceed to data preparation."
+    "Once all items are confirmed, I will proceed to data preparation."
   ]
     .filter((line): line is string => typeof line === "string" && line.trim().length > 0)
     .join("\n");
@@ -4824,7 +4929,7 @@ function buildScopeClarificationPendingMessage(state: ChatState): string {
     "",
     "Still pending:",
     pendingLines.join("\n"),
-    "Reply with `Q1: ... Q2: ...` (all at once) or answer across multiple messages."
+    "Just answer naturally — no need for numbered responses. You can also say 'confirm all' to accept all defaults."
   ].join("\n");
 }
 
@@ -5767,7 +5872,7 @@ function isScopeFinalizeChoice(command: string): boolean {
   const normalized = command.trim();
   return (
     /^__ui_run_data_preparation__$/.test(normalized) ||
-    /^(looks good|scope looks good|finalize scope|lock scope|ready|all set|proceed|go ahead|yes|ok|okay|confirm)\s*[.!]?$/.test(
+    /^(looks good|scope looks good|finalize scope|lock scope|ready|all set|proceed|go ahead|yes|ok|okay|confirm|confirm all|yes to all|accept all|approve all|all good|all fine|defaults are fine|ok with everything|okay with everything)\s*[.!]?$/.test(
       normalized
     )
   );
