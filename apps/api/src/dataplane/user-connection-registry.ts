@@ -9,6 +9,7 @@ export const userContextStorage = new AsyncLocalStorage<{ user_id: string }>();
 
 export class UserConnectionRegistry {
   private readonly managers = new Map<string, RuntimeConnectionManager>();
+  private readonly initPromises = new Map<string, Promise<void>>();
   private readonly options: UserConnectionRegistryOptions;
 
   constructor(options: UserConnectionRegistryOptions = {}) {
@@ -24,6 +25,26 @@ export class UserConnectionRegistry {
         tenant_id: key
       });
       this.managers.set(key, manager);
+      // Restore any persisted connection for this user.
+      // Pass empty env so only the persisted state is restored, not the env-var
+      // fallback (which is only for the default/bootstrap manager).
+      const initPromise = manager.initFromEnv({}).catch(() => {});
+      this.initPromises.set(key, initPromise);
+    }
+    return manager;
+  }
+
+  /**
+   * Get or create a manager and ensure its persisted connection has been restored.
+   * Use this in route handlers where the connection state must be ready.
+   */
+  async getOrCreateReady(userId: string): Promise<RuntimeConnectionManager> {
+    const key = (userId || "").trim() || DEFAULT_USER_ID;
+    const manager = this.getOrCreate(key);
+    const pending = this.initPromises.get(key);
+    if (pending) {
+      await pending;
+      this.initPromises.delete(key);
     }
     return manager;
   }
@@ -42,6 +63,7 @@ export class UserConnectionRegistry {
     // Create and init a default manager so env-based connections work
     const defaultManager = this.getOrCreate(DEFAULT_USER_ID);
     await defaultManager.initFromEnv(env);
+    this.initPromises.delete(DEFAULT_USER_ID);
   }
 
   async closeAll(): Promise<void> {
@@ -51,5 +73,6 @@ export class UserConnectionRegistry {
     }
     await Promise.allSettled(promises);
     this.managers.clear();
+    this.initPromises.clear();
   }
 }
