@@ -643,6 +643,32 @@ export function buildWebApp(options: WebAppDependencies = {}) {
     });
   });
 
+  // ── Per-User Settings (metric definitions + business context) ──
+  app.get("/api/config/user-settings", async (request, reply) => {
+    const username = getAuthenticatedUsername(request.headers.cookie);
+    return proxyToApi({
+      fetch_impl: options.fetch_impl,
+      api_base_url: apiBaseUrl,
+      method: "GET",
+      path: "/config/user-settings",
+      additional_headers: username ? { "x-ui-user": username } : undefined,
+      reply
+    });
+  });
+
+  app.put("/api/config/user-settings", async (request, reply) => {
+    const username = getAuthenticatedUsername(request.headers.cookie);
+    return proxyToApi({
+      fetch_impl: options.fetch_impl,
+      api_base_url: apiBaseUrl,
+      method: "PUT",
+      path: "/config/user-settings",
+      body: request.body,
+      additional_headers: username ? { "x-ui-user": username } : undefined,
+      reply
+    });
+  });
+
   return app;
 }
 

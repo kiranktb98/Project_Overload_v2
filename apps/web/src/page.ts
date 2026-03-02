@@ -2949,6 +2949,7 @@ export function renderChatPage(): string {
             pending_metric_resume_message: null,
             pending_metric_resume_mode: null,
             scope_clarification_pending: false,
+            scope_business_context: null,
             scope_source_prompt: null,
             scope_questions: [],
             pending_query_sql: null,
@@ -2994,6 +2995,38 @@ export function renderChatPage(): string {
                   { chatId: chat.id, trackForNaming: false }
                 );
               }
+            }
+
+            // Seed persisted user settings (metric definitions + business context)
+            try {
+              const settingsRes = await fetch("/api/config/user-settings", { method: "GET" });
+              if (settingsRes.ok) {
+                let settings;
+                try { settings = JSON.parse(await settingsRes.text()); } catch { settings = null; }
+                if (settings && chat.state) {
+                  const defs = Array.isArray(settings.metric_definitions) ? settings.metric_definitions : [];
+                  if (defs.length > 0) {
+                    chat.state.metric_definitions = defs.map(function(m) {
+                      return {
+                        metric_key: m.metric_key || "",
+                        display_name: m.display_name || "",
+                        definition: m.definition || "",
+                        source_type: "derived",
+                        source_columns: [],
+                        requires_confirmation: false,
+                        confirmation_question: null,
+                        confirmed: true,
+                        context: "deep_analysis"
+                      };
+                    });
+                  }
+                  if (typeof settings.business_context === "string" && settings.business_context.trim().length > 0) {
+                    chat.state.scope_business_context = settings.business_context;
+                  }
+                }
+              }
+            } catch {
+              // User settings fetch is optional
             }
           } catch {
             // Ignore optional context bootstrap failures.

@@ -23,6 +23,15 @@ export type GlobalConfig = z.infer<typeof GlobalConfigSchema>;
 
 export const GLOBAL_CONFIG_STATE_KEY = "global_config";
 
+export const UserSettingsSchema = z.object({
+  metric_definitions: z.array(MetricDefinitionSchema).default([]),
+  business_context: z.string().default("")
+});
+
+export type UserSettings = z.infer<typeof UserSettingsSchema>;
+
+export const USER_SETTINGS_STATE_KEY = "user_settings_v1";
+
 /** Migrate old metric definitions that had a single `filters` string field. */
 export function migrateMetricDefinition(raw: Record<string, unknown>): Record<string, unknown> {
   if ("filters" in raw && !("filter_column" in raw)) {
