@@ -29,11 +29,11 @@ const DEFAULT_WEB_API_TIMEOUT_MS = parseTimeoutMsFromEnv(
   900_000
 );
 const PREPARE_TIMEOUT_MS = parseTimeoutMsFromEnv(
-  process.env.WEB_PREPARE_TIMEOUT_MS ?? process.env.WEB_API_TIMEOUT_MS ?? process.env.LLM_TIMEOUT_MS,
+  process.env.WEB_PREPARE_TIMEOUT_MS ?? process.env.WEB_API_TIMEOUT_MS,
   900_000
 );
 const PDF_TIMEOUT_MS = parseTimeoutMsFromEnv(
-  process.env.WEB_PDF_TIMEOUT_MS ?? process.env.WEB_API_TIMEOUT_MS ?? process.env.LLM_TIMEOUT_MS,
+  process.env.WEB_PDF_TIMEOUT_MS ?? process.env.WEB_API_TIMEOUT_MS,
   900_000
 );
 
@@ -329,6 +329,8 @@ export interface WebApiClient {
   runSafeQuery(sql: string, limit?: number): Promise<SafeQueryResponseRecord>;
   getCatalog(): Promise<DataCatalogRecord>;
   getTableHealth(): Promise<RelationHealthRecord[]>;
+  getUserSettings(): Promise<{ metric_definitions: Array<{ metric_key: string; display_name: string; definition: string }>; business_context: string }>;
+  saveUserSettings(settings: { metric_definitions: Array<{ metric_key: string; display_name: string; definition: string }>; business_context: string }): Promise<void>;
 }
 
 const TokenUsageSchema = z.object({
@@ -1346,6 +1348,33 @@ export function createWebApiClient(options: CreateWebApiClientOptions): WebApiCl
         return result.relations;
       } catch {
         return [];
+      }
+    },
+    async getUserSettings() {
+      try {
+        const response = await fetcher(`${baseUrl}/config/user-settings`, mergeHeaders({
+          method: "GET"
+        }));
+
+        if (!response.ok) return { metric_definitions: [], business_context: "" };
+        const data = await response.json();
+        return {
+          metric_definitions: Array.isArray(data.metric_definitions) ? data.metric_definitions : [],
+          business_context: typeof data.business_context === "string" ? data.business_context : ""
+        };
+      } catch {
+        return { metric_definitions: [], business_context: "" };
+      }
+    },
+    async saveUserSettings(settings) {
+      try {
+        await fetcher(`${baseUrl}/config/user-settings`, mergeHeaders({
+          method: "PUT",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify(settings)
+        }));
+      } catch {
+        // Fire-and-forget — don't block the chat flow
       }
     }
   };
@@ -2890,6 +2919,9 @@ async function generateLlmScopeQuestions(
       allowed_schemas: [...state.draft.allowed_schemas],
       draft_metrics: [...state.draft.metric_ids],
       draft_dimensions: [...state.draft.dimension_ids],
+      confirmed_metric_definitions: state.metric_definitions
+        .filter((m) => m.confirmed)
+        .map((m) => ({ metric_key: m.metric_key, display_name: m.display_name, definition: m.definition })),
       conversation_history: state.conversation_history
         .slice(-20)
         .map((turn) => ({ role: turn.role, content: turn.content }))
@@ -2948,6 +2980,9 @@ async function inferMetricDefinitionsFromLlm(input: {
       catalog_summary: catalog.catalog_summary,
       allowed_relations: [...input.state.draft.allowed_relations],
       allowed_schemas: [...input.state.draft.allowed_schemas],
+      existing_metric_definitions: input.state.metric_definitions
+        .filter((m) => m.confirmed)
+        .map((m) => ({ metric_key: m.metric_key, display_name: m.display_name, definition: m.definition })),
       conversation_history: input.state.conversation_history
         .slice(-20)
         .map((turn) => ({ role: turn.role, content: turn.content }))
@@ -3363,6 +3398,25 @@ function areScopeQuestionsEquivalent(
     return true;
   }
 
+  // Catch vague short questions that are subsets of more specific ones.
+  // E.g. "What are the top cities?" is a vague subset of
+  //      "Which cities have the highest refund rate over the past 4 months?"
+  const leftQTokens = tokenizeForSimilarity(left.question);
+  const rightQTokens = tokenizeForSimilarity(right.question);
+  const leftQFiltered = leftQTokens.filter((t) => !SCOPE_DEDUP_STOP_WORDS.has(t));
+  const rightQFiltered = rightQTokens.filter((t) => !SCOPE_DEDUP_STOP_WORDS.has(t));
+  if (leftQFiltered.length > 0 && rightQFiltered.length > 0) {
+    const shorter = leftQFiltered.length <= rightQFiltered.length ? leftQFiltered : rightQFiltered;
+    const longerSet = new Set(leftQFiltered.length > rightQFiltered.length ? leftQFiltered : rightQFiltered);
+    // If the shorter question is very vague (<=4 meaningful tokens) and all its tokens appear in the longer one
+    if (shorter.length <= 4) {
+      const allContained = shorter.every((t) => longerSet.has(t));
+      if (allContained && shorter.length >= 1) {
+        return true;
+      }
+    }
+  }
+
   const leftQuestionTokens = tokenizeForSimilarity(left.question).filter(
     (token) => !isGenericScopeToken(token)
   );
@@ -3457,6 +3511,13 @@ function looksLikeInternalScopeReasoning(question: string, clarification: string
     /\bdata[_\s-]*analysis task\b/.test(text)
   );
 }
+
+const SCOPE_DEDUP_STOP_WORDS = new Set([
+  "what", "which", "how", "are", "is", "the", "a", "an", "do", "does",
+  "in", "of", "to", "for", "by", "on", "at", "from", "with", "and",
+  "or", "that", "this", "over", "past", "last", "recent", "months",
+  "month", "days", "weeks", "question", "please", "tell", "me", "show"
+]);
 
 function isGenericScopeToken(token: string): boolean {
   return (
@@ -5731,6 +5792,16 @@ async function buildPreparationConfirmation(state: ChatState, apiClient: WebApiC
   nextState.prep_pending = true;
   nextState.scope_pending = false;
   syncQuestionRegistryFromScope(nextState);
+
+  // Sync confirmed metric definitions + business context to user settings (fire-and-forget)
+  if (nextState.metric_definitions.length > 0) {
+    void apiClient.saveUserSettings({
+      metric_definitions: nextState.metric_definitions
+        .filter((m) => m.confirmed)
+        .map((m) => ({ metric_key: m.metric_key, display_name: m.display_name, definition: m.definition })),
+      business_context: nextState.scope_business_context ?? ""
+    });
+  }
 
   const draft = nextState.draft;
   const tables = draft.allowed_relations.length > 0 ? draft.allowed_relations.join(", ") : "default tables";

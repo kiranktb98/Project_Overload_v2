@@ -71,6 +71,11 @@ export type ScopeClarificationInput = {
   allowed_schemas: string[];
   draft_metrics: string[];
   draft_dimensions: string[];
+  confirmed_metric_definitions?: Array<{
+    metric_key: string;
+    display_name: string;
+    definition: string;
+  }>;
   conversation_history: Array<{
     role: "user" | "assistant";
     content: string;
@@ -117,6 +122,11 @@ export type MetricDefinitionInput = {
   catalog_summary: string;
   allowed_relations: string[];
   allowed_schemas: string[];
+  existing_metric_definitions?: Array<{
+    metric_key: string;
+    display_name: string;
+    definition: string;
+  }>;
   conversation_history: Array<{
     role: "user" | "assistant";
     content: string;
@@ -729,6 +739,15 @@ function scopeClarificationSystemPrompt(mode: ScopeClarificationInput["mode"]): 
     "  request may contain multiple analysis topics. Cover ALL of them - do not drop any.",
     "- If the conversation already discussed analysis angles (e.g. refund trends, city rankings,",
     "  support tickets), generate scoped questions for EACH angle mentioned.",
+    "",
+    "QUESTION QUALITY (CRITICAL):",
+    "- Every question MUST be specific and self-contained. NEVER generate vague questions like 'What are the top cities?' without specifying the metric and time range.",
+    "- BAD: 'What are the top cities?' — too vague, no metric or timeframe.",
+    "- GOOD: 'Which cities have the highest refund rate (refunded orders / total orders) over the past 4 months?'",
+    "- NEVER generate two questions that cover the same analytical ask. If one question is a more specific version of another, keep ONLY the specific one.",
+    "- Each question should reference actual table names, column names, or metric names from the CATALOG_SUMMARY when available.",
+    "- Use the BUSINESS_CONTEXT to inform what metrics and dimensions are relevant.",
+    "",
     "- Return strict JSON only:",
     '  {"questions":[{"question_number":1,"question":"...","clarification":"..."}]}',
     "  No markdown and no extra keys."
@@ -763,6 +782,11 @@ function scopeClarificationUserPrompt(input: ScopeClarificationInput): string {
     `ALLOWED_RELATIONS: ${input.allowed_relations.join(", ") || "(none)"}`,
     `ALLOWED_SCHEMAS: ${input.allowed_schemas.join(", ") || "(none)"}`,
     "",
+    "CONFIRMED_METRIC_DEFINITIONS (use these exact definitions — do NOT invent your own):",
+    input.confirmed_metric_definitions && input.confirmed_metric_definitions.length > 0
+      ? input.confirmed_metric_definitions.map((m) => `  - ${m.display_name} (${m.metric_key}): ${m.definition}`).join("\n")
+      : "(none)",
+    "",
     "BUSINESS_CONTEXT:",
     input.business_context && input.business_context.trim().length > 0 ? input.business_context : "(none)",
     "",
@@ -782,8 +806,10 @@ function scopeAnswerResolutionSystemPrompt(): string {
     "",
     "Matching rules:",
     "- Use explicit references (Q1, Q2, 'for question 1') AND implicit intent.",
-    "- Users often answer conversationally — 'Yes for Q1, thats how you compute it. Q2 use the same window' answers BOTH questions.",
+    "- Users answer naturally — they will NOT use numbered format. Map conversational clauses to the right questions.",
+    "- Example: 'last 4 complete months, exclude cancelled, top 10 is fine' — each clause maps to a different question.",
     "- If the user says 'yes', 'confirm', 'correct', 'thats right' about a question's proposed approach, extract that as confirmation of the approach described in the clarification.",
+    "- BLANKET CONFIRMATIONS: If the user says 'confirm all', 'ok with everything', 'yes to all', 'defaults are fine', 'all good' — assign confirmation to ALL pending questions.",
     "- Be precise, not aggressive: only assign when the user's message contains direct evidence for that question.",
     "- Do NOT infer answers for unaddressed questions. If unclear, keep unresolved.",
     "- If the message adds a new question/follow-up ask, do not treat that ask as an answer to existing clarification items.",
@@ -853,6 +879,11 @@ function metricDefinitionUserPrompt(input: MetricDefinitionInput): string {
     `SQL_DRAFT: ${input.sql ?? "(none)"}`,
     `ALLOWED_RELATIONS: ${input.allowed_relations.join(", ") || "(none)"}`,
     `ALLOWED_SCHEMAS: ${input.allowed_schemas.join(", ") || "(none)"}`,
+    "",
+    "EXISTING_METRIC_DEFINITIONS (already confirmed — reuse these exact definitions, do NOT redefine them):",
+    input.existing_metric_definitions && input.existing_metric_definitions.length > 0
+      ? input.existing_metric_definitions.map((m) => `  - ${m.display_name} (${m.metric_key}): ${m.definition}`).join("\n")
+      : "(none)",
     "",
     "BUSINESS_CONTEXT:",
     input.business_context && input.business_context.trim().length > 0 ? input.business_context : "(none)",
