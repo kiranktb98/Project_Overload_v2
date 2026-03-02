@@ -187,7 +187,7 @@ type UsageEventBuffer = {
 
 const DEFAULT_TIMEOUT_MS = 900_000;
 const DEFAULT_OPENAI_MODEL = "gpt-4.1-mini";
-const DEFAULT_OPENROUTER_MODEL = "anthropic/claude-opus-4-6";
+const DEFAULT_OPENROUTER_MODEL = "openai/gpt-5.2";
 const DEFAULT_SUPER_SUMMARY_OPENAI_MODEL = "gpt-5.2";
 const DEFAULT_SUPER_SUMMARY_OPENROUTER_MODEL = "openai/gpt-5.2";
 const DEFAULT_OPENROUTER_BASE_URL = "https://openrouter.ai/api/v1";
@@ -232,7 +232,7 @@ export function createAnalystClientFromEnv(overrides: Partial<CreateAnalystClien
     openrouterAppName: overrides.openrouterAppName ?? process.env.OPENROUTER_APP_NAME,
     openrouterAppUrl: overrides.openrouterAppUrl ?? process.env.OPENROUTER_APP_URL,
     openaiModel: overrides.openaiModel ?? process.env.OPENAI_MODEL,
-    openrouterModel: overrides.openrouterModel ?? process.env.MODEL_GPT,
+    openrouterModel: overrides.openrouterModel ?? process.env.ANALYST_MODEL ?? process.env.MODEL_GPT,
     timeoutMs: overrides.timeoutMs ?? (Number.isNaN(timeoutFromEnv) ? undefined : timeoutFromEnv),
     fallbackToStub: overrides.fallbackToStub,
     fetcher: overrides.fetcher
