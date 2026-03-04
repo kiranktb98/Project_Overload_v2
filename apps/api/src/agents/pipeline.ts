@@ -78,7 +78,7 @@ export function agentA_buildContractDraft(input: Partial<ReportContractDraft>): 
       evidence_row_cap: 200,
       max_batches: 5,
       deny_write: true,
-      timeout_ms: 15000,
+      timeout_ms: 900000,
       allowed_sources: []
     }
   });

@@ -83,4 +83,56 @@ describe("metadata store tenant + version state", () => {
 
     await store.close();
   });
+
+  it("scopes rag memory search to user and session", async () => {
+    const store = new InMemoryMetadataStore();
+
+    await store.upsertChatRagChunks(
+      [
+        {
+          user_id: "user_a",
+          session_id: "chat_1",
+          source: "assistant_turn",
+          label: "A1",
+          text_content: "Revenue by month includes refunds.",
+          content_hash: "h1",
+          embedding: [0.9, 0.1]
+        },
+        {
+          user_id: "user_a",
+          session_id: "chat_2",
+          source: "assistant_turn",
+          label: "A2",
+          text_content: "Inventory backlog summary.",
+          content_hash: "h2",
+          embedding: [0.1, 0.9]
+        },
+        {
+          user_id: "user_b",
+          session_id: "chat_1",
+          source: "assistant_turn",
+          label: "B1",
+          text_content: "Other user memory.",
+          content_hash: "h3",
+          embedding: [1, 0]
+        }
+      ],
+      { tenant_id: "tenant_a" }
+    );
+
+    const scoped = await store.searchChatRagChunks(
+      {
+        user_id: "user_a",
+        session_id: "chat_1",
+        embedding: [1, 0],
+        limit: 5
+      },
+      { tenant_id: "tenant_a" }
+    );
+
+    expect(scoped).toHaveLength(1);
+    expect(scoped[0].label).toBe("A1");
+
+    await store.close();
+  });
 });

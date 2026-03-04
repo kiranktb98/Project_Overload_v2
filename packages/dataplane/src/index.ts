@@ -73,7 +73,7 @@ export type CreateDataPlaneFromEnvOptions = {
 };
 
 const DEFAULT_AGENT_QUERY_ENDPOINT = "/v1/query";
-const DEFAULT_AGENT_TIMEOUT_MS = 15000;
+const DEFAULT_AGENT_TIMEOUT_MS = 900_000;
 
 function maskRow(row: Record<string, unknown>, piiFields: string[], maskValue: string): Record<string, unknown> {
   if (piiFields.length === 0) {

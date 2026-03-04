@@ -3145,6 +3145,263 @@ describe("web chat interface", () => {
     await app.close();
   });
 
+  it("splits compound scope questions into atomic questions", async () => {
+    const app = buildWebApp({
+      conversation_client: {
+        provider: "openrouter",
+        mode: "provider",
+        async respond(input) {
+          return { message: input.action_context };
+        },
+        async orchestrateTurn() {
+          return {
+            intent_parts: [{ type: "new_question", text: "Support ticket analysis." }],
+            resolved_scope_answers: [],
+            new_scope_questions: [
+              {
+                question_text:
+                  "How many support tickets were opened for refunded orders in the past 4 months, and what are the top issue types among those tickets?",
+                clarification: "Confirm ticket linkage and ranking method."
+              }
+            ],
+            follow_up_requests: [],
+            pending_inputs: [
+              {
+                input_key: "q1_scope",
+                prompt: "Confirm support ticket scope."
+              }
+            ],
+            next_owner: "wait_for_user",
+            tool_calls: [],
+            state_updates: {
+              mark_scope_complete: false,
+              append_new_questions: true,
+              clear_pending_inputs: false,
+              summary: "Added scoped question.",
+              question_registry_updates: []
+            }
+          };
+        }
+      }
+    });
+
+    const response = await app.inject({
+      method: "POST",
+      url: "/api/chat",
+      payload: {
+        message: "Analyze support tickets for refunded orders over the last 4 months."
+      }
+    });
+
+    expect(response.statusCode).toBe(200);
+    const body = response.json();
+    expect(body.state.scope_questions.length).toBeGreaterThanOrEqual(2);
+    const questions = body.state.scope_questions.map((entry: { question: string }) => entry.question.toLowerCase());
+    expect(questions.some((q: string) => q.includes("how many support tickets"))).toBe(true);
+    expect(questions.some((q: string) => q.includes("top issue types"))).toBe(true);
+
+    await app.close();
+  });
+
+  it("does not split metric-pair phrasing into broken scope questions", async () => {
+    const app = buildWebApp({
+      conversation_client: {
+        provider: "openrouter",
+        mode: "provider",
+        async respond(input) {
+          return { message: input.action_context };
+        },
+        async orchestrateTurn() {
+          return {
+            intent_parts: [{ type: "new_question", text: "Refund trend and city ranking." }],
+            resolved_scope_answers: [],
+            new_scope_questions: [
+              {
+                question_text:
+                  "What is the monthly refund trend over the past 4 complete months (refund count and refunded revenue per month)?",
+                clarification: "Confirm 4-month window and whether partial current month is included."
+              }
+            ],
+            follow_up_requests: [],
+            pending_inputs: [
+              {
+                input_key: "q1_scope",
+                prompt: "Confirm trend scope."
+              }
+            ],
+            next_owner: "wait_for_user",
+            tool_calls: [],
+            state_updates: {
+              mark_scope_complete: false,
+              append_new_questions: true,
+              clear_pending_inputs: false,
+              summary: "Added scoped question.",
+              question_registry_updates: []
+            }
+          };
+        }
+      }
+    });
+
+    const response = await app.inject({
+      method: "POST",
+      url: "/api/chat",
+      payload: {
+        message: "Track monthly refunds by count and revenue for the last 4 complete months."
+      }
+    });
+
+    expect(response.statusCode).toBe(200);
+    const body = response.json();
+    const questions = body.state.scope_questions as Array<{ question: string }>;
+    expect(questions.length).toBeGreaterThanOrEqual(1);
+
+    const matching = questions.filter((entry) =>
+      /refund trend over the past 4 complete months/i.test(entry.question)
+    );
+    expect(matching.length).toBe(1);
+    expect(matching[0].question.toLowerCase()).toContain("refund count and refunded revenue per month");
+
+    await app.close();
+  });
+
+  it("applies saved metric definitions and splits compound scope questions on deep-analysis scope generation", async () => {
+    const router: QueryRouterClient = {
+      provider: "openrouter",
+      mode: "provider",
+      async decide() {
+        return {
+          route: "deep_analysis",
+          reason: "Multi-part request",
+          confidence: 0.95
+        };
+      },
+      async scope_clarifications() {
+        return {
+          questions: [
+            {
+              question_number: 1,
+              question:
+                "Which cities have the highest refund rate where refund rate = refunded orders / total orders over the past 4 months?",
+              clarification: "Confirm formula and city cutoff."
+            },
+            {
+              question_number: 2,
+              question:
+                "How many support tickets were opened for refunded orders in the past 4 months, and what are the top issue types among those tickets?",
+              clarification: "Confirm ticket linkage and issue ranking."
+            }
+          ]
+        };
+      }
+    };
+
+    const fetchImpl: typeof fetch = async (input, init) => {
+      const url = typeof input === "string" ? input : input instanceof URL ? input.toString() : input.url;
+      const method = init?.method?.toUpperCase() ?? "GET";
+
+      if (url.endsWith("/config/user-settings") && method === "GET") {
+        return new Response(
+          JSON.stringify({
+            metric_definitions: [
+              {
+                metric_key: "refund_rate",
+                display_name: "Refund Rate",
+                definition: "refunded revenue / total revenue"
+              }
+            ],
+            business_context: "E-commerce refunds"
+          }),
+          { status: 200, headers: { "content-type": "application/json" } }
+        );
+      }
+
+      if (url.endsWith("/connections/catalog") && method === "GET") {
+        return new Response(
+          JSON.stringify({
+            business_id: "biz_test",
+            business_context: "E-commerce refunds",
+            cataloged_at: "2026-02-01T00:00:00.000Z",
+            tables: [
+              {
+                table_id: "tbl_orders",
+                qualified_name: "public.demo_orders",
+                relation_type: "TABLE",
+                summary: "Orders",
+                columns: [
+                  { column_name: "order_date", data_type: "timestamp with time zone", is_nullable: false },
+                  { column_name: "status", data_type: "text", is_nullable: false },
+                  { column_name: "total_amount", data_type: "numeric", is_nullable: false }
+                ],
+                low_cardinality_columns: [],
+                sample_rows: [],
+                row_count_estimate: 1000
+              },
+              {
+                table_id: "tbl_tickets",
+                qualified_name: "public.demo_support_tickets",
+                relation_type: "TABLE",
+                summary: "Support tickets",
+                columns: [
+                  { column_name: "order_id", data_type: "text", is_nullable: true },
+                  { column_name: "issue_type", data_type: "text", is_nullable: true }
+                ],
+                low_cardinality_columns: [],
+                sample_rows: [],
+                row_count_estimate: 400
+              }
+            ]
+          }),
+          { status: 200, headers: { "content-type": "application/json" } }
+        );
+      }
+
+      return new Response(JSON.stringify({ message: `Unhandled request: ${method} ${url}` }), {
+        status: 404,
+        headers: { "content-type": "application/json" }
+      });
+    };
+
+    const app = buildWebApp({
+      api_base_url: "http://api.local",
+      fetch_impl: fetchImpl,
+      query_router: router,
+      conversation_client: createPassthroughConversationClient()
+    });
+
+    const response = await app.inject({
+      method: "POST",
+      url: "/api/chat",
+      payload: {
+        message:
+          "I want a 4 month refund trend and cities with highest refund rate. Also tell me support ticket volume and top issue types."
+      }
+    });
+
+    expect(response.statusCode).toBe(200);
+    const body = response.json();
+    const scopeQuestions = body.state.scope_questions as Array<{
+      question: string;
+      clarification: string;
+      metric_definition_draft: string | null;
+    }>;
+
+    expect(scopeQuestions.length).toBeGreaterThanOrEqual(3);
+    const supportQuestions = scopeQuestions.filter((entry) => /support ticket/i.test(entry.question));
+    const issueQuestions = scopeQuestions.filter((entry) => /issue type|top issues|top reasons/i.test(entry.question));
+    expect(supportQuestions.length).toBeGreaterThanOrEqual(1);
+    expect(issueQuestions.length).toBeGreaterThanOrEqual(1);
+
+    const refundQuestion = scopeQuestions.find((entry) => /refund rate/i.test(entry.question));
+    expect(refundQuestion).toBeDefined();
+    expect(refundQuestion?.metric_definition_draft).toBe("refunded revenue / total revenue");
+    expect(`${refundQuestion?.question} ${refundQuestion?.clarification}`.toLowerCase()).toContain(
+      "refunded revenue / total revenue"
+    );
+
+    await app.close();
+  });
+
   it("does not auto-apply orchestrator scope answers for brand-new questions on the first turn", async () => {
     const app = buildWebApp({
       conversation_client: {
@@ -4275,7 +4532,7 @@ describe("web chat interface", () => {
     await app.close();
   });
 
-  it("promotes to prep decision when assistant explicitly locks scope", async () => {
+  it("does not promote to prep when assistant claims scope lock but clarifications are unresolved", async () => {
     const app = buildWebApp({
       api_base_url: "http://api.local",
       fetch_impl: async (input, init) => {
@@ -4349,9 +4606,9 @@ describe("web chat interface", () => {
     });
 
     expect(response.statusCode).toBe(200);
-    expect(response.json().state.scope_clarification_pending).toBe(false);
-    expect(response.json().state.scope_finalized).toBe(true);
-    expect(response.json().state.prep_pending).toBe(true);
+    expect(response.json().state.scope_clarification_pending).toBe(true);
+    expect(response.json().state.scope_finalized).toBe(false);
+    expect(response.json().state.prep_pending).toBe(false);
 
     await app.close();
   });
@@ -4853,7 +5110,7 @@ describe("web chat interface", () => {
     expect(response.statusCode).toBe(200);
     expect(response.json().state.prep_complete).toBe(true);
     expect(response.json().state.scope_pending).toBe(true);
-    expect(response.json().assistant_message).toContain("Data preparation completed");
+    expect(response.json().assistant_message).toContain("Data preparation is complete");
     expect(response.json().assistant_message).not.toContain("Query quality:");
     expect(requests.some((entry) => entry.endsWith("POST http://api.local/report-contracts/contract_prep/prepare"))).toBe(true);
 
@@ -4927,7 +5184,7 @@ describe("web chat interface", () => {
     expect(response.json().state.prep_pending).toBe(true);
     expect(response.json().state.scope_pending).toBe(false);
     expect(response.json().assistant_message).toContain("did not produce validated payloads");
-    expect(response.json().assistant_message).not.toContain("Data preparation completed");
+    expect(response.json().assistant_message).not.toContain("Data preparation is complete");
     expect(requests.some((entry) => entry.endsWith("POST http://api.local/report-contracts/contract_empty_prep/prepare"))).toBe(true);
 
     await app.close();

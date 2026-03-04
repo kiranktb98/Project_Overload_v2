@@ -85,7 +85,10 @@ export async function renderPdfFromHtml(html: string): Promise<RenderedPdfDocume
     });
 
     const page = await browser.newPage();
-    await page.setContent(html, { waitUntil: "networkidle0" });
+    await page.setContent(html, {
+      waitUntil: "domcontentloaded",
+      timeout: 120_000
+    });
 
     const pdfBuffer = await page.pdf({
       format: "A4",

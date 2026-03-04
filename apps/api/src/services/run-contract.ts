@@ -51,6 +51,8 @@ const MIN_PAYLOAD_QA_NOVEL_TOKEN_RATIO = 0.35;
 const DEFAULT_SQL_DIALECT: SqlDialect = "postgres";
 const ANALYST_ROW_CAP = 200; // Max rows sent to analyst per call; batch if exceeded
 const MERGED_QUERY_PLANNING_ENABLED = isMergedQueryPlanningEnabled();
+const DEFAULT_PREPARATION_TIMEOUT_MS = 900_000;
+const MAX_PREPARATION_TIMEOUT_MS = 3_600_000;
 
 type CatalogModel = {
   table_columns: Map<string, Set<string>>;
@@ -251,6 +253,19 @@ function resolveCatalogColumnsForRelation(catalogModel: CatalogModel, relation: 
   return null;
 }
 
+function resolvePreparationTimeoutMs(rawTimeoutMs: number | undefined): number {
+  if (typeof rawTimeoutMs !== "number" || !Number.isFinite(rawTimeoutMs)) {
+    return DEFAULT_PREPARATION_TIMEOUT_MS;
+  }
+
+  const bounded = Math.trunc(rawTimeoutMs);
+  if (bounded <= 0) {
+    return DEFAULT_PREPARATION_TIMEOUT_MS;
+  }
+
+  return Math.max(DEFAULT_PREPARATION_TIMEOUT_MS, Math.min(bounded, MAX_PREPARATION_TIMEOUT_MS));
+}
+
 function normalizeSqlDialect(value: SqlDialect | string | undefined): SqlDialect {
   if (!value) {
     return DEFAULT_SQL_DIALECT;
@@ -305,18 +320,8 @@ export async function prepareReportContractData(input: {
   const globalMetricDefs = await loadGlobalMetricDefinitions(input.store, storeContext);
   const allMetricDefs = buildRunMetricDefinitions(input.contract, globalMetricDefs);
   const metricDefsContext = allMetricDefs.length > 0
-    ? "\nMETRIC DEFINITIONS (use these exact formulas and auto-apply the filters):\n" +
-      allMetricDefs.map((m) => {
-        const parts = [`- ${m.display_name} (${m.metric_key}): ${m.definition}`];
-        if (m.filter_description.length > 0) {
-          parts.push(`  intent: ${m.filter_description}`);
-        }
-        const sqlFilter = buildMetricSqlFilter(m);
-        if (sqlFilter.length > 0) {
-          parts.push(`  [auto-filter: WHERE ${sqlFilter}]`);
-        }
-        return parts.join("\n");
-      }).join("\n")
+    ? "\nMETRIC DEFINITIONS (use these exact formulas):\n" +
+      allMetricDefs.map((m) => `- ${m.display_name} (${m.metric_key}): ${m.definition}`).join("\n")
     : "";
 
   // Build scope clarifications context if available
@@ -334,6 +339,7 @@ export async function prepareReportContractData(input: {
       ).join("\n")
     : "";
 
+  const businessContext = extractBusinessContextFromCatalogSummary(input.catalog_summary);
   const strategyInput: QueryStrategyInput = {
     catalog_summary: input.catalog_summary || "No catalog available.",
     report_goal: [
@@ -348,7 +354,13 @@ export async function prepareReportContractData(input: {
     dimension_ids: input.contract.dimension_ids,
     allowed_relations: input.contract.guardrails.allowed_relations,
     planner_context: plannerContext,
-    sql_dialect: sqlDialect
+    sql_dialect: sqlDialect,
+    metric_definitions: allMetricDefs.map((m) => ({
+      metric_key: m.metric_key,
+      display_name: m.display_name,
+      definition: m.definition
+    })),
+    business_context: businessContext
   };
   const mergedPlan = MERGED_QUERY_PLANNING_ENABLED && input.query_strategist.planMergedQueries
     ? await input.query_strategist.planMergedQueries(strategyInput)
@@ -425,7 +437,6 @@ export async function runReportContractPipeline(input: {
   analyst_client: AnalystClient;
   query_strategist: QueryStrategistClient;
   report_composer: ReportComposerClient;
-  super_summary_client?: SuperSummaryClient;
   planner_client: PlannerClient;
   catalog_summary: string;
   sql_dialect?: SqlDialect;
@@ -457,6 +468,8 @@ export async function runReportContractPipeline(input: {
   const scoredAnalyses: ScoredAnalysis[] = [];
   const perQuestionSummaries: PerQuestionAnalysisSummary[] = [];
   const businessContext = extractBusinessContextFromCatalogSummary(input.catalog_summary);
+  const globalMetricDefsForAnalyst = await loadGlobalMetricDefinitions(input.store, storeContext);
+  const allMetricDefs = buildRunMetricDefinitions(input.contract, globalMetricDefsForAnalyst);
   let analystTriggeredAdditionalQueries = false;
 
   console.log("[analyst-loop] Starting analyst loop for %d questions", preparation.prepared_payloads.length);
@@ -553,7 +566,9 @@ export async function runReportContractPipeline(input: {
         contract_name: input.contract.name,
         audience: input.contract.audience,
         insight_mode: insightMode
-      })
+      }),
+      metric_definitions: allMetricDefs,
+      business_context: businessContext
     });
     collectClientUsage(input.analyst_client, tokenUsage);
     collectClientUsage(input.query_strategist, tokenUsage);
@@ -604,30 +619,11 @@ export async function runReportContractPipeline(input: {
         recommendations: ["Review query strategy and data scope, then run again."],
         data_summary: "No sections produced."
       }];
-  console.log("[report-composer] Sending %d analyses and %d per_question_summaries to super-summary", analyses.length, perQuestionSummaries.length);
-  const superSummary = await buildSuperSummaryForReport({
-    super_summary_client: input.super_summary_client,
-    contract: input.contract,
-    tenant_id: tenantId,
-    store: input.store,
-    data_plane: input.data_plane,
-    query_strategist: input.query_strategist,
-    sql_dialect: normalizeSqlDialect(input.sql_dialect),
-    title: input.contract.name,
-    audience: input.contract.audience,
-    insight_mode: insightMode,
-    analyses,
-    per_question_summaries: perQuestionSummaries,
-    query_details: preparation.query_details,
-    prepared_payloads: preparation.prepared_payloads,
-    catalog_summary: input.catalog_summary,
-    allow_context_queries: !analystTriggeredAdditionalQueries
-  });
-  collectClientUsage(input.super_summary_client ?? {}, tokenUsage);
+  void analystTriggeredAdditionalQueries;
+  console.log("[report-composer] Sending %d analyses and %d per_question_summaries directly to HTML composer", analyses.length, perQuestionSummaries.length);
 
   const conciseSummary = buildConciseSummary(input.contract.name, analyses);
-  const globalMetricDefs = await loadGlobalMetricDefinitions(input.store, storeContext);
-  const metricDefinitions = buildRunMetricDefinitions(input.contract, globalMetricDefs);
+  const metricDefinitions = allMetricDefs;
   const kpiResults = checkKpiWatchlist(
     (input.contract.kpi_watchlist ?? []) as KpiWatchlistItem[],
     preparation.prepared_payloads
@@ -635,22 +631,53 @@ export async function runReportContractPipeline(input: {
   const previousRun = await input.store.getLatestReportRun(input.contract.id, storeContext);
   const execBrief = buildExecBrief(analyses, input.contract.name, startedAt, previousRun);
 
+  const composeInput: ReportComposerInput = {
+    title: input.contract.name,
+    audience: input.contract.audience,
+    insight_mode: insightMode,
+    per_question_summaries: perQuestionSummaries.map((s) => ({
+      question_text: s.question_text,
+      findings: s.findings,
+      drivers: s.drivers,
+      anomalies: s.anomalies,
+      coverage_status: s.coverage_status
+    })),
+    metric_definitions: metricDefinitions,
+    analyses,
+    catalog_summary: input.catalog_summary || "",
+    business_context: businessContext
+  };
+
   let html = await composeReportHtmlWithFallback({
     report_composer: input.report_composer,
-    compose_input: {
-      title: input.contract.name,
-      audience: input.contract.audience,
-      insight_mode: insightMode,
-      super_summary: superSummary?.summary,
-      consultant_actions: superSummary?.issue_detected ? superSummary.intervention_actions : [],
-      metric_definitions: metricDefinitions,
-      analyses,
-      catalog_summary: input.catalog_summary || ""
-    },
+    compose_input: composeInput,
     fallback_exec_brief: execBrief,
     metric_definitions: metricDefinitions
   });
   collectClientUsage(input.report_composer, tokenUsage);
+
+  // --- Gap-fill pass: detect blanks in the composed HTML and fill them ---
+  const blanks = detectHtmlBlanks(html);
+  if (blanks.has_blanks) {
+    html = await runGapFillPass({
+      html,
+      blanks,
+      contract: input.contract,
+      tenant_id: tenantId,
+      data_plane: input.data_plane,
+      store: input.store,
+      query_strategist: input.query_strategist,
+      report_composer: input.report_composer,
+      analyses,
+      compose_input: composeInput,
+      catalog_summary: input.catalog_summary,
+      sql_dialect: normalizeSqlDialect(input.sql_dialect),
+      fallback_exec_brief: execBrief,
+      metric_definitions: metricDefinitions
+    });
+    collectClientUsage(input.query_strategist, tokenUsage);
+    collectClientUsage(input.report_composer, tokenUsage);
+  }
 
   if (kpiResults.length > 0) {
     html = injectKpiResultsIntoHtml(html, kpiResults);
@@ -680,16 +707,9 @@ export async function runReportContractPipeline(input: {
       insight_mode: insightMode,
       previous_run_id: previousRun?.id ?? null,
       metric_definitions: metricDefinitions,
-      super_summary: superSummary
-        ? {
-            summary: superSummary.summary,
-            issue_detected: superSummary.issue_detected,
-            intervention_actions: superSummary.intervention_actions,
-            notes: superSummary.notes
-          }
-        : null,
-      super_summary_context_queries: superSummary?.context_queries ?? [],
-      super_summary_context_results: superSummary?.context_query_results ?? [],
+      super_summary: null,
+      super_summary_context_queries: [],
+      super_summary_context_results: [],
       prepared_payloads: preparation.prepared_payloads.map(toPreparedPayloadPublic),
       analysis_payloads: analysisPayloads,
       per_question_summaries: perQuestionSummaries,
@@ -1625,7 +1645,7 @@ async function preflightQueryWithPolicy(input: {
 }): Promise<{ error: string | null }> {
   const storeContext = { tenant_id: input.tenant_id };
   try {
-    const timeoutMs = Math.max(1_000, Math.min(input.contract.guardrails.timeout_ms, 5_000));
+    const timeoutMs = resolvePreparationTimeoutMs(input.contract.guardrails.timeout_ms);
     await input.data_plane.execute({
       request_id: `${input.contract.id}_preflight_${randomUUID().slice(0, 8)}`,
       sql: input.sql,
@@ -3278,7 +3298,7 @@ async function executeQueryWithPolicy(input: {
       policy: {
         allowed_relations: input.contract.guardrails.allowed_relations,
         allowed_schemas: input.contract.guardrails.allowed_schemas,
-        timeout_ms: input.contract.guardrails.timeout_ms,
+        timeout_ms: resolvePreparationTimeoutMs(input.contract.guardrails.timeout_ms),
         row_cap: input.row_cap,
         pii_fields: []
       }
@@ -3363,7 +3383,7 @@ async function runPlannerPhase(
         policy: {
           allowed_relations: input.contract.guardrails.allowed_relations,
           allowed_schemas: input.contract.guardrails.allowed_schemas,
-          timeout_ms: 5000,
+          timeout_ms: resolvePreparationTimeoutMs(input.contract.guardrails.timeout_ms),
           row_cap: 50,
           pii_fields: []
         }
@@ -3476,10 +3496,6 @@ type ResolvedMetricDef = {
   metric_key: string;
   display_name: string;
   definition: string;
-  filter_description: string;
-  filter_column: string;
-  filter_values: string[];
-  status: string;
 };
 
 function buildRunMetricDefinitions(
@@ -3505,13 +3521,7 @@ function buildRunMetricDefinitions(
     .map((raw): ResolvedMetricDef => ({
       metric_key: String(raw.metric_key ?? "").trim(),
       display_name: String(raw.display_name ?? "").trim(),
-      definition: String(raw.definition ?? "").trim(),
-      filter_description: String(raw.filter_description ?? "").trim(),
-      filter_column: String(raw.filter_column ?? "").trim(),
-      filter_values: Array.isArray(raw.filter_values)
-        ? (raw.filter_values as unknown[]).map((v) => String(v).trim()).filter((v) => v.length > 0)
-        : [],
-      status: String(raw.status ?? "pending")
+      definition: String(raw.definition ?? "").trim()
     }))
     .filter(
       (metric) =>
@@ -3532,21 +3542,9 @@ function buildRunMetricDefinitions(
     return {
       metric_key: metricId,
       display_name: display,
-      definition: `Metric derived from ${metricId}. Definition was not explicitly confirmed in this run.`,
-      filter_description: "",
-      filter_column: "",
-      filter_values: [],
-      status: "pending"
+      definition: `Metric derived from ${metricId}.`
     };
   });
-}
-
-function buildMetricSqlFilter(metric: ResolvedMetricDef): string {
-  if (metric.filter_column.length > 0 && metric.filter_values.length > 0) {
-    const escaped = metric.filter_values.map((v) => `'${v.replace(/'/g, "''")}'`);
-    return `${metric.filter_column} IN (${escaped.join(", ")})`;
-  }
-  return "";
 }
 
 async function composeReportHtmlWithFallback(input: {
@@ -3601,6 +3599,205 @@ async function delay(ms: number): Promise<void> {
   await new Promise((resolve) => setTimeout(resolve, ms));
 }
 
+// ---------------------------------------------------------------------------
+// Gap-fill: detect blanks in composed HTML and fill them with supplementary queries
+// ---------------------------------------------------------------------------
+
+const BLANK_PATTERNS = [
+  />\s*—\s*</g,               // em-dash in table cells
+  />\s*N\/A\s*</g,            // N/A in table cells
+  />\s*n\/a\s*</g,            // n/a lowercase
+  /<td[^>]*>\s*<\/td>/gi,     // empty <td></td>
+  />\s*\?\?\?\s*</g,          // ??? placeholder
+  />\s*TBD\s*</g              // TBD placeholder
+];
+
+function detectHtmlBlanks(html: string): { has_blanks: boolean; blank_count: number; context_snippets: string[] } {
+  let blankCount = 0;
+  const contextSnippets: string[] = [];
+
+  for (const pattern of BLANK_PATTERNS) {
+    const matches = html.match(pattern);
+    if (matches) {
+      blankCount += matches.length;
+      // Extract surrounding context for each match (up to 3 examples)
+      const globalPattern = new RegExp(pattern.source, "gi");
+      let match: RegExpExecArray | null;
+      let examples = 0;
+      while ((match = globalPattern.exec(html)) !== null && examples < 3) {
+        const start = Math.max(0, match.index - 100);
+        const end = Math.min(html.length, match.index + match[0].length + 100);
+        const snippet = html.slice(start, end)
+          .replace(/<[^>]+>/g, " ")  // strip HTML tags for readability
+          .replace(/\s+/g, " ")
+          .trim();
+        if (snippet.length > 10) {
+          contextSnippets.push(snippet);
+        }
+        examples += 1;
+      }
+    }
+  }
+
+  return {
+    has_blanks: blankCount > 0,
+    blank_count: blankCount,
+    context_snippets: contextSnippets.slice(0, 5)
+  };
+}
+
+async function runGapFillPass(input: {
+  html: string;
+  blanks: { blank_count: number; context_snippets: string[] };
+  contract: ReportContract;
+  tenant_id: string;
+  data_plane: DataPlane;
+  store: MetadataStore;
+  query_strategist: QueryStrategistClient;
+  report_composer: ReportComposerClient;
+  analyses: ReportComposerInput["analyses"];
+  compose_input: ReportComposerInput;
+  catalog_summary: string;
+  sql_dialect: SqlDialect;
+  fallback_exec_brief: ExecBrief;
+  metric_definitions: ResolvedMetricDef[];
+}): Promise<string> {
+  console.log(
+    "[gap-fill] Detected %d blank(s) in report. Attempting gap-fill pass.",
+    input.blanks.blank_count
+  );
+
+  // Step 1: Build a gap-fill query request from the blank context
+  const gapDescription = input.blanks.context_snippets
+    .map((s, i) => `${i + 1}. ${s}`)
+    .join("\n");
+
+  const gapFillGoal = [
+    `The report "${input.contract.name}" has ${input.blanks.blank_count} blank/missing values.`,
+    "Generate SQL queries to fill the following missing data points:",
+    "",
+    gapDescription,
+    "",
+    "Each query should return the specific missing metric values. Use GROUP BY and LIMIT ≤50.",
+    "Return only queries that fill the blanks — do not duplicate existing analysis queries."
+  ].join("\n");
+
+  const catalogModel = parseCatalogSummary(input.catalog_summary);
+
+  try {
+    // Step 2: Ask query strategist for gap-fill queries
+    const gapStrategy = await input.query_strategist.planQueries({
+      catalog_summary: input.catalog_summary || "No catalog available.",
+      report_goal: gapFillGoal,
+      audience: input.contract.audience,
+      insight_mode: input.contract.insight_mode ?? "business",
+      metric_ids: [],
+      dimension_ids: [],
+      allowed_relations: input.contract.guardrails.allowed_relations,
+      planner_context: undefined,
+      sql_dialect: input.sql_dialect
+    });
+
+    if (gapStrategy.queries.length === 0) {
+      console.log("[gap-fill] Query strategist returned no gap-fill queries.");
+      return input.html;
+    }
+
+    console.log(
+      "[gap-fill] Strategist proposed %d gap-fill queries: %s",
+      gapStrategy.queries.length,
+      gapStrategy.queries.map((q) => q.question).join(" | ")
+    );
+
+    // Step 3: Execute gap-fill queries (max 3 to limit cost)
+    const supplementaryDataLines: string[] = [];
+    for (const planned of gapStrategy.queries.slice(0, 3)) {
+      try {
+        const result = await runPreparedQueryWithHardening({
+          tenant_id: input.tenant_id,
+          contract: input.contract,
+          data_plane: input.data_plane,
+          store: input.store,
+          question: planned.question,
+          source_sql: planned.sql,
+          row_cap: 50,
+          catalog_model: catalogModel,
+          query_strategist: input.query_strategist,
+          sql_dialect: input.sql_dialect,
+          catalog_summary: input.catalog_summary
+        });
+
+        if (result.rows.length > 0) {
+          const columns = Object.keys(result.rows[0]);
+          const rowPreview = result.rows.slice(0, 20)
+            .map((r) => columns.map((c) => `${c}=${String(r[c] ?? "")}`).join(", "))
+            .join("\n");
+          supplementaryDataLines.push(
+            `Gap-fill for "${planned.question}":\n${rowPreview}`
+          );
+          console.log("[gap-fill] Query '%s' returned %d rows.", planned.question, result.rows.length);
+        }
+      } catch (error) {
+        console.error(
+          "[gap-fill] Query execution failed for '%s': %s",
+          planned.question,
+          error instanceof Error ? error.message : error
+        );
+      }
+    }
+
+    if (supplementaryDataLines.length === 0) {
+      console.log("[gap-fill] No supplementary data retrieved.");
+      return input.html;
+    }
+
+    // Step 4: Re-compose HTML with supplementary data appended to analyses
+    const supplementaryAnalysis: ReportComposerInput["analyses"][number] = {
+      question: "Supplementary data (gap-fill)",
+      highlights: [],
+      risks: [],
+      recommendations: [],
+      data_summary: supplementaryDataLines.join("\n\n")
+    };
+
+    const enrichedInput: ReportComposerInput = {
+      ...input.compose_input,
+      analyses: [
+        ...input.compose_input.analyses,
+        supplementaryAnalysis
+      ]
+    };
+
+    console.log("[gap-fill] Re-composing report with supplementary data...");
+    const recomposedHtml = await composeReportHtmlWithFallback({
+      report_composer: input.report_composer,
+      compose_input: enrichedInput,
+      fallback_exec_brief: input.fallback_exec_brief,
+      metric_definitions: input.metric_definitions
+    });
+
+    // Only use recomposed if it has fewer blanks
+    const recomposedBlanks = detectHtmlBlanks(recomposedHtml);
+    if (recomposedBlanks.blank_count < input.blanks.blank_count) {
+      console.log(
+        "[gap-fill] Re-composed report reduced blanks from %d to %d.",
+        input.blanks.blank_count,
+        recomposedBlanks.blank_count
+      );
+      return recomposedHtml;
+    }
+
+    console.log("[gap-fill] Re-composed report did not reduce blanks. Using original.");
+    return input.html;
+  } catch (error) {
+    console.error(
+      "[gap-fill] Gap-fill pass failed: %s",
+      error instanceof Error ? error.message : error
+    );
+    return input.html;
+  }
+}
+
 function injectMetricDefinitionsIntoHtml(
   html: string,
   definitions: ResolvedMetricDef[],
@@ -3615,14 +3812,7 @@ function injectMetricDefinitionsIntoHtml(
     .slice(0, 8)
     .map((definition) => {
       const cleanDefinition = sanitizeMetricDefinitionNarrative(definition.definition);
-      const cleanFilterDescription = sanitizeMetricDefinitionNarrative(definition.filter_description);
-      const sqlFilter = buildMetricSqlFilter(definition);
-      const filterLine = cleanFilterDescription.length > 0
-        ? ` (${cleanFilterDescription}${sqlFilter.length > 0 ? ` - ${sqlFilter}` : ""})`
-        : sqlFilter.length > 0
-          ? ` (filter: ${sqlFilter})`
-          : "";
-      return `<li><strong>${escapeHtml(definition.display_name)}</strong>: ${escapeHtml(cleanDefinition)}${escapeHtml(filterLine)}</li>`;
+      return `<li><strong>${escapeHtml(definition.display_name)}</strong>: ${escapeHtml(cleanDefinition)}</li>`;
     })
     .join("");
 
@@ -4207,6 +4397,7 @@ async function buildSuperSummaryForReport(input: {
     return null;
   }
 }
+void buildSuperSummaryForReport;
 
 function pickEmoji(text: string): string {
   const lower = text.toLowerCase();
@@ -4308,8 +4499,15 @@ async function runAnalystWithBatching(input: {
   insight_mode: "business" | "data";
   contract_id: string;
   data_context: string;
+  metric_definitions?: ResolvedMetricDef[];
+  business_context?: string;
 }): Promise<import("@project-overload/shared").BatchAnalysis> {
   const { analyst_client, payload, question_label, insight_mode, contract_id, data_context } = input;
+  const metricDefs = (input.metric_definitions ?? []).map((m) => ({
+    metric_key: m.metric_key,
+    display_name: m.display_name,
+    definition: m.definition
+  }));
   const rows = payload.prepared_rows;
 
   if (rows.length === 0) {
@@ -4335,6 +4533,8 @@ async function runAnalystWithBatching(input: {
       question: question_label,
       insight_mode,
       data_context,
+      metric_definitions: metricDefs,
+      business_context: input.business_context,
       evidence_packet: {
         request_id: payload.question_id,
         batch_index: 0,
@@ -4362,6 +4562,8 @@ async function runAnalystWithBatching(input: {
       question: question_label,
       insight_mode,
       data_context: i === 0 ? data_context : undefined,
+      metric_definitions: i === 0 ? metricDefs : [],
+      business_context: i === 0 ? input.business_context : undefined,
       evidence_packet: {
         request_id: `${payload.question_id}_b${i}`,
         batch_index: i,
@@ -4390,6 +4592,8 @@ async function runAnalystWithOptionalAdditionalQueries(input: {
   data_context: string;
   sql_dialect: SqlDialect;
   catalog_summary: string;
+  metric_definitions?: ResolvedMetricDef[];
+  business_context?: string;
 }): Promise<{
   analysis: BatchAnalysis;
   payload: PreparedQuestionPayload;
@@ -4401,7 +4605,9 @@ async function runAnalystWithOptionalAdditionalQueries(input: {
     question_label: input.question_label,
     insight_mode: input.insight_mode,
     contract_id: input.contract_id,
-    data_context: input.data_context
+    data_context: input.data_context,
+    metric_definitions: input.metric_definitions,
+    business_context: input.business_context
   });
   let workingPayload = input.payload;
   const emittedQueryDetails: DataPreparationResult["query_details"] = [];

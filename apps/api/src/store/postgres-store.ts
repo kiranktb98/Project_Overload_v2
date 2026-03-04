@@ -1,4 +1,5 @@
 import { Pool } from "pg";
+import { randomUUID } from "node:crypto";
 import type {
   Dimension,
   Metric,
@@ -12,6 +13,8 @@ import type {
   ChatSessionRecord,
   MetadataStore,
   PlatformUserRecord,
+  RagChunkSearchResult,
+  RagChunkUpsertRecord,
   ReportContractVersionRecord,
   SemanticCollectionName,
   SemanticCollections,
@@ -538,6 +541,95 @@ export class PostgresMetadataStore implements MetadataStore {
     };
   }
 
+  async upsertChatRagChunks(payload: RagChunkUpsertRecord[], context?: StoreRequestContext): Promise<void> {
+    if (payload.length === 0) {
+      return;
+    }
+    const tenantId = resolveTenantId(context);
+
+    for (const chunk of payload) {
+      await this.pool.query(
+        `
+        INSERT INTO chat_rag_chunks (
+          id,
+          tenant_id,
+          user_id,
+          session_id,
+          source,
+          label,
+          text_content,
+          content_hash,
+          embedding
+        )
+        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9::vector)
+        ON CONFLICT (tenant_id, user_id, session_id, content_hash) DO UPDATE SET
+          source = EXCLUDED.source,
+          label = EXCLUDED.label,
+          text_content = EXCLUDED.text_content,
+          embedding = EXCLUDED.embedding,
+          updated_at = NOW()
+        `,
+        [
+          cryptoRandomId(),
+          tenantId,
+          chunk.user_id,
+          chunk.session_id,
+          chunk.source,
+          chunk.label,
+          chunk.text_content,
+          chunk.content_hash,
+          vectorLiteral(chunk.embedding)
+        ]
+      );
+    }
+  }
+
+  async searchChatRagChunks(
+    payload: {
+      user_id: string;
+      session_id: string;
+      embedding: number[];
+      limit: number;
+    },
+    context?: StoreRequestContext
+  ): Promise<RagChunkSearchResult[]> {
+    const tenantId = resolveTenantId(context);
+    const result = await this.pool.query<{
+      source: string;
+      label: string;
+      text: string;
+      similarity: string | number;
+    }>(
+      `
+      SELECT
+        source,
+        label,
+        text_content AS text,
+        (1 - (embedding <=> $4::vector)) AS similarity
+      FROM chat_rag_chunks
+      WHERE tenant_id = $1
+        AND user_id = $2
+        AND ($3 = '' OR session_id = $3)
+      ORDER BY embedding <=> $4::vector ASC
+      LIMIT $5
+      `,
+      [
+        tenantId,
+        payload.user_id,
+        payload.session_id,
+        vectorLiteral(payload.embedding),
+        Math.max(1, payload.limit)
+      ]
+    );
+
+    return result.rows.map((row) => ({
+      source: row.source,
+      label: row.label,
+      text: row.text,
+      similarity: typeof row.similarity === "number" ? row.similarity : Number(row.similarity)
+    }));
+  }
+
   async appendAuditLog(eventType: string, payload: Record<string, unknown>, context?: StoreRequestContext): Promise<void> {
     const tenantId = resolveTenantId(context);
     await this.pool.query(
@@ -620,6 +712,29 @@ export class PostgresMetadataStore implements MetadataStore {
       CREATE INDEX IF NOT EXISTS chat_sessions_user_updated_idx
         ON chat_sessions(tenant_id, user_id, updated_at DESC);
     `);
+    await this.pool.query(`
+      CREATE EXTENSION IF NOT EXISTS vector;
+    `);
+    await this.pool.query(`
+      CREATE TABLE IF NOT EXISTS chat_rag_chunks (
+        id TEXT PRIMARY KEY,
+        tenant_id TEXT NOT NULL DEFAULT '${DEFAULT_TENANT_ID}',
+        user_id TEXT NOT NULL,
+        session_id TEXT NOT NULL DEFAULT '',
+        source TEXT NOT NULL,
+        label TEXT NOT NULL,
+        text_content TEXT NOT NULL,
+        content_hash TEXT NOT NULL,
+        embedding vector(1536) NOT NULL,
+        created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+        updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+        UNIQUE (tenant_id, user_id, session_id, content_hash)
+      );
+    `);
+    await this.pool.query(`
+      CREATE INDEX IF NOT EXISTS chat_rag_chunks_lookup_idx
+        ON chat_rag_chunks(tenant_id, user_id, session_id, updated_at DESC);
+    `);
     await this.pool.query(
       `
       INSERT INTO platform_users (id, tenant_id, username, password_salt, password_hash, is_active)
@@ -691,4 +806,13 @@ function resolveTenantId(context?: StoreRequestContext, payloadTenantId?: string
   }
 
   return DEFAULT_TENANT_ID;
+}
+
+function vectorLiteral(values: number[]): string {
+  const cleaned = values.map((entry) => (Number.isFinite(entry) ? Number(entry) : 0));
+  return `[${cleaned.join(",")}]`;
+}
+
+function cryptoRandomId(): string {
+  return randomUUID();
 }

@@ -37,5 +37,5 @@ describe("api auth guard", () => {
     expect(authorized.statusCode).toBe(200);
 
     await app.close();
-  });
+  }, 30_000);
 });

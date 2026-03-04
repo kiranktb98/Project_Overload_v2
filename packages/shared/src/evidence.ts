@@ -19,7 +19,13 @@ export const AnalystInputSchema = z.object({
   evidence_packet: EvidencePacketSchema,
   question: z.string().min(1).optional(),
   insight_mode: z.enum(["business", "data"]).default("business"),
-  data_context: z.string().optional()
+  data_context: z.string().optional(),
+  metric_definitions: z.array(z.object({
+    metric_key: z.string().min(1),
+    display_name: z.string().min(1),
+    definition: z.string().min(1)
+  })).optional(),
+  business_context: z.string().optional()
 });
 
 export const QueryStrategyInputSchema = z.object({
@@ -31,7 +37,13 @@ export const QueryStrategyInputSchema = z.object({
   metric_ids: z.array(z.string().min(1)).default([]),
   dimension_ids: z.array(z.string().min(1)).default([]),
   allowed_relations: z.array(z.string().min(1)).default([]),
-  planner_context: z.string().optional()
+  planner_context: z.string().optional(),
+  metric_definitions: z.array(z.object({
+    metric_key: z.string().min(1),
+    display_name: z.string().min(1),
+    definition: z.string().min(1)
+  })).optional(),
+  business_context: z.string().optional()
 });
 
 export const PlannedQuerySchema = z.object({

@@ -65,6 +65,23 @@ export type ReportContractVersionRecord = {
   created_at: string;
 };
 
+export type RagChunkUpsertRecord = {
+  user_id: string;
+  session_id: string;
+  source: string;
+  label: string;
+  text_content: string;
+  content_hash: string;
+  embedding: number[];
+};
+
+export type RagChunkSearchResult = {
+  source: string;
+  label: string;
+  text: string;
+  similarity: number;
+};
+
 export interface MetadataStore {
   createSemantic<K extends SemanticCollectionName>(
     collection: K,
@@ -109,6 +126,16 @@ export interface MetadataStore {
     payload: Omit<ChatSessionRecord, "tenant_id" | "created_at" | "updated_at">,
     context?: StoreRequestContext
   ): Promise<ChatSessionRecord>;
+  upsertChatRagChunks(payload: RagChunkUpsertRecord[], context?: StoreRequestContext): Promise<void>;
+  searchChatRagChunks(
+    payload: {
+      user_id: string;
+      session_id: string;
+      embedding: number[];
+      limit: number;
+    },
+    context?: StoreRequestContext
+  ): Promise<RagChunkSearchResult[]>;
 
   appendAuditLog(eventType: string, payload: Record<string, unknown>, context?: StoreRequestContext): Promise<void>;
   close(): Promise<void>;

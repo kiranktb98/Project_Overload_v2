@@ -145,12 +145,27 @@ export type MetricDefinitionOutput = {
   }>;
 };
 
+export type DataArchitectInput = {
+  message: string;
+  catalog_summary: string;
+  business_context: string;
+  probe_result?: string | null;
+  conversation_history: Array<{ role: string; content: string }>;
+  recent_query_context?: Array<{
+    query_id: string;
+    question: string;
+    sql_executed: string;
+    row_count: number;
+  }>;
+};
+
 export interface QueryRouterClient {
   provider: QueryRouterProvider;
   mode: "provider";
   decide(input: QueryRoutingInput): Promise<QueryRoutingDecision>;
   compile_sql?(input: DialectCompileInput): Promise<DialectCompileOutput>;
   narrate_single_query?(input: SingleQueryNarrationInput): Promise<string>;
+  answer_data_question?(input: DataArchitectInput): Promise<string>;
   scope_clarifications?(input: ScopeClarificationInput): Promise<ScopeClarificationOutput>;
   resolve_scope_answers?(input: ScopeAnswerResolutionInput): Promise<ScopeAnswerResolutionOutput>;
   propose_metrics?(input: MetricDefinitionInput): Promise<MetricDefinitionOutput>;
@@ -448,6 +463,43 @@ export function createQueryRouterClient(options: CreateQueryRouterClientOptions)
 
       return text.trim();
     },
+    async answer_data_question(input: DataArchitectInput): Promise<string> {
+      const response = await fetchWithTimeout(
+        fetcher,
+        `${baseUrl}/chat/completions`,
+        {
+          method: "POST",
+          headers: {
+            "content-type": "application/json",
+            Authorization: `Bearer ${options.openrouter_api_key}`,
+            ...(options.openrouter_app_name ? { "X-Title": options.openrouter_app_name } : {}),
+            ...(options.openrouter_app_url ? { "HTTP-Referer": options.openrouter_app_url } : {})
+          },
+          body: JSON.stringify({
+            model,
+            temperature: 0.2,
+            messages: [
+              { role: "system", content: dataArchitectSystemPrompt() },
+              { role: "user", content: dataArchitectUserPrompt(input) }
+            ]
+          })
+        },
+        timeoutMs
+      );
+
+      if (!response.ok) {
+        const body = await response.text();
+        throw new Error(`data-architect failed (${response.status}): ${body}`);
+      }
+
+      const payload = (await response.json()) as unknown;
+      const text = extractTextPayload(payload);
+      if (!text || text.trim().length === 0) {
+        throw new Error("data-architect returned empty text");
+      }
+
+      return text.trim();
+    },
     async scope_clarifications(input: ScopeClarificationInput): Promise<ScopeClarificationOutput> {
       const response = await fetchWithTimeout(
         fetcher,
@@ -638,33 +690,91 @@ function queryRouterUserPrompt(input: QueryRoutingInput): string {
 }
 
 function dialectCompilerSystemPrompt(dialect: SqlDialect): string {
-  const dialectGuides: Record<string, string> = {
-    postgres: "PostgreSQL: DATE_TRUNC('month',col) for dates, :: for casting, || for concat, ILIKE for case-insensitive match, NOW(), LIMIT N.",
-    mysql: "MySQL: DATE_FORMAT(col,'%Y-%m') for dates (NOT DATE_TRUNC), CAST() for types (no ::), CONCAT() for strings (no ||), backticks for reserved words, IFNULL(), NOW(), LIMIT N.",
-    snowflake: "Snowflake: DATE_TRUNC('MONTH',col), :: or CAST() for types, || for concat, ILIKE, QUALIFY for window filters, identifiers uppercase by default.",
-    bigquery: "BigQuery: DATE_TRUNC(col,MONTH) (col first!), CAST() for types (no ::), CONCAT() for strings (no ||), backticks for table refs, SAFE_CAST(), INT64/FLOAT64/STRING types."
+  const dialectGuides: Record<string, string[]> = {
+    postgres: [
+      "═══ POSTGRESQL SYNTAX RULES ═══",
+      "Date grouping: TO_CHAR(DATE_TRUNC('month', col), 'YYYY-MM') or DATE_TRUNC('month', col)::date",
+      "Date extraction: EXTRACT(YEAR FROM col), EXTRACT(MONTH FROM col)",
+      "Casting: col::type (e.g., col::numeric, col::text) or CAST(col AS type)",
+      "String concat: || operator (e.g., first_name || ' ' || last_name)",
+      "Case-insensitive match: ILIKE",
+      "Null handling: COALESCE(col, default)",
+      "Current time: NOW(), CURRENT_DATE, CURRENT_TIMESTAMP",
+      "Limit: LIMIT N",
+      "Boolean: TRUE/FALSE (not 1/0)",
+      "String quoting: single quotes only for strings, double quotes for identifiers",
+      "Common aggregates: SUM(), COUNT(), AVG(), MIN(), MAX(), COUNT(DISTINCT col)",
+      "Window functions: ROW_NUMBER() OVER (PARTITION BY ... ORDER BY ...)",
+      "IMPORTANT: Do NOT use DATE_FORMAT() — that is MySQL. Use TO_CHAR() or DATE_TRUNC() in PostgreSQL.",
+      "IMPORTANT: Do NOT use IFNULL() — that is MySQL. Use COALESCE() in PostgreSQL.",
+      "IMPORTANT: Do NOT use backticks — PostgreSQL uses double quotes for identifiers."
+    ],
+    mysql: [
+      "═══ MYSQL SYNTAX RULES ═══",
+      "Date grouping: DATE_FORMAT(col, '%Y-%m') — NEVER use DATE_TRUNC (does not exist in MySQL)",
+      "Date extraction: YEAR(col), MONTH(col), DAY(col)",
+      "Casting: CAST(col AS type) — no :: operator",
+      "String concat: CONCAT(a, b) — no || operator for concat",
+      "Case-insensitive match: LIKE (MySQL is case-insensitive by default with utf8_general_ci)",
+      "Null handling: IFNULL(col, default) or COALESCE(col, default)",
+      "Current time: NOW(), CURDATE(), CURRENT_TIMESTAMP",
+      "Limit: LIMIT N",
+      "Identifiers: backticks for reserved words (`order`, `group`)",
+      "IMPORTANT: Do NOT use DATE_TRUNC() — that is PostgreSQL. Use DATE_FORMAT() in MySQL.",
+      "IMPORTANT: Do NOT use :: for casting — use CAST() in MySQL.",
+      "IMPORTANT: Do NOT use || for string concat — use CONCAT() in MySQL."
+    ],
+    snowflake: [
+      "═══ SNOWFLAKE SYNTAX RULES ═══",
+      "Date grouping: DATE_TRUNC('MONTH', col)",
+      "Casting: :: or CAST() both work (e.g., col::NUMBER, CAST(col AS VARCHAR))",
+      "String concat: || operator",
+      "Case-insensitive match: ILIKE",
+      "Null handling: COALESCE(), NVL(), IFNULL()",
+      "Identifiers: uppercase by default, double quotes for case-sensitive",
+      "Window functions: QUALIFY for filtering window results directly",
+      "IMPORTANT: Snowflake identifiers are case-insensitive and stored as UPPERCASE."
+    ],
+    bigquery: [
+      "═══ BIGQUERY SYNTAX RULES ═══",
+      "Date grouping: DATE_TRUNC(col, MONTH) — column FIRST, then interval",
+      "Casting: CAST(col AS type), SAFE_CAST() — no :: operator",
+      "String concat: CONCAT(a, b) — no || operator",
+      "Types: INT64, FLOAT64, STRING, BOOL, DATE, TIMESTAMP",
+      "Table references: backticks for project.dataset.table",
+      "Null handling: COALESCE(), IFNULL()",
+      "IMPORTANT: BigQuery DATE_TRUNC argument order is (column, part) NOT (part, column).",
+      "IMPORTANT: Do NOT use :: for casting — use CAST() or SAFE_CAST() in BigQuery."
+    ]
   };
+
+  const guide = dialectGuides[dialect] ?? [`Write valid ${dialect.toUpperCase()} SQL.`];
 
   return [
     `You are an expert SQL dialect compiler for ${dialect.toUpperCase()}.`,
-    "Convert or repair source SQL to the target dialect while preserving the exact business intent.",
+    "Your job is to COMPILE source SQL into valid, executable ${dialect.toUpperCase()} SQL.",
     "",
-    dialectGuides[dialect] ?? "",
+    "COMPILATION RULES:",
+    "1. Preserve the EXACT business intent, filters, aggregations, joins, aliases, GROUP BY, ORDER BY, and LIMIT.",
+    "2. Only change dialect-specific syntax (date functions, casting, string ops, identifier quoting).",
+    "3. Do NOT add, remove, or modify any WHERE conditions, JOIN conditions, or column selections.",
+    "4. Do NOT add columns, remove columns, or change column aliases.",
+    "5. Do NOT change the business logic — only adapt the SQL syntax for the target dialect.",
     "",
-    "Key transformations to check:",
-    "- Replace DATE_TRUNC/DATE_FORMAT with the correct target function and argument order.",
-    "- Replace :: type casts with CAST() if target doesn't support ::.",
-    "- Replace || string concat with CONCAT() if target requires it.",
-    "- Convert type names (TEXT→STRING, NUMERIC→DECIMAL, etc.).",
-    "- Preserve all column aliases, GROUP BY, ORDER BY, LIMIT, and WHERE clauses.",
+    ...guide,
     "",
-    "Hard constraints:",
-    "- Exactly one SELECT statement (or WITH ... SELECT).",
-    "- No semicolons, no comments, no write operations or DDL.",
-    "- Use only provided allowlisted schemas/tables.",
+    "VALIDATION CHECKLIST (verify before returning):",
+    "- All table/column names match the CATALOG_SUMMARY exactly (fully qualified: schema.table).",
+    "- All date functions use the correct dialect syntax and argument order.",
+    "- All type casts use the correct dialect operator (:: vs CAST).",
+    "- All string operations use the correct dialect function (|| vs CONCAT).",
+    "- The SQL is a single SELECT or WITH...SELECT statement.",
+    "- No semicolons, no comments, no write operations.",
+    "",
+    "If the source SQL is ALREADY valid for the target dialect, return it unchanged.",
     "",
     "Return strict JSON only:",
-    '{"sql":"SELECT ...","rationale":"short note on dialect changes made"}'
+    '{"sql":"SELECT ...","rationale":"short note on changes made (or \'no changes needed\')"}'
   ].join("\n");
 }
 
@@ -695,8 +805,9 @@ function singleQueryNarratorSystemPrompt(): string {
     "- what was computed",
     "- scope/filters in plain English",
     "- whether joins were used",
-    "- final result",
-    "- any warnings if present."
+    "- final result.",
+    "Do NOT mention warnings, dialect adaptations, or implementation details.",
+    "Only mention data quality issues if they materially affect the result (e.g. missing rows, null values)."
   ].join("\n");
 }
 
@@ -708,6 +819,80 @@ function singleQueryNarratorUserPrompt(input: SingleQueryNarrationInput): string
     "INPUT_JSON:",
     JSON.stringify(input)
   ].join("\n");
+}
+
+function dataArchitectSystemPrompt(): string {
+  return [
+    "You are a Data Architect assistant for an analytics platform.",
+    "You help users understand the database schema, available tables, columns, data availability,",
+    "and provide advice on analytical approaches, queries, views, and table design.",
+    "",
+    "Your capabilities:",
+    "- Describe available tables, their columns, data types, and relationships",
+    "- Explain what data is available and its time range (using probe results when provided)",
+    "- Recommend which tables/columns to use for specific analyses",
+    "- Suggest SQL queries, views, or table designs",
+    "- Advise on analytical approaches and best practices",
+    "- Answer questions about data quality, cardinality, and coverage",
+    "- Answer questions about previously executed queries by examining the actual SQL",
+    "",
+    "Rules:",
+    "- Use ONLY information from the CATALOG_SUMMARY provided. Do NOT invent tables or columns.",
+    "- If probe query results are provided, use them for precise answers (e.g., exact date ranges).",
+    "- Keep answers clear and actionable. Use bullet points for lists.",
+    "- When suggesting SQL, use the tables and columns from the catalog.",
+    "- If the user asks about something not in the catalog, say so clearly.",
+    "- When the user asks about a previously executed query (e.g. 'is this only paid?', 'what filters?'),",
+    "  look at RECENTLY_EXECUTED_QUERIES and give a DEFINITIVE answer based on the actual SQL.",
+    "  NEVER be uncertain about what you just ran — read the SQL WHERE clause and state the facts.",
+    "- Be conversational but precise. Don't over-explain obvious things.",
+    "- When listing tables, include row count estimates and brief descriptions when available."
+  ].join("\n");
+}
+
+function dataArchitectUserPrompt(input: DataArchitectInput): string {
+  const parts: string[] = [
+    "USER_QUESTION:",
+    input.message,
+    "",
+    "CATALOG_SUMMARY:",
+    input.catalog_summary || "(no catalog available)",
+    "",
+    "BUSINESS_CONTEXT:",
+    input.business_context || "(none provided)"
+  ];
+
+  if (input.probe_result) {
+    parts.push("", "PROBE_QUERY_RESULT (live data from the database):", input.probe_result);
+  }
+
+  if (input.recent_query_context && input.recent_query_context.length > 0) {
+    parts.push(
+      "",
+      "RECENTLY_EXECUTED_QUERIES (actual SQL that was run — use these to answer questions about previous results):",
+      JSON.stringify(input.recent_query_context, null, 2)
+    );
+  }
+
+  if (input.conversation_history.length > 0) {
+    parts.push(
+      "",
+      "RECENT_CONVERSATION:",
+      input.conversation_history
+        .slice(-10)
+        .map((turn) => `${turn.role}: ${turn.content}`)
+        .join("\n")
+    );
+  }
+
+  parts.push(
+    "",
+    "Answer the user's question about the data based on the catalog and any probe results above.",
+    "If the user asks about a previous query result (e.g. 'is this only paid sales?', 'what filters were used?'),",
+    "look at RECENTLY_EXECUTED_QUERIES to see the actual SQL and give a DEFINITIVE answer.",
+    "NEVER say 'it would only be X if...' — check the SQL and state exactly what was queried."
+  );
+  return parts.join("\n");
 }
 
 function scopeClarificationSystemPrompt(mode: ScopeClarificationInput["mode"]): string {
@@ -743,10 +928,11 @@ function scopeClarificationSystemPrompt(mode: ScopeClarificationInput["mode"]): 
     "QUESTION QUALITY (CRITICAL):",
     "- Every question MUST be specific and self-contained. NEVER generate vague questions like 'What are the top cities?' without specifying the metric and time range.",
     "- BAD: 'What are the top cities?' — too vague, no metric or timeframe.",
-    "- GOOD: 'Which cities have the highest refund rate (refunded orders / total orders) over the past 4 months?'",
+    "- GOOD: 'Which cities have the highest refund rate (using the saved refund-rate formula) over the past 4 months?'",
     "- NEVER generate two questions that cover the same analytical ask. If one question is a more specific version of another, keep ONLY the specific one.",
     "- Each question should reference actual table names, column names, or metric names from the CATALOG_SUMMARY when available.",
     "- Use the BUSINESS_CONTEXT to inform what metrics and dimensions are relevant.",
+    "- If a metric appears in CONFIRMED_METRIC_DEFINITIONS, you MUST use that exact formula and MUST NOT substitute your own.",
     "",
     "- Return strict JSON only:",
     '  {"questions":[{"question_number":1,"question":"...","clarification":"..."}]}',
