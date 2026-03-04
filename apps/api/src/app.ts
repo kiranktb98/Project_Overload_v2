@@ -7,12 +7,10 @@ import {
   createPlannerClientFromEnv,
   createQueryStrategistClientFromEnv,
   createReportComposerClientFromEnv,
-  createSuperSummaryClientFromEnv,
   type AnalystClient,
   type PlannerClient,
   type QueryStrategistClient,
-  type ReportComposerClient,
-  type SuperSummaryClient
+  type ReportComposerClient
 } from "@project-overload/llm-client";
 import { SqlGuardError } from "@project-overload/sql-guard";
 import { createMetadataStoreFromEnv, type MetadataStore } from "./store";
@@ -32,11 +30,18 @@ export type ApiDependencies = {
   analyst_client: AnalystClient;
   query_strategist: QueryStrategistClient;
   report_composer: ReportComposerClient;
-  super_summary_client: SuperSummaryClient;
   planner_client: PlannerClient;
   connection_manager: RuntimeConnectionManager;
   connection_registry: UserConnectionRegistry;
 };
+
+function parseTimeoutMs(value: string | undefined, fallback: number, min: number, max: number): number {
+  const parsed = Number.parseInt(value ?? "", 10);
+  if (Number.isNaN(parsed) || parsed <= 0) {
+    return fallback;
+  }
+  return Math.max(min, Math.min(max, parsed));
+}
 
 export async function buildApiApp(options: Partial<ApiDependencies> = {}) {
   const app = Fastify({
@@ -69,7 +74,7 @@ export async function buildApiApp(options: Partial<ApiDependencies> = {}) {
   const registryOptions = {
     fallback_row_provider: localRowProviderRuntime.row_provider,
     fallback_source: localRowProviderRuntime.source as "synthetic" | "postgres" | undefined,
-    default_timeout_ms: Number.parseInt(process.env.DEFAULT_QUERY_TIMEOUT_MS ?? "900000", 10),
+    default_timeout_ms: parseTimeoutMs(process.env.DEFAULT_QUERY_TIMEOUT_MS, 900_000, 1_000, 3_600_000),
     default_limit: Number.parseInt(process.env.DEFAULT_QUERY_ROW_LIMIT ?? "200", 10),
     state_store: store
   };
@@ -82,6 +87,7 @@ export async function buildApiApp(options: Partial<ApiDependencies> = {}) {
   const connectionManager =
     options.connection_manager ??
     connectionRegistry.getOrCreate("default");
+  void connectionManager;
 
   const dataPlane =
     options.data_plane ??
@@ -93,7 +99,6 @@ export async function buildApiApp(options: Partial<ApiDependencies> = {}) {
   const analystClient = options.analyst_client ?? createAnalystClientFromEnv();
   const queryStrategist = options.query_strategist ?? createQueryStrategistClientFromEnv();
   const reportComposer = options.report_composer ?? createReportComposerClientFromEnv();
-  const superSummaryClient = options.super_summary_client ?? createSuperSummaryClientFromEnv();
   const plannerClient = options.planner_client ?? createPlannerClientFromEnv();
 
   const configuredRateLimit = Number.parseInt(process.env.RATE_LIMIT_RPM ?? "0", 10);
@@ -144,7 +149,6 @@ export async function buildApiApp(options: Partial<ApiDependencies> = {}) {
     analystClient,
     queryStrategist,
     reportComposer,
-    superSummaryClient,
     plannerClient,
     connectionRegistry
   );

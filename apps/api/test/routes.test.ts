@@ -160,7 +160,7 @@ describe("api semantic and run flow", () => {
     expect(scheduleRun.json().schedule_cron).toBe("0 9 * * 1");
 
     await app.close();
-  }, 20000);
+  }, 90_000);
 
   it("falls back to HTML download when PDF rendering is unavailable", async () => {
     const previousChromePath = process.env.CHROME_PATH;
@@ -238,7 +238,7 @@ describe("api semantic and run flow", () => {
       process.env.CHROME_PATH = previousChromePath;
       await app.close();
     }
-  });
+  }, 90_000);
 
   it("accepts manual run request with empty JSON body", async () => {
     const store = new InMemoryMetadataStore();

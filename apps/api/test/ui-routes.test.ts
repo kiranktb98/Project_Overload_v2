@@ -1,14 +1,19 @@
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { createStubAnalystClient } from "@project-overload/llm-client";
 import { buildApiApp } from "../src/app";
 import { InMemoryMetadataStore } from "../src/store/create-store";
 
 const ORIGINAL_AUTH_REQUIRED = process.env.API_AUTH_REQUIRED;
 const ORIGINAL_AUTH_TOKEN = process.env.API_AUTH_TOKEN;
+const ORIGINAL_OPENROUTER_API_KEY = process.env.OPENROUTER_API_KEY;
+const ORIGINAL_OPENROUTER_BASE_URL = process.env.OPENROUTER_BASE_URL;
 
 afterEach(() => {
   process.env.API_AUTH_REQUIRED = ORIGINAL_AUTH_REQUIRED;
   process.env.API_AUTH_TOKEN = ORIGINAL_AUTH_TOKEN;
+  process.env.OPENROUTER_API_KEY = ORIGINAL_OPENROUTER_API_KEY;
+  process.env.OPENROUTER_BASE_URL = ORIGINAL_OPENROUTER_BASE_URL;
+  vi.unstubAllGlobals();
 });
 
 describe("ui auth and chat sessions", () => {
@@ -92,6 +97,73 @@ describe("ui auth and chat sessions", () => {
     expect(Array.isArray(list.json().sessions)).toBe(true);
     expect(list.json().sessions).toHaveLength(1);
     expect(list.json().sessions[0].id).toBe("chat_1");
+
+    await app.close();
+  }, 30_000);
+
+  it("indexes and searches per-user rag memory chunks", async () => {
+    process.env.API_AUTH_REQUIRED = "false";
+    process.env.OPENROUTER_API_KEY = "test-key";
+    process.env.OPENROUTER_BASE_URL = "https://example.openrouter.local/v1";
+
+    const fetchMock = vi.fn(async () => {
+      return new Response(
+        JSON.stringify({
+          data: [{ embedding: [0.12, 0.34, 0.56] }]
+        }),
+        {
+          status: 200,
+          headers: { "content-type": "application/json" }
+        }
+      );
+    });
+    vi.stubGlobal("fetch", fetchMock as unknown as typeof fetch);
+
+    const app = await buildApiApp({
+      store: new InMemoryMetadataStore(),
+      analyst_client: createStubAnalystClient()
+    });
+
+    await app.inject({
+      method: "POST",
+      url: "/ui/auth/login",
+      payload: { username: "test123", password: "test123" }
+    });
+
+    const indexResponse = await app.inject({
+      method: "POST",
+      url: "/ui/rag/index-turn",
+      headers: { "x-ui-user": "test123" },
+      payload: {
+        session_id: "chat_123",
+        chunks: [
+          {
+            source: "assistant_turn",
+            label: "Assistant reply",
+            text: "Refund rate is refunded revenue over total revenue."
+          }
+        ]
+      }
+    });
+    expect(indexResponse.statusCode).toBe(200);
+    expect(indexResponse.json().indexed).toBe(1);
+
+    const searchResponse = await app.inject({
+      method: "POST",
+      url: "/ui/rag/search",
+      headers: { "x-ui-user": "test123" },
+      payload: {
+        session_id: "chat_123",
+        query_text: "What is the refund rate definition?",
+        limit: 5
+      }
+    });
+
+    expect(searchResponse.statusCode).toBe(200);
+    const body = searchResponse.json();
+    expect(Array.isArray(body.chunks)).toBe(true);
+    expect(body.chunks.length).toBeGreaterThan(0);
+    expect(body.chunks[0].text).toContain("Refund rate");
 
     await app.close();
   });

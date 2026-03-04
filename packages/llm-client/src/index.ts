@@ -57,16 +57,17 @@ export type ReportComposerInput = {
   title: string;
   audience: string;
   insight_mode: "business" | "data";
-  super_summary?: string;
-  consultant_actions?: string[];
+  per_question_summaries?: Array<{
+    question_text: string;
+    findings: string[];
+    drivers: string[];
+    anomalies: string[];
+    coverage_status: "complete" | "partial" | "insufficient";
+  }>;
   metric_definitions?: Array<{
     metric_key: string;
     display_name: string;
     definition: string;
-    filter_description?: string;
-    filter_column?: string;
-    filter_values?: string[];
-    status?: string;
   }>;
   analyses: Array<{
     question: string;
@@ -76,6 +77,7 @@ export type ReportComposerInput = {
     data_summary: string;
   }>;
   catalog_summary: string;
+  business_context?: string;
 };
 
 export interface ReportComposerClient {
@@ -186,11 +188,23 @@ type UsageEventBuffer = {
 };
 
 const DEFAULT_TIMEOUT_MS = 900_000;
+const MAX_TIMEOUT_MS = 3_600_000;
 const DEFAULT_OPENAI_MODEL = "gpt-4.1-mini";
 const DEFAULT_OPENROUTER_MODEL = "openai/gpt-5.2";
 const DEFAULT_SUPER_SUMMARY_OPENAI_MODEL = "gpt-5.2";
 const DEFAULT_SUPER_SUMMARY_OPENROUTER_MODEL = "openai/gpt-5.2";
 const DEFAULT_OPENROUTER_BASE_URL = "https://openrouter.ai/api/v1";
+
+function normalizeTimeoutMs(value: number | undefined): number {
+  if (!Number.isFinite(value ?? NaN)) {
+    return DEFAULT_TIMEOUT_MS;
+  }
+  const bounded = Math.trunc(value as number);
+  if (bounded <= 0) {
+    return DEFAULT_TIMEOUT_MS;
+  }
+  return Math.max(250, Math.min(bounded, MAX_TIMEOUT_MS));
+}
 
 // ---------------------------------------------------------------------------
 // Analyst Client
@@ -242,7 +256,7 @@ export function createAnalystClientFromEnv(overrides: Partial<CreateAnalystClien
 }
 
 export function createAnalystClient(options: CreateAnalystClientOptions): AnalystClient {
-  const timeoutMs = options.timeoutMs ?? DEFAULT_TIMEOUT_MS;
+  const timeoutMs = normalizeTimeoutMs(options.timeoutMs);
   const fallbackToStub = options.fallbackToStub ?? isTestRuntime();
   const fetcher = options.fetcher ?? fetch;
   const stub = createStubAnalystClient();
@@ -550,7 +564,7 @@ export function createQueryStrategistClientFromEnv(
 }
 
 export function createQueryStrategistClient(options: CreateAnalystClientOptions): QueryStrategistClient {
-  const timeoutMs = (options.timeoutMs ?? DEFAULT_TIMEOUT_MS) * 2; // double timeout for query planning
+  const timeoutMs = normalizeTimeoutMs(options.timeoutMs ?? DEFAULT_TIMEOUT_MS);
   const fallbackToStub = options.fallbackToStub ?? isTestRuntime();
   const fetcher = options.fetcher ?? fetch;
   const stub = createStubQueryStrategistClient();
@@ -835,97 +849,37 @@ function queryStrategistSystemPrompt(input: QueryStrategyInput): string {
   const syntaxRules = dialectSyntax[dialect] ?? [`═══ ${dialectUpper} SYNTAX ═══`, "Write valid " + dialectUpper + " SQL."];
 
   return [
-    `You are an expert SQL data preparation strategist. You write EXECUTABLE ${dialectUpper} SQL.`,
-    "Your job is to prepare COMPLETE, RICH datasets for an analyst to answer each business question.",
-    "Data preparation is the MOST CRITICAL part of the pipeline — the analyst can only work with what you provide.",
+    `You are an expert ${dialectUpper} data preparation strategist.`,
+    `Write EXECUTABLE ${dialectUpper} SQL to prepare datasets for a downstream analyst who has NO database access.`,
     "",
     `MODE: ${mode}`,
     "",
     ...syntaxRules,
     "",
-    "CRITICAL: Your SQL MUST be valid, executable " + dialectUpper + " syntax.",
-    "Do NOT write generic/PostgreSQL-style SQL and expect it to be fixed later.",
-    "Every function call, type cast, and operator must be correct for " + dialectUpper + ".",
+    "═══ CORE RULES ═══",
+    "1. Use ONLY tables and columns from the DATABASE CATALOG — fully qualified (schema.table). Never invent columns.",
+    `2. Each query: one ${dialectUpper} SELECT, no semicolons, no comments. GROUP BY + LIMIT ≤50. Always aggregate.`,
+    "3. Always ORDER BY (metric DESC for rankings, date ASC for trends). Use meaningful column aliases.",
+    "4. Each business question gets a unique group_id. 1-3 queries per question share the same group_id.",
+    "5. The 'question' field must be SPECIFIC and CONCRETE — never vague.",
+    "   BAD: 'What are the top N cities?' GOOD: 'Which 5 cities have the highest refund count (Nov 2025 – Feb 2026)?'",
+    "   BAD: 'How do refunds compare?' GOOD: 'MoM refund count and amount: Jan-Feb 2026 vs Nov-Dec 2025 (% change)'",
+    "6. If METRIC DEFINITIONS are provided, use their EXACT formulas and filters.",
+    "7. If PLANNER ANALYSIS is provided, use its discovered values, date ranges, and cardinalities.",
     "",
-    "═══ YOUR PRIMARY GOAL: THOROUGH DATA PREPARATION ═══",
-    "For each business question, prepare exactly the data the analyst needs — no more, no less.",
-    "Think of yourself as preparing a data packet for an analyst who has NO access to the database.",
-    "The analyst will only see the rows your queries return — so make every query count.",
+    "═══ QUERY QUALITY ═══",
+    "- Every query must return USEFUL, COMPLETE data — not empty or single-row results.",
+    "- For comparisons (MoM, YoY): return ALL periods side by side in one query, not a single aggregate.",
+    "  Example: GROUP BY month with both current and prior periods, so the analyst sees the trend.",
+    "- For 'top N' questions: always include the actual entity names (city, product, etc.) — never anonymize.",
+    "- For ticket/count metrics: include the raw count column, not just derived rates.",
+    "- JOINs: use them when the question needs data from multiple tables. Join on actual catalog columns.",
+    "- Time windows: be explicit with WHERE date filters. Use the scoped time range, not open-ended.",
     "",
-    "For EACH business question, assess its complexity and decide how many queries are appropriate:",
-    "- Simple factual question? One well-crafted query is sufficient.",
-    "- Needs both a trend AND a breakdown? Two queries with the same group_id.",
-    "- Complex diagnostic needing multiple angles? Up to three queries with the same group_id.",
-    "",
-    "Don't over-fetch for simple questions, and don't under-prepare for complex ones.",
-    "",
-    "═══ DATA PREPARATION STRATEGY (group_id) ═══",
-    "Every business question gets a unique group_id string. ALL queries for that question share the SAME group_id.",
-    "Their results will be merged into ONE data packet sent to the analyst.",
-    "",
-    "Decide HOW MANY queries each question needs based on its complexity:",
-    "",
-    "1 QUERY — Simple, direct questions with a single answer:",
-    "  'What was total revenue last month?' → one SUM query is enough",
-    "  'How many active users do we have?' → one COUNT query is enough",
-    "  'What is the average order value?' → one AVG query is enough",
-    "",
-    "2 QUERIES — Questions needing a trend PLUS a breakdown or comparison:",
-    "  'How is revenue trending by category?' → Q1: monthly trend, Q2: category breakdown",
-    "  'Which products are growing fastest?' → Q1: current period by product, Q2: prior period by product",
-    "",
-    "3 QUERIES — Complex diagnostic questions that need multiple angles:",
-    "  'Why did revenue drop last quarter?' → Q1: monthly trend, Q2: category breakdown, Q3: prior year comparison",
-    "  'What's driving customer churn?' → Q1: churn rates over time, Q2: churn by segment, Q3: retention cohort data",
-    "",
-    "USE YOUR JUDGMENT. A simple question needs 1 query — don't over-fetch.",
-    "A complex diagnostic question may need 2-3 queries to give the analyst enough data.",
-    "The goal is to provide exactly the data the analyst needs — no more, no less.",
-    "",
-    "IMPORTANT: Even with 1 query, you MUST assign a group_id. Every query needs a group_id.",
-    "",
-    "═══ CRITICAL: TABLE AND COLUMN NAMES ═══",
-    "The DATABASE CATALOG section in the user message lists EVERY table and column available to you.",
-    "You MUST use ONLY the exact table names and column names from that catalog — zero exceptions.",
-    "- Always use fully-qualified table names: schema.table (e.g., public.orders, NOT just orders).",
-    "- When using aliases, the column references must still match the catalog column names exactly.",
-    "- NEVER invent, guess, or assume column names that are not listed in the catalog.",
-    "- If the catalog shows 'order_date', do NOT write 'date', 'created_at', 'purchase_date', etc.",
-    "- If the catalog shows 'amount', do NOT write 'total', 'revenue', 'price', etc.",
-    "- If a column you need doesn't exist in the catalog, DO NOT use it. Adapt your query to use only available columns.",
-    "- Double-check EVERY column name in your SQL against the catalog before returning.",
-    "",
-    "═══ QUERY RULES ═══",
-    `- Each query MUST be exactly ONE valid ${dialectUpper} SELECT statement.`,
-    "- NO semicolons, NO multiple statements, NO comments.",
-    "- Every query MUST use GROUP BY and LIMIT ≤50. Raw row dumps (SELECT * or LIMIT 1000+) are FORBIDDEN.",
-    "- Use SUM(), COUNT(), AVG(), percentile or window functions — always aggregate, never dump raw records.",
-    "- Use JOINs across tables when it adds insight — but only join on columns that actually exist in the catalog.",
-    "- When the goal mentions time comparisons (YoY, MoM, QoQ), use date/timestamp columns from the catalog.",
-    "- Always add ORDER BY to make results meaningful (ORDER BY metric DESC for rankings, ORDER BY date for trends).",
-    "- Use meaningful column aliases (AS revenue, AS order_count, AS month) so analysts can interpret results easily.",
-    "- ALWAYS wrap DATE_TRUNC with TO_CHAR and AT TIME ZONE 'UTC' to produce plain date strings: TO_CHAR(DATE_TRUNC('month', col AT TIME ZONE 'UTC'), 'YYYY-MM-DD')",
-    "",
-    "═══ PLANNER INTEGRATION ═══",
-    "If a PLANNER ANALYSIS section is provided, it contains real data discoveries from exploratory queries.",
-    "ALWAYS use these discoveries to write better queries:",
-    "- Use discovered distinct values for WHERE filters (e.g., status values: 'shipped', 'cancelled').",
-    "- Use discovered date ranges to set appropriate time windows.",
-    "- Use discovered cardinalities to set appropriate GROUP BY granularity.",
-    "- If planner warns about nulls or empty columns, avoid those or handle with COALESCE.",
-    "",
-    "═══ QUESTION ISOLATION ═══",
-    "- NEVER bundle two different business questions into one group_id.",
-    "- Each business question gets its OWN unique group_id with 1-3 queries.",
-    "- If SCOPED QUESTIONS are provided, generate EXACTLY that many group_ids. Do NOT add extra questions.",
-    "- If the PLANNER ANALYSIS has N recommended approaches, generate exactly N questions.",
-    "- The question field on all queries within a group MUST be the same string.",
-    "- Use the EXACT columns and dimensions the user specified (e.g., if they said 'issue_type', use issue_type — not channel, not category).",
-    "",
-    "═══ METRIC DEFINITIONS ═══",
-    "If METRIC DEFINITIONS are provided in the report context, use the EXACT formulas described.",
-    "For example, if 'Total Revenue' is defined as 'SUM(order_amount) for completed orders',",
-    "your SQL must use SUM(order_amount) with WHERE status = 'completed' (or equivalent).",
+    "═══ SCOPED QUESTIONS ═══",
+    "If SCOPED QUESTIONS are provided, generate queries for EXACTLY those questions — no extras.",
+    "Match each scoped question 1:1 to a group_id. Use the Clarification text for filters and time windows.",
+    "The 'question' field must closely match the scoped question text.",
     "",
     "Return strictly valid JSON. No markdown, no extra keys.",
     '{"queries": [{"question":"...","sql":"...","purpose":"...","group_id":"..."}]}'
@@ -971,28 +925,31 @@ function queryStrategistUserPrompt(input: QueryStrategyInput): string {
   }
 
   parts.push("");
-  parts.push("═══ DATA PREPARATION INSTRUCTIONS ═══");
 
-  // When scoped questions are embedded in the report goal, instruct LLM to use them directly
-  if (input.report_goal.includes("SCOPED QUESTIONS")) {
-    parts.push("The report goal contains SCOPED QUESTIONS that were confirmed by the user.");
+  // Metric definitions — exact formulas the strategist must use
+  const metricDefs = (input.metric_definitions ?? []);
+  if (metricDefs.length > 0) {
+    parts.push("═══ METRIC DEFINITIONS (use these exact formulas) ═══");
+    for (const m of metricDefs) {
+      parts.push(`- ${m.display_name} (${m.metric_key}): ${m.definition}`);
+    }
     parts.push("");
-    parts.push("STRICT RULES FOR SCOPED QUESTIONS:");
-    parts.push("1. Generate queries for EXACTLY the scoped questions — no more, no fewer.");
-    parts.push("2. Do NOT add extra questions that the user did not ask for.");
-    parts.push("3. Do NOT modify the intent of any scoped question (e.g., if the user asked for 'issue_type', query issue_type — not channel or category).");
-    parts.push("4. Each scoped question (Q1, Q2, Q3, etc.) becomes one group_id with 1-3 SQL queries.");
-    parts.push("5. Use the Clarification text to guide the specific SQL filters, aggregations, time windows, and column choices.");
-    parts.push("6. The 'question' field in your output must closely match the scoped question text.");
-    parts.push("7. If there are 3 scoped questions, return exactly 3 group_ids. If 5, return exactly 5. Never more.");
-  } else {
-    parts.push("Generate 2-4 business questions from the report goal.");
   }
-  parts.push("For each question, decide how many SQL queries it needs (1, 2, or 3) based on complexity.");
-  parts.push("Simple questions need just 1 query. Complex diagnostic questions may need 2-3.");
-  parts.push("Think like a data engineer preparing complete datasets for an analyst who cannot query the database.");
-  parts.push("Every query MUST use GROUP BY and LIMIT ≤50. Never return raw row dumps.");
-  parts.push("Assign a unique group_id to EVERY query. Queries for the same question share the same group_id.");
+
+  // Business context — what the organization does
+  if (input.business_context && input.business_context.trim().length > 0) {
+    parts.push("═══ BUSINESS CONTEXT ═══");
+    parts.push(input.business_context.trim());
+    parts.push("");
+  }
+
+  if (input.report_goal.includes("SCOPED QUESTIONS")) {
+    parts.push("INSTRUCTIONS: Generate queries for EXACTLY the scoped questions above — no extras.");
+    parts.push("Each scoped question (Q1, Q2, ...) = one group_id with 1-3 SQL queries.");
+    parts.push("Use each question's Clarification text for filters, time windows, and column choices.");
+  } else {
+    parts.push("INSTRUCTIONS: Generate 2-4 focused business questions from the report goal.");
+  }
   parts.push("Return JSON only.");
 
   return parts.join("\n");
@@ -1127,6 +1084,13 @@ function dialectCompilerSystemPrompt(dialect: SqlDialect): string {
     "- No comments.",
     "- No write operations, DDL, or COPY.",
     "",
+    "═══ VALIDATION CHECKLIST (verify before returning) ═══",
+    "- All table/column names match the CATALOG_SUMMARY exactly (fully qualified: schema.table).",
+    "- All date functions use the correct dialect syntax and argument order.",
+    "- All type casts use the correct dialect operator.",
+    "- All string operations use the correct dialect function.",
+    "- If the source SQL is ALREADY valid for the target dialect, return it unchanged with rationale 'no changes needed'.",
+    "",
     "Return strict JSON only:",
     '{"sql":"SELECT ...","rationale":"short note on what was changed for dialect compatibility"}'
   ].join("\n");
@@ -1218,7 +1182,7 @@ export function createPlannerClientFromEnv(
 }
 
 export function createPlannerClient(options: CreateAnalystClientOptions): PlannerClient {
-  const timeoutMs = (options.timeoutMs ?? DEFAULT_TIMEOUT_MS) * 2; // double timeout for planning
+  const timeoutMs = normalizeTimeoutMs(options.timeoutMs ?? DEFAULT_TIMEOUT_MS);
   const fallbackToStub = options.fallbackToStub ?? isTestRuntime();
   const fetcher = options.fetcher ?? fetch;
   const stub = createStubPlannerClient();
@@ -1494,7 +1458,7 @@ export function createReportComposerClientFromEnv(
 }
 
 export function createReportComposerClient(options: CreateAnalystClientOptions): ReportComposerClient {
-  const timeoutMs = (options.timeoutMs ?? DEFAULT_TIMEOUT_MS) * 2;
+  const timeoutMs = normalizeTimeoutMs(options.timeoutMs ?? DEFAULT_TIMEOUT_MS);
   const fallbackToStub = options.fallbackToStub ?? isTestRuntime();
   const fetcher = options.fetcher ?? fetch;
   const stub = createStubReportComposerClient();
@@ -1636,7 +1600,7 @@ export function createSuperSummaryClientFromEnv(
 }
 
 export function createSuperSummaryClient(options: CreateAnalystClientOptions): SuperSummaryClient {
-  const timeoutMs = (options.timeoutMs ?? DEFAULT_TIMEOUT_MS) * 2;
+  const timeoutMs = normalizeTimeoutMs(options.timeoutMs ?? DEFAULT_TIMEOUT_MS);
   const fallbackToStub = options.fallbackToStub ?? isTestRuntime();
   const fetcher = options.fetcher ?? fetch;
   const stub = createStubSuperSummaryClient();
@@ -1883,48 +1847,36 @@ function reportComposerSystemPrompt(input: ReportComposerInput): string {
     : "This is a BUSINESS INSIGHTS report. Focus on trends, opportunities, risks, and actionable recommendations. Use charts for trends, tables for breakdowns, and clear executive-friendly language.";
 
   return [
-    "You are an expert report designer. Generate a complete, self-contained HTML document for a professional executive report.",
+    "You are an expert report designer. Generate a complete, self-contained HTML document.",
     "",
     modeGuidance,
     "",
-    "DESIGN RULES:",
-    "- Return a COMPLETE HTML document with <!doctype html>, <head> with embedded CSS, and <body>.",
-    "- Use a clean, modern design with a professional color scheme (blues, grays, whites).",
-    "- Include inline SVG charts where data supports it (bar charts, simple line charts, pie charts). Make charts proportionally sized and well-labeled.",
-    "- Use HTML tables with good styling for data breakdowns — alternating row colors, proper alignment, bold headers.",
-    "- Make it visually appealing — use cards with subtle shadows, rounded corners, clean typography.",
-    "- Each analysis section should have: a clear heading, a key finding callout box (highlighted), and supporting data in tables or charts.",
-    "- Include an EXECUTIVE SUMMARY section at the top with the 2-3 most important takeaways as bold callout cards.",
-    "- If super_summary is provided, render it near the top as 'Executive Super Summary'.",
-    "- End with a clear 'Recommended Actions' section with numbered, prioritized actions.",
-    "- If consultant_actions is present, render it as 'AI Recommended Actions for Intervention'.",
-    "- If consultant_actions is empty, do not fabricate intervention actions.",
-    "- Add a 'Metric Definitions' section when metric_definitions are provided — use a clean reference table format.",
-    "- Use the system font stack (system-ui, -apple-system, sans-serif) for clean rendering.",
-    "- The report must be printable and look good as a PDF — avoid dark backgrounds, use @media print friendly styles.",
-    "- Do NOT mention confidence scores, confidence thresholds, or confidence percentages in customer-facing content.",
-    "- Do NOT use any external dependencies (no CDN links, no JavaScript libraries).",
-    "- All numbers should be properly formatted (commas for thousands, 2 decimal places for currency/percentages).",
-    "- Return ONLY the HTML document, no markdown fences or explanations."
+    "HEADER: Report Title, Period (date range), Generation Date, Data Sources (tables). Nothing else in the banner.",
+    "",
+    "STRUCTURE:",
+    "- Complete HTML: <!doctype html>, <head> with embedded CSS, <body>.",
+    "- Executive Summary at top: 2-3 key cross-cutting takeaways as bold callout cards (synthesized from per_question_summaries).",
+    "- Each analysis section: clear heading, key finding callout box, supporting table or chart.",
+    "- End with numbered 'Recommended Actions' section.",
+    "- Metric Definitions reference table when metric_definitions are provided.",
+    "",
+    "DESIGN: Modern, clean (blues/grays/whites). Inline SVG charts (bar, line, pie) — well-labeled.",
+    "Tables with alternating rows, bold headers. Cards with subtle shadows, rounded corners.",
+    "Font: system-ui. Print-friendly (no dark backgrounds). No external CDN/JS dependencies.",
+    "Format numbers: commas for thousands, 2 decimal places for currency/percentages.",
+    "",
+    "CRITICAL RULES:",
+    "- NO BLANKS: Every cell must have a real value. If unknown, omit the row/card — never show '—' or 'N/A'.",
+    "- FACT-CHECK: Verify peaks/maxs/mins by comparing actual numbers. If Jan=109, Dec=93 → Jan is peak.",
+    "- EXACT NAMES: Use real entity names from data (city names, products). Never 'City 1' or 'Category A'.",
+    "- NO INTERNAL INFO: Never mention validation, pipeline issues, SQL compilation, or confidence scores.",
+    "- Return ONLY the HTML document, no markdown fences."
   ].join("\n");
 }
 
 function reportComposerUserPrompt(input: ReportComposerInput): string {
   const metricDefinitions = (input.metric_definitions ?? [])
-    .map((metric, index) => {
-      let line = `${index + 1}. ${metric.display_name} (${metric.metric_key}): ${metric.definition}`;
-      if ((metric.filter_description ?? "").length > 0) {
-        line += `\n   intent: ${metric.filter_description}`;
-      }
-      if ((metric.filter_column ?? "").length > 0 && (metric.filter_values ?? []).length > 0) {
-        const escaped = (metric.filter_values ?? []).map((v) => `'${v.replace(/'/g, "''")}'`);
-        line += ` [auto-filter: WHERE ${metric.filter_column} IN (${escaped.join(", ")})]`;
-      }
-      if (metric.status) {
-        line += ` [status: ${metric.status}]`;
-      }
-      return line;
-    })
+    .map((metric, index) => `${index + 1}. ${metric.display_name} (${metric.metric_key}): ${metric.definition}`)
     .join("\n");
 
   const sections = input.analyses.map((a, i) => [
@@ -1935,12 +1887,29 @@ function reportComposerUserPrompt(input: ReportComposerInput): string {
     `Data summary: ${a.data_summary}`
   ].join("\n")).join("\n\n");
 
+  const perQuestionSummaries = (input.per_question_summaries ?? [])
+    .map((s, i) => [
+      `--- Question ${i + 1}: ${s.question_text} ---`,
+      `Findings: ${s.findings.join("; ") || "None"}`,
+      `Key drivers: ${s.drivers.join("; ") || "None"}`,
+      `Anomalies: ${s.anomalies.join("; ") || "None"}`,
+      `Coverage: ${s.coverage_status}`
+    ].join("\n"))
+    .join("\n\n");
+
+  const businessCtx = input.business_context && input.business_context.trim().length > 0
+    ? input.business_context.trim()
+    : "(none)";
+
   return [
     `Report title: ${input.title}`,
-    `Audience: ${input.audience}`,
     `Report type: ${input.insight_mode === "data" ? "Data Quality Assessment" : "Business Insights Report"}`,
-    `Executive super summary: ${input.super_summary && input.super_summary.trim().length > 0 ? input.super_summary : "None"}`,
-    `AI recommended actions for intervention: ${(input.consultant_actions ?? []).length > 0 ? (input.consultant_actions ?? []).join("; ") : "None"}`,
+    "",
+    "BUSINESS CONTEXT:",
+    businessCtx,
+    "",
+    "PER-QUESTION SUMMARIES (use these to synthesize the Executive Summary):",
+    perQuestionSummaries.length > 0 ? perQuestionSummaries : "(none)",
     "",
     "METRIC DEFINITIONS:",
     metricDefinitions.length > 0 ? metricDefinitions : "(none provided)",
@@ -1948,30 +1917,19 @@ function reportComposerUserPrompt(input: ReportComposerInput): string {
     "ANALYSIS RESULTS:",
     sections,
     "",
-    "Generate the complete HTML report document."
+    "Generate the complete HTML report document. Synthesize an Executive Summary from the per-question summaries above."
   ].join("\n");
 }
 
 function renderStubReportHtml(input: ReportComposerInput): string {
-  const superSummarySection =
-    input.super_summary && input.super_summary.trim().length > 0
-      ? `<section class="analysis-card"><h2>Executive Super Summary</h2><p>${escapeHtml(input.super_summary.trim()).replace(/\n/g, "<br/>")}</p></section>`
-      : "";
-  const consultantActionsSection =
-    (input.consultant_actions ?? []).length > 0
-      ? `<section class="analysis-card"><h2>AI Recommended Actions for Intervention</h2><ol>${(input.consultant_actions ?? []).map((line) => `<li>${escapeHtml(line)}</li>`).join("")}</ol></section>`
-      : "";
+  const summaries = (input.per_question_summaries ?? []);
+  const executiveSummarySection = summaries.length > 0
+    ? `<section class="analysis-card"><h2>Executive Summary</h2><ul>${summaries.map((s) => s.findings.map((f) => `<li>${escapeHtml(f)}</li>`).join("")).join("")}</ul></section>`
+    : "";
 
   const metricDefinitions = (input.metric_definitions ?? [])
     .map((metric) => {
-      let filterNote = "";
-      if ((metric.filter_column ?? "").length > 0 && (metric.filter_values ?? []).length > 0) {
-        filterNote = `<span class="metric-source">filter: ${escapeHtml(metric.filter_column!)} IN (${(metric.filter_values ?? []).map((v) => escapeHtml(v)).join(", ")})</span>`;
-      } else if ((metric.filter_description ?? "").length > 0) {
-        filterNote = `<span class="metric-source">filter: ${escapeHtml(metric.filter_description!)}</span>`;
-      }
-      const statusBadge = metric.status ? ` <span class="metric-source">[${escapeHtml(metric.status)}]</span>` : "";
-      return `<li><strong>${escapeHtml(metric.display_name)}</strong>: ${escapeHtml(metric.definition)} ${filterNote}${statusBadge}</li>`;
+      return `<li><strong>${escapeHtml(metric.display_name)}</strong>: ${escapeHtml(metric.definition)}</li>`;
     })
     .join("");
 
@@ -2011,10 +1969,9 @@ function renderStubReportHtml(input: ReportComposerInput): string {
 </style></head><body>
   <div class="header">
     <h1>${escapeHtml(input.title)}</h1>
-    <p>${escapeHtml(typeLabel)} | ${escapeHtml(input.audience)} audience</p>
+    <p>${escapeHtml(typeLabel)} | Generated ${new Date().toISOString().slice(0, 10)}</p>
   </div>
-  ${superSummarySection}
-  ${consultantActionsSection}
+  ${executiveSummarySection}
   ${metricDefinitions.length > 0 ? `<section class="metric-definitions"><h2>Metric Definitions</h2><ul>${metricDefinitions}</ul></section>` : ""}
   ${analysisHtml}
 </body></html>`;
@@ -2045,35 +2002,40 @@ function analystSystemPrompt(input: AnalystInput): string {
     ? "This is a DATA QUALITY analysis. Focus on: null values, missing data, inconsistencies, suspicious patterns, data type issues, outliers, and recommendations for data cleanup. Treat the data critically. Quantify issues (e.g., '23% of rows have null email')."
     : "This is a BUSINESS analysis. The data is trustworthy. Focus on: trends, comparisons, notable changes, business implications, and actionable recommendations. Think like a senior business analyst presenting to executives. Always include specific numbers and percentages.";
 
+  const metricDefs = (input.metric_definitions ?? []);
+  const metricDefsBlock = metricDefs.length > 0
+    ? "\nMETRIC DEFINITIONS (use these exact formulas in your analysis):\n" +
+      metricDefs.map((m) => `- ${m.display_name} (${m.metric_key}): ${m.definition}`).join("\n") +
+      "\n"
+    : "";
+
+  const businessCtxBlock = input.business_context && input.business_context.trim().length > 0
+    ? `\nBUSINESS CONTEXT:\n${input.business_context.trim()}\n`
+    : "";
+
   return [
     "You are a senior data analyst. Analyze the provided dataset and return structured, evidence-based findings.",
     "",
     modeGuidance,
     questionContext,
-    "Stay strictly within the scoped question and timeframe. Do not expand to extra periods, segments, or hypotheses.",
-    "If coverage is partial or data is missing, explicitly state that gap instead of inferring unseen values.",
-    "Do not introduce external benchmarks, causes, or interventions unless they are directly supported by the provided evidence.",
+    businessCtxBlock,
+    metricDefsBlock,
+    "RULES:",
+    "- Stay within the scoped question and timeframe. Do not expand scope or infer unseen values.",
+    "- Every highlight MUST cite specific numbers, percentages, or comparisons from the data.",
+    "  BAD: 'Revenue is growing' → GOOD: 'Revenue grew 23% from ₹1.2M to ₹1.5M (Q3→Q4)'",
+    "- Use EXACT entity names from the data (city names, products, channels) — never anonymize as 'City 1' etc.",
+    "- Verify peaks/maximums by comparing actual numbers. If Jan=109, Dec=93 → Jan is the peak.",
+    "- For trends, calculate period-over-period changes. For distributions, include top/bottom with proportions.",
+    "- If rows contain '_source_query', the data was merged from multiple queries — cross-reference them.",
+    "- If DATA CONTEXT is provided, treat it as authoritative pre-computed aggregates covering the full dataset.",
+    "- When METRIC DEFINITIONS are provided, use their exact formulas. Do not redefine metrics.",
     "",
-    "ANALYSIS QUALITY STANDARDS:",
-    "- Every highlight MUST include a specific number, percentage, or comparison from the data.",
-    "- BAD: 'Revenue is growing' → GOOD: 'Revenue grew 23% from $1.2M to $1.5M between Q3 and Q4'",
-    "- BAD: 'Some products sell more' → GOOD: 'Top 3 products account for 67% of total revenue ($890K)'",
-    "- When analyzing trends, calculate period-over-period changes with actual values.",
-    "- When analyzing distributions, include top/bottom values and their proportions.",
-    "- If the data has time dimensions, identify the direction of change (growing, declining, stable).",
+    "Return strictly valid JSON:",
+    '{"request_id":"...","batch_index":0,"total_batches":1,"highlights":["..."],"risks":["..."],"recommendations":["..."],"confidence_score":0.85,"appendix_refs":["..."],"additional_query_requests":[]}',
     "",
-    "COMBINED DATA NOTE: If the rows contain a '_source_query' field, the data was merged from multiple SQL queries. Use this field to understand which rows came from which query and cross-reference the datasets in your analysis.",
-    "DATA CONTEXT NOTE: If a DATA CONTEXT section is provided in the user message, treat it as authoritative pre-computed aggregates. Use the monthly totals to identify trends, the column statistics to understand distributions, and the preparation notes/warnings to calibrate your confidence. The sample rows are representative examples; the DATA CONTEXT captures the full dataset's shape.",
-    "",
-    "Return strictly valid JSON matching this shape:",
-    '{"request_id": "...", "batch_index": 0, "total_batches": 1, "highlights": ["..."], "risks": ["..."], "recommendations": ["..."], "confidence_score": 0.85, "appendix_refs": ["..."], "additional_query_requests": [{"reason":"...", "question":"...", "required_fields":["..."]}]}',
-    "",
-    "- highlights: The most important findings with specific numbers (3-5 items). Each highlight should be a complete insight, not a vague observation.",
-    "- risks: Issues, concerns, or negative trends with quantified impact where possible (1-3 items).",
-    "- recommendations: Specific, actionable next steps tied to the findings (2-4 items). Each should clearly state what to do and why.",
-    "- confidence_score: 0.0-1.0 based on data quality, coverage, and sample size. Score below 0.7 if data has significant gaps or the sample is too small to draw conclusions.",
-    "- appendix_refs: Reference identifiers for any data tables or charts that support the findings.",
-    "- additional_query_requests: optional (0-2). Use only when crucial evidence is missing to answer the scoped question. Each request must be precise and scoped to the same question/timeline.",
+    "highlights: 3-5 specific findings with numbers. risks: 1-3 concerns with impact. recommendations: 2-4 actionable steps.",
+    "confidence_score: 0.0-1.0. additional_query_requests: optional (0-2), only when crucial evidence is missing.",
     "No markdown, no extra keys."
   ].join("\n");
 }

@@ -11,6 +11,8 @@ import type {
   ChatSessionRecord,
   MetadataStore,
   PlatformUserRecord,
+  RagChunkSearchResult,
+  RagChunkUpsertRecord,
   ReportContractVersionRecord,
   SemanticCollectionName,
   SemanticCollections,
@@ -38,6 +40,7 @@ export class InMemoryMetadataStore implements MetadataStore {
   private readonly systemStateByTenant = new Map<string, Map<string, Record<string, unknown>>>();
   private readonly usersByTenant = new Map<string, Map<string, PlatformUserRecord>>();
   private readonly chatSessionsByTenant = new Map<string, Map<string, ChatSessionRecord[]>>();
+  private readonly ragChunksByTenant = new Map<string, Map<string, RagChunkUpsertRecord[]>>();
   private readonly auditLogs: Array<{ tenant_id: string; event_type: string; payload: Record<string, unknown> }> = [];
 
   async createSemantic<K extends SemanticCollectionName>(
@@ -241,6 +244,59 @@ export class InMemoryMetadataStore implements MetadataStore {
     return session;
   }
 
+  async upsertChatRagChunks(payload: RagChunkUpsertRecord[], context?: StoreRequestContext): Promise<void> {
+    if (payload.length === 0) {
+      return;
+    }
+    const tenantId = resolveTenantId(context);
+    const byUser = this.getOrCreateRagChunks(tenantId);
+
+    for (const chunk of payload) {
+      const current = byUser.get(chunk.user_id) ?? [];
+      const next = current.filter(
+        (entry) =>
+          !(
+            entry.user_id === chunk.user_id &&
+            entry.session_id === chunk.session_id &&
+            entry.content_hash === chunk.content_hash
+          )
+      );
+      next.push({
+        ...chunk,
+        session_id: chunk.session_id || ""
+      });
+      byUser.set(chunk.user_id, next);
+    }
+  }
+
+  async searchChatRagChunks(
+    payload: {
+      user_id: string;
+      session_id: string;
+      embedding: number[];
+      limit: number;
+    },
+    context?: StoreRequestContext
+  ): Promise<RagChunkSearchResult[]> {
+    const tenantId = resolveTenantId(context);
+    const byUser = this.getOrCreateRagChunks(tenantId);
+    const source = byUser.get(payload.user_id) ?? [];
+    const scoped =
+      payload.session_id.trim().length > 0
+        ? source.filter((entry) => entry.session_id === payload.session_id)
+        : source;
+
+    return scoped
+      .map((entry) => ({
+        source: entry.source,
+        label: entry.label,
+        text: entry.text_content,
+        similarity: cosineSimilarity(payload.embedding, entry.embedding)
+      }))
+      .sort((left, right) => right.similarity - left.similarity)
+      .slice(0, Math.max(1, payload.limit));
+  }
+
   async appendAuditLog(eventType: string, payload: Record<string, unknown>, context?: StoreRequestContext): Promise<void> {
     this.auditLogs.push({
       tenant_id: resolveTenantId(context),
@@ -258,6 +314,7 @@ export class InMemoryMetadataStore implements MetadataStore {
     this.systemStateByTenant.clear();
     this.usersByTenant.clear();
     this.chatSessionsByTenant.clear();
+    this.ragChunksByTenant.clear();
     this.auditLogs.length = 0;
   }
 
@@ -341,6 +398,16 @@ export class InMemoryMetadataStore implements MetadataStore {
     return created;
   }
 
+  private getOrCreateRagChunks(tenantId: string): Map<string, RagChunkUpsertRecord[]> {
+    const existing = this.ragChunksByTenant.get(tenantId);
+    if (existing) {
+      return existing;
+    }
+    const created = new Map<string, RagChunkUpsertRecord[]>();
+    this.ragChunksByTenant.set(tenantId, created);
+    return created;
+  }
+
   private getOrCreateChatSessions(tenantId: string): Map<string, ChatSessionRecord[]> {
     const existing = this.chatSessionsByTenant.get(tenantId);
     if (existing) {
@@ -351,6 +418,28 @@ export class InMemoryMetadataStore implements MetadataStore {
     this.chatSessionsByTenant.set(tenantId, created);
     return created;
   }
+}
+
+function cosineSimilarity(a: number[], b: number[]): number {
+  const length = Math.min(a.length, b.length);
+  if (length === 0) {
+    return 0;
+  }
+
+  let dot = 0;
+  let magA = 0;
+  let magB = 0;
+  for (let index = 0; index < length; index += 1) {
+    const left = a[index];
+    const right = b[index];
+    dot += left * right;
+    magA += left * left;
+    magB += right * right;
+  }
+  if (magA === 0 || magB === 0) {
+    return 0;
+  }
+  return dot / (Math.sqrt(magA) * Math.sqrt(magB));
 }
 
 function resolveTenantId(context?: StoreRequestContext, payloadTenantId?: string): string {

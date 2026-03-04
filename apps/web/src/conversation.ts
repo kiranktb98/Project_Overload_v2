@@ -42,6 +42,7 @@ export type ConversationTurnInput = {
   history: ChatHistoryTurn[];
   catalog_summary?: string;
   business_context?: string;
+  retrieved_context?: Array<{ source: string; label: string; text: string }>;
 };
 
 export type ConversationOrchestratorInput = {
@@ -50,6 +51,31 @@ export type ConversationOrchestratorInput = {
   history: ChatHistoryTurn[];
   catalog_summary?: string;
   business_context?: string;
+  retrieved_context?: Array<{ source: string; label: string; text: string }>;
+};
+
+type RetrievalSource =
+  | "user_message"
+  | "history"
+  | "scope_question"
+  | "pending_input"
+  | "question_registry"
+  | "single_query_log"
+  | "prepared_payload"
+  | "planner_summary"
+  | "preparation_summary"
+  | "business_context"
+  | "catalog_summary"
+  | "draft_state";
+
+type RetrievalChunk = {
+  source: RetrievalSource;
+  label: string;
+  text: string;
+};
+
+type ScoredRetrievalChunk = RetrievalChunk & {
+  score: number;
 };
 
 export interface ConversationClient {
@@ -71,6 +97,11 @@ export type CreateConversationClientOptions = {
   openrouter_app_url?: string;
   openai_model?: string;
   openrouter_model?: string;
+  rag_level?: 1 | 2;
+  rag_candidate_limit?: number;
+  rag_final_limit?: number;
+  openrouter_embedding_model?: string;
+  openrouter_rerank_model?: string;
   timeout_ms?: number;
   require_provider?: boolean;
   fetch_impl?: Fetcher;
@@ -86,6 +117,12 @@ const DEFAULT_TIMEOUT_MS = 900_000;
 const DEFAULT_OPENAI_MODEL = "gpt-4.1-mini";
 const DEFAULT_OPENROUTER_MODEL = "openai/gpt-5.2";
 const DEFAULT_OPENROUTER_BASE_URL = "https://openrouter.ai/api/v1";
+const DEFAULT_OPENROUTER_EMBEDDING_MODEL = "openai/text-embedding-3-small";
+const DEFAULT_OPENROUTER_RERANK_MODEL = "openai/gpt-4.1-mini";
+
+function isTestRuntime(): boolean {
+  return process.env.NODE_ENV === "test" || process.env.VITEST === "true";
+}
 
 export function createPassthroughConversationClient(): ConversationClient {
   return {
@@ -135,6 +172,23 @@ export function createConversationClientFromEnv(
       : parseBoolean(process.env.WEB_CHAT_REQUIRE_PROVIDER ?? "true");
 
   const timeoutFromEnv = Number.parseInt(process.env.LLM_TIMEOUT_MS ?? "", 10);
+  const ragLevelEnv = Number.parseInt(process.env.WEB_RAG_LEVEL ?? "", 10);
+  const ragCandidateLimitEnv = Number.parseInt(process.env.WEB_RAG_CANDIDATE_LIMIT ?? "", 10);
+  const ragFinalLimitEnv = Number.parseInt(process.env.WEB_RAG_FINAL_LIMIT ?? "", 10);
+  const defaultRagLevel: 1 | 2 = isTestRuntime() ? 1 : 2;
+  const ragLevel = clampRagLevel(overrides.rag_level ?? (Number.isNaN(ragLevelEnv) ? defaultRagLevel : ragLevelEnv));
+  const ragCandidateLimit = clampRagCount(
+    overrides.rag_candidate_limit ?? (Number.isNaN(ragCandidateLimitEnv) ? 24 : ragCandidateLimitEnv),
+    8,
+    64,
+    24
+  );
+  const ragFinalLimit = clampRagCount(
+    overrides.rag_final_limit ?? (Number.isNaN(ragFinalLimitEnv) ? 16 : ragFinalLimitEnv),
+    4,
+    32,
+    16
+  );
 
   const options: CreateConversationClientOptions = {
     provider,
@@ -145,6 +199,13 @@ export function createConversationClientFromEnv(
     openrouter_app_url: overrides.openrouter_app_url ?? process.env.OPENROUTER_APP_URL,
     openai_model: overrides.openai_model ?? process.env.OPENAI_MODEL,
     openrouter_model: overrides.openrouter_model ?? process.env.CONVERSATION_MODEL ?? process.env.MODEL_GPT,
+    rag_level: ragLevel,
+    rag_candidate_limit: ragCandidateLimit,
+    rag_final_limit: ragFinalLimit,
+    openrouter_embedding_model:
+      overrides.openrouter_embedding_model ?? process.env.OPENROUTER_EMBEDDING_MODEL,
+    openrouter_rerank_model:
+      overrides.openrouter_rerank_model ?? process.env.OPENROUTER_RERANK_MODEL,
     timeout_ms: overrides.timeout_ms ?? (Number.isNaN(timeoutFromEnv) ? undefined : timeoutFromEnv),
     require_provider: requireProvider,
     fetch_impl: overrides.fetch_impl
@@ -158,6 +219,7 @@ export function createConversationClient(options: CreateConversationClientOption
   const timeoutMs = options.timeout_ms ?? DEFAULT_TIMEOUT_MS;
   const requireProvider = options.require_provider ?? false;
   const fetcher = options.fetch_impl ?? fetch;
+  const runtimeDefaultRagLevel: 1 | 2 = isTestRuntime() ? 1 : 2;
 
   if (provider === "stub") {
     throw new Error("LLM provider 'stub' is disabled in runtime. Set LLM_PROVIDER=openrouter or openai.");
@@ -176,7 +238,10 @@ export function createConversationClient(options: CreateConversationClientOption
       provider,
       fetcher,
       timeout_ms: timeoutMs,
-      request_factory: (input) => buildOpenAiRequest(input, options)
+      request_factory: (input) => buildOpenAiRequest(input, options),
+      rag_level: options.rag_level ?? runtimeDefaultRagLevel,
+      rag_candidate_limit: options.rag_candidate_limit ?? 24,
+      rag_final_limit: options.rag_final_limit ?? 16
     });
   }
 
@@ -192,7 +257,18 @@ export function createConversationClient(options: CreateConversationClientOption
     provider: "openrouter",
     fetcher,
     timeout_ms: timeoutMs,
-    request_factory: (input) => buildOpenRouterRequest(input, options)
+    request_factory: (input) => buildOpenRouterRequest(input, options),
+    rag_level: options.rag_level ?? runtimeDefaultRagLevel,
+    rag_candidate_limit: options.rag_candidate_limit ?? 24,
+    rag_final_limit: options.rag_final_limit ?? 16,
+    openrouter_api_key: options.openrouter_api_key,
+    openrouter_base_url: options.openrouter_base_url ?? DEFAULT_OPENROUTER_BASE_URL,
+    openrouter_app_name: options.openrouter_app_name,
+    openrouter_app_url: options.openrouter_app_url,
+    openrouter_embedding_model:
+      options.openrouter_embedding_model ?? DEFAULT_OPENROUTER_EMBEDDING_MODEL,
+    openrouter_rerank_model:
+      options.openrouter_rerank_model ?? DEFAULT_OPENROUTER_RERANK_MODEL
   });
 }
 
@@ -201,13 +277,26 @@ type RemoteConversationClientOptions = {
   fetcher: Fetcher;
   timeout_ms: number;
   request_factory: (input: ConversationTurnInput) => ProviderRequest;
+  rag_level: 1 | 2;
+  rag_candidate_limit: number;
+  rag_final_limit: number;
+  openrouter_api_key?: string;
+  openrouter_base_url?: string;
+  openrouter_app_name?: string;
+  openrouter_app_url?: string;
+  openrouter_embedding_model?: string;
+  openrouter_rerank_model?: string;
 };
 
 function createRemoteConversationClient(
   options: RemoteConversationClientOptions
 ): ConversationClient {
   async function requestText(input: ConversationTurnInput): Promise<string> {
-    const request = options.request_factory(input);
+    const retrievedContext = await resolveRetrievedContextForTurn(input, options, "chat");
+    const request = options.request_factory({
+      ...input,
+      retrieved_context: retrievedContext
+    });
 
     const response = await fetchWithTimeout(
       options.fetcher,
@@ -285,10 +374,20 @@ function createRemoteConversationClient(
         state: input.state,
         history: input.history,
         catalog_summary: input.catalog_summary,
-        business_context: input.business_context
+        business_context: input.business_context,
+        retrieved_context: input.retrieved_context
       };
-      const request = options.request_factory(orchestrationTurn);
-      request.payload = withOrchestratorPayload(request.payload, orchestrationTurn);
+      const retrievedContext = await resolveRetrievedContextForTurn(
+        orchestrationTurn,
+        options,
+        "orchestrator"
+      );
+      const orchestrationWithContext: ConversationTurnInput = {
+        ...orchestrationTurn,
+        retrieved_context: retrievedContext
+      };
+      const request = options.request_factory(orchestrationWithContext);
+      request.payload = withOrchestratorPayload(request.payload, orchestrationWithContext);
 
       const response = await fetchWithTimeout(
         options.fetcher,
@@ -312,8 +411,10 @@ function createRemoteConversationClient(
         throw new Error("Unable to parse provider orchestrator response.");
       }
 
+      console.log("[orchestrator] raw text (first 500 chars):", textPayload.slice(0, 500));
       const parsed = parseJsonObjectFromText(textPayload);
-      return ConversationOrchestratorDecisionSchema.parse(parsed);
+      const normalized = normalizeOrchestratorDecisionPayload(parsed, input.user_message);
+      return ConversationOrchestratorDecisionSchema.parse(normalized);
     }
   };
 }
@@ -531,10 +632,17 @@ function conversationalUserPrompt(input: ConversationTurnInput): string {
   }
 
   const history = serializeHistory(input.history);
+  const retrievedContext =
+    input.retrieved_context ?? buildRetrievedContextForTurn(input, { max_chunks: 14 });
 
   return [
     "Conversation history:",
     history.length > 0 ? history : "(new conversation)",
+    "",
+    "RETRIEVED_CONTEXT_FOR_THIS_TURN:",
+    retrievedContext.length > 0
+      ? JSON.stringify(retrievedContext, null, 2)
+      : "(none)",
     "",
     "User message:",
     input.user_message,
@@ -578,7 +686,8 @@ function withOrchestratorPayload(
         { role: "system", content: system },
         { role: "user", content: user }
       ],
-      temperature: 0
+      temperature: 0,
+      response_format: { type: "json_object" }
     };
   }
 
@@ -596,9 +705,76 @@ function orchestrationSystemPrompt(input: ConversationTurnInput): string {
     "You must process mixed intent in one message: new questions + clarifications + follow-ups can coexist.",
     "Never use context from other conversations.",
     "Use only this chat's structured state and recent turns.",
+    "Use RETRIEVED_CONTEXT_FOR_THIS_TURN as the primary grounding context for this decision.",
     "If a follow-up requires new data, emit it as a new scoped question (do not overwrite prior questions).",
     "",
-    "QUESTION DECOMPOSITION (CRITICAL):",
+    "THREE-WAY ROUTING (CRITICAL):",
+    "You MUST route every user message to exactly one of these three workflows:",
+    "",
+    "Route 1 — single_query_agent (DEFAULT for most questions):",
+    "  ANY factual question answerable with ONE SQL query. This is the DEFAULT route.",
+    "  When in doubt between single_query_agent and query_planning_agent, ALWAYS choose single_query_agent.",
+    "  Examples: 'total sales for Feb 2026', 'top 10 customers', 'how many refunds last month',",
+    "           'average order value by city', 'show me the top 10 customers',",
+    "           'sales for december 2025', 'split by order status', 'break it down by city',",
+    "           'what was the revenue last quarter', 'count of orders by category'",
+    "  Follow-ups on single query results (e.g. 'split by status', 'break it down', 'filter by X',",
+    "    'what about by city', 'exclude cancelled') are ALSO single_query_agent.",
+    "  Set next_owner='single_query_agent'. MUST NOT create new_scope_questions or pending_inputs.",
+    "",
+    "  MULTI-PART SINGLE QUERY MESSAGES:",
+    "  When a user message contains MULTIPLE distinct parts (e.g. 'include paid and shipped. Also break down by top 3 cities'),",
+    "  create SEPARATE intent_parts for each part with the CORRECT type:",
+    "    - If the user is ANSWERING a previous clarification question, tag that part as type='clarification_answer'.",
+    "      Example: 'give me delivered shipped and paid' when answering 'which statuses?' → type='clarification_answer'",
+    "    - Any ADDITIONAL asks beyond the clarification answer should be type='follow_up_request' or type='new_question'.",
+    "      Example: 'but can you break it down for top 3 cities' → type='follow_up_request'",
+    "  The system will execute the clarification answer (completing the original query) FIRST,",
+    "  then confirm before running any follow-up asks.",
+    "  Each intent_part.text should be a self-contained description of that specific part.",
+    "  IMPORTANT: If there are 3 or more distinct NEW asks (not counting clarification answers), the system will automatically escalate to deep diagnostic mode.",
+    "",
+    "Route 2 — data_architect_agent:",
+    "  Questions ABOUT the data itself: schema, tables, columns, data availability, analytical advice.",
+    "  Examples: 'what tables are available?', 'what columns does orders have?',",
+    "           'until when is data available?', 'which table should I use for churn analysis?',",
+    "           'how should I analyze refund trends?', 'can you create a view for X?',",
+    "           'if I want to add a new table what columns should I consider?',",
+    "           'what is the best way to query refund data?'",
+    "  Set next_owner='data_architect_agent'. MUST NOT create new_scope_questions or pending_inputs.",
+    "",
+    "Route 3 — query_planning_agent (deep diagnostics):",
+    "  ONLY for complex multi-part analysis that EXPLICITLY needs multiple queries, trends with comparisons,",
+    "  or when the user EXPLICITLY requests 'deep analysis', 'detailed report', 'comprehensive analysis',",
+    "  'deep diagnostics', 'full report', or similar phrases indicating they want a multi-query diagnostic report.",
+    "  Examples: 'give me a comprehensive refund analysis with trends and comparisons',",
+    "           'I want a detailed diagnostic report on sales performance',",
+    "           'compare Q1 vs Q2 sales performance across regions with trend analysis',",
+    "           'deep dive into customer churn drivers'",
+    "  Do NOT route here for simple questions like 'sales for december' or 'split by status' — those are single_query_agent.",
+    "  Set next_owner='query_planning_agent'. Create new_scope_questions as needed.",
+    "",
+    "ESCALATION PROTECTION:",
+    "  NEVER auto-escalate from single_query_agent to query_planning_agent.",
+    "  After a single query result, follow-up questions like 'split by X', 'break down by Y',",
+    "  'exclude Z', 'what about by city' are ALL single_query_agent — NOT deep diagnostics.",
+    "  Only switch to query_planning_agent if the user EXPLICITLY asks for deep analysis/report.",
+    "",
+    "QUERY CONTEXT AWARENESS:",
+    "  The STRUCTURED_STATE includes recent_single_queries with the actual SQL that was executed.",
+    "  When the user asks about a previous query result (e.g. 'is this only paid sales?',",
+    "  'what filters were used?', 'does this include cancelled orders?'), route to data_architect_agent",
+    "  which can give a DEFINITIVE answer based on the actual SQL. NEVER say 'it would only be X if...'",
+    "  — look at the SQL and tell the user exactly what was queried.",
+    "",
+    "Route to wait_for_user for greetings, chitchat, or when awaiting user input on scope questions.",
+    "",
+    "MID-CONVERSATION SWITCHING:",
+    "Route each message independently based on its CURRENT intent, regardless of previous workflow.",
+    "A user may ask a data architect question, then a single query, then request deep analysis — all in one chat.",
+    "Always route based on what the user is asking NOW.",
+    "",
+    "QUESTION DECOMPOSITION (for deep analysis only):",
     "Every scope question must be ATOMIC — one clear analytical ask per question.",
     "If the user's message contains multiple analytical asks, SPLIT them into separate new_scope_questions.",
     "Example: user says '4-month refund trend + compare latest 2 months vs prior 2 months'",
@@ -623,33 +799,54 @@ function orchestrationSystemPrompt(input: ConversationTurnInput): string {
     "  - User: 'last 4 complete months, exclude cancelled orders, top 10 is fine' → map each clause to the relevant scope question.",
     "  - User: 'confirm all' / 'ok with everything' / 'defaults are fine' / 'yes to all' → confirm ALL pending scope items with their proposed defaults.",
     "  - User: 'yes but change Q3 to use refund value instead' → confirm all except Q3, which gets the updated answer.",
+    "CRITICAL: Proposed defaults are NOT confirmed answers.",
+    "Only emit resolved_scope_answers when the user explicitly confirms or provides an answer for that question.",
+    "Never auto-fill unresolved items simply because a default exists.",
     "When the user gives a blanket confirmation ('confirm all', 'looks good', 'ok with everything', 'yes to all', 'defaults are fine'),",
     "  emit resolved_scope_answers for EVERY unanswered scope question with the proposed default as the answer.",
+    "If the user has NOT confirmed all pending items, keep unresolved items unresolved and request only those missing confirmations.",
+    "Do not set state_updates.mark_scope_complete=true unless every pending scope item is resolved.",
     "NEVER ask the user to reply with numbered answers. NEVER suggest a format like `1) ... 2) ... 3) ...`.",
     "Accept answers in any conversational form and map them to the right scope questions.",
     "",
+    "SAVED METRIC DEFINITIONS (CRITICAL — READ BEFORE GENERATING QUESTIONS):",
+    "The user prompt may include RELEVANT_METRIC_DEFINITIONS_FROM_DB_FOR_THIS_USER with metric formulas loaded from DB.",
+    "When ANY scope question or clarification references a metric that exists in RELEVANT_METRIC_DEFINITIONS_FROM_DB_FOR_THIS_USER,",
+    "you MUST use the EXACT definition from that saved entry. NEVER invent your own formula.",
+    "Example: if RELEVANT_METRIC_DEFINITIONS_FROM_DB_FOR_THIS_USER contains {metric_key:'refund_rate', definition:'refunded revenue / total revenue'},",
+    "then every mention of 'refund rate' in scope questions MUST use 'refunded revenue / total revenue' — NOT 'refunded orders / total orders' or any other formula.",
+    "Include the saved definition in the clarification field so the user can see it: 'Using saved metric: Refund Rate = refunded revenue / total revenue'.",
+    "",
     "QUESTION SUGGESTIONS:",
-    "After presenting the initial scope questions, ALWAYS suggest 1-2 additional questions that could add value based on:",
-    "  - The business context (what kind of organization, what they care about)",
-    "  - The metric definitions and catalog data (what data is available)",
-    "  - Common analytical patterns (e.g., if asking about trends, suggest a comparison; if asking about top-N, suggest a breakdown by another dimension)",
-    "Mark suggested questions with [Suggested] prefix in question_text.",
+    "You MAY add up to 1 suggested question on the first deep-analysis scope turn if it adds clear value.",
+    "Do NOT add suggested questions during ongoing clarification unless the user explicitly asks for additional ideas.",
+    "Prefix suggested question_text with '[Suggested] '.",
     "The user can accept, modify, or ignore suggested questions.",
     "",
-    "Prefer safe default assumptions first (timeline anchor, top-N, standard metric formula) and proceed.",
+    "Prefer safe default assumptions first (timeline anchor, top-N, standard metric formula) and propose them explicitly.",
+    "Do NOT treat defaults as confirmed unless the user confirms them.",
     "Only ask pending_inputs when ambiguity would materially change the answer.",
     "If pending scope items remain, keep next_owner=wait_for_user and include pending_inputs.",
     "",
     "Output schema:",
-    '{"intent_parts":[{"type":"new_question|clarification_answer|follow_up_request|duplicate|chitchat|other","text":"...","question_ref":"Q1?"}],"resolved_scope_answers":[{"question_number":1,"answer":"..."}],"new_scope_questions":[{"question_text":"...","clarification":"...","reason":"..."}],"follow_up_requests":[{"question_text":"...","requires_new_data":true,"grounded_in_existing_payload":false,"referenced_question_ids":["q1"]}],"pending_inputs":[{"input_key":"...","prompt":"...","reason":"...","question_number":1}],"next_owner":"conversation_orchestrator|query_planning_agent|data_prep_orchestrator|batch_analyst|super_summary|report_composer|qa|wait_for_user","tool_calls":[{"tool_name":"...","reason":"...","payload":{}}],"state_updates":{"mark_scope_complete":false,"append_new_questions":false,"clear_pending_inputs":false,"summary":"..."}}',
+    '{"intent_parts":[{"type":"new_question|clarification_answer|follow_up_request|duplicate|chitchat|other","text":"...","question_ref":"Q1?"}],"resolved_scope_answers":[{"question_number":1,"answer":"..."}],"new_scope_questions":[{"question_text":"...","clarification":"...","reason":"..."}],"follow_up_requests":[{"question_text":"...","requires_new_data":true,"grounded_in_existing_payload":false,"referenced_question_ids":["q1"]}],"pending_inputs":[{"input_key":"...","prompt":"...","reason":"...","question_number":1}],"next_owner":"conversation_orchestrator|single_query_agent|data_architect_agent|query_planning_agent|data_prep_orchestrator|batch_analyst|super_summary|report_composer|qa|wait_for_user","tool_calls":[{"tool_name":"...","reason":"...","payload":{}}],"state_updates":{"mark_scope_complete":false,"append_new_questions":false,"clear_pending_inputs":false,"summary":"..."}}',
     "",
     `Current timezone: ${input.state.draft.timezone || "UTC"}`,
-    "Only ask pending_inputs when ambiguity is high-impact and cannot be safely handled with standard assumptions."
+    "Only ask pending_inputs when ambiguity is high-impact and cannot be safely handled with standard assumptions.",
+    "",
+    "REMINDER: For query_planning_agent routes, new_scope_questions MUST include [Suggested] questions. Output ONLY the JSON object — no markdown, no explanation."
   ].join("\n");
 }
 
 function orchestrationUserPrompt(input: ConversationTurnInput): string {
   const recentHistory = serializeHistory(input.history);
+  const retrievedContext =
+    input.retrieved_context ?? buildRetrievedContextForTurn(input, { max_chunks: 16 });
+  const relevantMetricDefinitions = selectRelevantMetricDefinitions(
+    input.state.metric_definitions ?? [],
+    input.user_message,
+    input.history
+  );
   const scopeQuestions = input.state.scope_questions
     .map((entry) => ({
       question_number: entry.question_number,
@@ -658,19 +855,23 @@ function orchestrationUserPrompt(input: ConversationTurnInput): string {
       answer: entry.answer ?? null
     }))
     .slice(-20);
-  const metricDefinitions = input.state.metric_definitions.map((entry) => ({
-    metric_key: entry.metric_key,
-    display_name: entry.display_name,
-    definition: entry.definition,
-    confirmed: entry.confirmed
-  }));
 
   return [
     "USER_MESSAGE:",
     input.user_message,
     "",
+    "RELEVANT_METRIC_DEFINITIONS_FROM_DB_FOR_THIS_USER:",
+    relevantMetricDefinitions.length > 0
+      ? JSON.stringify(relevantMetricDefinitions, null, 2)
+      : "(none matched in this turn)",
+    "",
     "RECENT_CHAT_HISTORY:",
     recentHistory.length > 0 ? recentHistory : "(empty)",
+    "",
+    "RETRIEVED_CONTEXT_FOR_THIS_TURN:",
+    retrievedContext.length > 0
+      ? JSON.stringify(retrievedContext, null, 2)
+      : "(none)",
     "",
     "STRUCTURED_STATE:",
     JSON.stringify(
@@ -693,7 +894,15 @@ function orchestrationUserPrompt(input: ConversationTurnInput): string {
         },
         question_registry: input.state.question_registry ?? [],
         pending_inputs: input.state.pending_inputs ?? [],
-        last_orchestrator_decision: input.state.last_orchestrator_decision ?? null
+        last_orchestrator_decision: input.state.last_orchestrator_decision ?? null,
+        recent_single_queries: (input.state.single_query_log ?? [])
+          .slice(-3)
+          .map((entry: { query_id: string; question: string; governed_sql: string; row_count: number }) => ({
+            query_id: entry.query_id,
+            question: entry.question,
+            sql_executed: entry.governed_sql,
+            row_count: entry.row_count
+          }))
       },
       null,
       2
@@ -703,11 +912,588 @@ function orchestrationUserPrompt(input: ConversationTurnInput): string {
     input.business_context && input.business_context.trim().length > 0 ? input.business_context : "(none)",
     "",
     "CATALOG_SUMMARY:",
-    input.catalog_summary && input.catalog_summary.trim().length > 0 ? input.catalog_summary : "(none)",
-    "",
-    "METRIC_DEFINITIONS:",
-    metricDefinitions.length > 0 ? JSON.stringify(metricDefinitions, null, 2) : "(none)"
+    input.catalog_summary && input.catalog_summary.trim().length > 0 ? input.catalog_summary : "(none)"
   ].join("\n");
+}
+
+async function resolveRetrievedContextForTurn(
+  input: ConversationTurnInput,
+  options: Pick<
+    RemoteConversationClientOptions,
+    | "provider"
+    | "rag_level"
+    | "rag_candidate_limit"
+    | "rag_final_limit"
+    | "openrouter_api_key"
+    | "openrouter_base_url"
+    | "openrouter_app_name"
+    | "openrouter_app_url"
+    | "openrouter_embedding_model"
+    | "openrouter_rerank_model"
+    | "fetcher"
+    | "timeout_ms"
+  >,
+  mode: "chat" | "orchestrator"
+): Promise<Array<{ source: string; label: string; text: string }>> {
+  const candidateLimit = Math.max(options.rag_candidate_limit, options.rag_final_limit);
+  const lexicalCandidates = buildRetrievedContextForTurn(input, { max_chunks: candidateLimit });
+  const externalCandidates = (input.retrieved_context ?? [])
+    .map((entry) => ({
+      source: String(entry.source ?? "").trim(),
+      label: String(entry.label ?? "").trim(),
+      text: String(entry.text ?? "").trim()
+    }))
+    .filter((entry) => entry.source.length > 0 && entry.label.length > 0 && entry.text.length > 0)
+    .map((entry) => ({
+      source: entry.source,
+      label: entry.label,
+      text: trimChunkText(entry.text, 360)
+    }));
+  const candidates = dedupeRetrievedChunks([...externalCandidates, ...lexicalCandidates]).slice(
+    0,
+    candidateLimit
+  );
+
+  if (
+    options.rag_level < 2 ||
+    candidates.length <= 2 ||
+    options.provider !== "openrouter" ||
+    !options.openrouter_api_key
+  ) {
+    return candidates.slice(0, options.rag_final_limit);
+  }
+
+  try {
+    const semanticCandidates = await rerankRetrievedContextWithOpenRouter(
+      candidates,
+      input.user_message,
+      options,
+      mode
+    );
+    return semanticCandidates.slice(0, options.rag_final_limit);
+  } catch (error) {
+    console.warn("[rag-lv2] semantic rerank failed, falling back to lexical:", error);
+    return candidates.slice(0, options.rag_final_limit);
+  }
+}
+
+async function rerankRetrievedContextWithOpenRouter(
+  candidates: Array<{ source: string; label: string; text: string }>,
+  query: string,
+  options: Pick<
+    RemoteConversationClientOptions,
+    | "openrouter_api_key"
+    | "openrouter_base_url"
+    | "openrouter_app_name"
+    | "openrouter_app_url"
+    | "openrouter_embedding_model"
+    | "openrouter_rerank_model"
+    | "fetcher"
+    | "timeout_ms"
+  >,
+  mode: "chat" | "orchestrator"
+): Promise<Array<{ source: string; label: string; text: string }>> {
+  const endpointBase = (options.openrouter_base_url ?? DEFAULT_OPENROUTER_BASE_URL).replace(/\/$/, "");
+  const embeddingModel = options.openrouter_embedding_model ?? DEFAULT_OPENROUTER_EMBEDDING_MODEL;
+  const rerankModel = options.openrouter_rerank_model ?? DEFAULT_OPENROUTER_RERANK_MODEL;
+  const headers = buildOpenRouterHeaders({
+    openrouter_api_key: options.openrouter_api_key,
+    openrouter_app_name: options.openrouter_app_name,
+    openrouter_app_url: options.openrouter_app_url
+  });
+
+  const embeddingInputs = [query, ...candidates.map((chunk) => chunk.text)];
+  const embeddings = await fetchOpenRouterEmbeddings(
+    options.fetcher,
+    `${endpointBase}/embeddings`,
+    headers,
+    embeddingModel,
+    embeddingInputs,
+    options.timeout_ms
+  );
+  if (embeddings.length !== embeddingInputs.length) {
+    return candidates;
+  }
+
+  const queryEmbedding = embeddings[0];
+  const scored = candidates
+    .map((chunk, index) => ({
+      chunk,
+      cosine: cosineSimilarity(queryEmbedding, embeddings[index + 1])
+    }))
+    .sort((a, b) => b.cosine - a.cosine);
+
+  const topForRerank = scored.slice(0, Math.min(14, scored.length));
+  if (topForRerank.length <= 1) {
+    return topForRerank.map((entry) => entry.chunk);
+  }
+
+  const rerankSelection = await fetchOpenRouterRerankSelection(
+    options.fetcher,
+    `${endpointBase}/chat/completions`,
+    headers,
+    rerankModel,
+    query,
+    topForRerank,
+    mode,
+    options.timeout_ms
+  );
+  if (rerankSelection.length === 0) {
+    return topForRerank.map((entry) => entry.chunk);
+  }
+
+  const byLabel = new Map(topForRerank.map((entry) => [entry.chunk.label, entry.chunk]));
+  const selected: Array<{ source: string; label: string; text: string }> = [];
+  const seen = new Set<string>();
+  for (const label of rerankSelection) {
+    const chunk = byLabel.get(label);
+    if (!chunk) {
+      continue;
+    }
+    if (seen.has(chunk.label)) {
+      continue;
+    }
+    seen.add(chunk.label);
+    selected.push(chunk);
+  }
+  for (const entry of topForRerank) {
+    if (selected.length >= topForRerank.length) {
+      break;
+    }
+    if (seen.has(entry.chunk.label)) {
+      continue;
+    }
+    seen.add(entry.chunk.label);
+    selected.push(entry.chunk);
+  }
+  return selected;
+}
+
+function buildOpenRouterHeaders(input: {
+  openrouter_api_key?: string;
+  openrouter_app_name?: string;
+  openrouter_app_url?: string;
+}): Record<string, string> {
+  const headers: Record<string, string> = {
+    Authorization: `Bearer ${input.openrouter_api_key ?? ""}`,
+    "content-type": "application/json"
+  };
+  if (input.openrouter_app_name) {
+    headers["X-Title"] = input.openrouter_app_name;
+  }
+  if (input.openrouter_app_url) {
+    headers["HTTP-Referer"] = input.openrouter_app_url;
+  }
+  return headers;
+}
+
+async function fetchOpenRouterEmbeddings(
+  fetcher: Fetcher,
+  endpoint: string,
+  headers: Record<string, string>,
+  model: string,
+  input: string[],
+  timeoutMs: number
+): Promise<number[][]> {
+  const response = await fetchWithTimeout(
+    fetcher,
+    endpoint,
+    {
+      method: "POST",
+      headers,
+      body: JSON.stringify({
+        model,
+        input
+      })
+    },
+    timeoutMs
+  );
+  if (!response.ok) {
+    const body = await response.text();
+    throw new Error(`OpenRouter embeddings failed (${response.status}): ${body}`);
+  }
+  const payload = (await response.json()) as unknown;
+  if (!isRecord(payload) || !Array.isArray(payload.data)) {
+    throw new Error("OpenRouter embeddings response missing data array.");
+  }
+  const vectors = payload.data
+    .map((entry) => {
+      if (!isRecord(entry) || !Array.isArray(entry.embedding)) {
+        return null;
+      }
+      const values = entry.embedding
+        .map((value) => (typeof value === "number" ? value : Number.NaN))
+        .filter((value) => Number.isFinite(value));
+      return values.length > 0 ? values : null;
+    })
+    .filter((entry): entry is number[] => Array.isArray(entry));
+  return vectors;
+}
+
+async function fetchOpenRouterRerankSelection(
+  fetcher: Fetcher,
+  endpoint: string,
+  headers: Record<string, string>,
+  model: string,
+  query: string,
+  candidates: Array<{ chunk: { source: string; label: string; text: string }; cosine: number }>,
+  mode: "chat" | "orchestrator",
+  timeoutMs: number
+): Promise<string[]> {
+  const systemPrompt = [
+    "You are a retrieval reranker for Project Overload.",
+    "Select the most relevant chunks for the user query.",
+    `Mode: ${mode}.`,
+    "Return STRICT JSON only: {\"keep_labels\":[\"label1\",\"label2\",...]}",
+    "Do not include explanations."
+  ].join("\n");
+  const userPrompt = JSON.stringify(
+    {
+      query,
+      candidates: candidates.map((entry) => ({
+        label: entry.chunk.label,
+        source: entry.chunk.source,
+        semantic_similarity: Number(entry.cosine.toFixed(6)),
+        text: trimChunkText(entry.chunk.text, 280)
+      })),
+      keep_count: Math.min(10, candidates.length)
+    },
+    null,
+    2
+  );
+
+  const response = await fetchWithTimeout(
+    fetcher,
+    endpoint,
+    {
+      method: "POST",
+      headers,
+      body: JSON.stringify({
+        model,
+        temperature: 0,
+        messages: [
+          { role: "system", content: systemPrompt },
+          { role: "user", content: userPrompt }
+        ]
+      })
+    },
+    timeoutMs
+  );
+  if (!response.ok) {
+    const body = await response.text();
+    throw new Error(`OpenRouter rerank failed (${response.status}): ${body}`);
+  }
+  const payload = (await response.json()) as unknown;
+  const text = extractTextPayload(payload);
+  if (!text) {
+    return [];
+  }
+  const parsed = parseJsonObjectFromText(text);
+  if (!isRecord(parsed) || !Array.isArray(parsed.keep_labels)) {
+    return [];
+  }
+  return parsed.keep_labels
+    .map((entry) => (typeof entry === "string" ? entry.trim() : ""))
+    .filter((entry) => entry.length > 0);
+}
+
+function cosineSimilarity(a: number[], b: number[]): number {
+  const length = Math.min(a.length, b.length);
+  if (length === 0) {
+    return 0;
+  }
+  let dot = 0;
+  let magA = 0;
+  let magB = 0;
+  for (let index = 0; index < length; index += 1) {
+    const valueA = a[index];
+    const valueB = b[index];
+    dot += valueA * valueB;
+    magA += valueA * valueA;
+    magB += valueB * valueB;
+  }
+  if (magA === 0 || magB === 0) {
+    return 0;
+  }
+  return dot / (Math.sqrt(magA) * Math.sqrt(magB));
+}
+
+function buildRetrievedContextForTurn(
+  input: ConversationTurnInput,
+  options?: { max_chunks?: number }
+): Array<{ source: string; label: string; text: string }> {
+  const maxChunks = Math.max(4, Math.min(options?.max_chunks ?? 12, 24));
+  const chunks = buildRetrievalChunks(input);
+  if (chunks.length === 0) {
+    return [];
+  }
+
+  const queryText = [
+    input.user_message,
+    ...input.state.pending_inputs.map((entry) => entry.prompt),
+    ...input.state.scope_questions.map((entry) => `${entry.question} ${entry.clarification}`)
+  ]
+    .join("\n")
+    .trim();
+  const queryTokens = tokenizeForRetrieval(queryText);
+
+  const scored = chunks
+    .map((chunk) => ({
+      ...chunk,
+      score: scoreRetrievalChunk(chunk, queryTokens)
+    }))
+    .sort((a, b) => b.score - a.score);
+
+  const selected: ScoredRetrievalChunk[] = [];
+  const seenText = new Set<string>();
+  for (const chunk of scored) {
+    if (selected.length >= maxChunks) {
+      break;
+    }
+    const normalized = normalizeForDedup(chunk.text);
+    if (normalized.length === 0 || seenText.has(normalized)) {
+      continue;
+    }
+    seenText.add(normalized);
+    selected.push(chunk);
+  }
+
+  return selected.map((chunk) => ({
+    source: chunk.source,
+    label: chunk.label,
+    text: trimChunkText(chunk.text, 360)
+  }));
+}
+
+function buildRetrievalChunks(input: ConversationTurnInput): RetrievalChunk[] {
+  const chunks: RetrievalChunk[] = [];
+  const pushChunk = (source: RetrievalSource, label: string, text: string | null | undefined): void => {
+    if (typeof text !== "string") {
+      return;
+    }
+    const normalized = text.replace(/\s+/g, " ").trim();
+    if (normalized.length === 0) {
+      return;
+    }
+    chunks.push({
+      source,
+      label,
+      text: trimChunkText(normalized, 520)
+    });
+  };
+
+  pushChunk("user_message", "Current user request", input.user_message);
+
+  input.history.slice(-20).forEach((turn, index) => {
+    const offset = input.history.length - Math.min(input.history.length, 20) + index + 1;
+    pushChunk("history", `History #${offset} (${turn.role})`, turn.content);
+  });
+
+  input.state.scope_questions.slice(-20).forEach((entry) => {
+    pushChunk(
+      "scope_question",
+      `Scope Q${entry.question_number}`,
+      [
+        `Question: ${entry.question}`,
+        `Clarification: ${entry.clarification}`,
+        entry.answer ? `Answer: ${entry.answer}` : "Answer: (pending)"
+      ].join(" | ")
+    );
+  });
+
+  input.state.pending_inputs.slice(-12).forEach((entry) => {
+    pushChunk(
+      "pending_input",
+      `Pending input${entry.question_number ? ` Q${entry.question_number}` : ""}`,
+      `${entry.prompt}${entry.reason ? ` | Reason: ${entry.reason}` : ""}`
+    );
+  });
+
+  input.state.question_registry.slice(-20).forEach((entry) => {
+    pushChunk(
+      "question_registry",
+      `Registry Q${entry.question_number}`,
+      [
+        `Question: ${entry.question_text}`,
+        `Status: ${entry.status}`,
+        `Scope clarified: ${entry.scope_clarified ? "yes" : "no"}`,
+        entry.clarification_needed ? `Needs: ${entry.clarification_needed}` : "",
+        entry.clarification_answer ? `Answer: ${entry.clarification_answer}` : ""
+      ]
+        .filter((value) => value.length > 0)
+        .join(" | ")
+    );
+  });
+
+  input.state.single_query_log.slice(-10).forEach((entry) => {
+    pushChunk(
+      "single_query_log",
+      `Single query ${entry.query_id}`,
+      [
+        `Question: ${entry.question}`,
+        `Rows: ${entry.row_count}`,
+        `Elapsed: ${entry.elapsed_ms}ms`,
+        `SQL: ${entry.governed_sql}`
+      ].join(" | ")
+    );
+  });
+
+  input.state.prepared_payloads.slice(-12).forEach((payload, index) => {
+    const monthlyRows =
+      payload.validation?.monthly_row_counts
+        ?.slice(0, 6)
+        .map((entry) => `${entry.month}:${entry.row_count}`)
+        .join(", ") ?? "";
+    const monthlyTotals =
+      payload.validation?.monthly_metric_totals
+        ?.slice(0, 6)
+        .map((entry) => `${entry.month}:${entry.total}`)
+        .join(", ") ?? "";
+    pushChunk(
+      "prepared_payload",
+      `Prepared payload ${payload.question_number ? `Q${payload.question_number}` : index + 1}`,
+      [
+        `Question: ${payload.question}`,
+        `Purpose: ${payload.purpose}`,
+        `Prepared rows: ${payload.prepared_row_count}`,
+        payload.group_id ? `Group: ${payload.group_id}` : "",
+        payload.preparation_notes.length > 0 ? `Notes: ${payload.preparation_notes.join("; ")}` : "",
+        payload.warnings.length > 0 ? `Warnings: ${payload.warnings.join("; ")}` : "",
+        monthlyRows ? `Monthly rows: ${monthlyRows}` : "",
+        monthlyTotals ? `Monthly totals: ${monthlyTotals}` : ""
+      ]
+        .filter((value) => value.length > 0)
+        .join(" | ")
+    );
+  });
+
+  pushChunk("planner_summary", "Planner summary", input.state.planner_summary);
+  pushChunk("preparation_summary", "Preparation summary", input.state.preparation_summary);
+  pushChunk("business_context", "Business context", input.business_context);
+  pushChunk("catalog_summary", "Catalog summary", input.catalog_summary);
+
+  pushChunk(
+    "draft_state",
+    "Draft state",
+    JSON.stringify(
+      {
+        name: input.state.draft.name,
+        audience: input.state.draft.audience,
+        timezone: input.state.draft.timezone,
+        insight_mode: input.state.draft.insight_mode,
+        metrics: input.state.draft.metric_ids,
+        dimensions: input.state.draft.dimension_ids,
+        allowed_relations: input.state.draft.allowed_relations
+      },
+      null,
+      0
+    )
+  );
+
+  return chunks;
+}
+
+function scoreRetrievalChunk(chunk: RetrievalChunk, queryTokens: Set<string>): number {
+  const baseBySource: Record<RetrievalSource, number> = {
+    user_message: 6,
+    scope_question: 5,
+    pending_input: 5,
+    question_registry: 4,
+    prepared_payload: 4,
+    single_query_log: 3,
+    planner_summary: 3,
+    preparation_summary: 3,
+    history: 2,
+    business_context: 2,
+    catalog_summary: 2,
+    draft_state: 1
+  };
+
+  const tokenHits = overlapCount(tokenizeForRetrieval(chunk.text), queryTokens);
+  const labelHits = overlapCount(tokenizeForRetrieval(chunk.label), queryTokens);
+  const lexicalScore = tokenHits * 1.8 + labelHits * 1.2;
+  return baseBySource[chunk.source] + lexicalScore;
+}
+
+function tokenizeForRetrieval(value: string): Set<string> {
+  const stopWords = new Set([
+    "the",
+    "and",
+    "for",
+    "with",
+    "from",
+    "that",
+    "this",
+    "what",
+    "when",
+    "where",
+    "which",
+    "into",
+    "your",
+    "their",
+    "have",
+    "has",
+    "will",
+    "over",
+    "under",
+    "past",
+    "last",
+    "show",
+    "give",
+    "need",
+    "want",
+    "should",
+    "about",
+    "across"
+  ]);
+  const tokens = value
+    .toLowerCase()
+    .replace(/[^a-z0-9_\s]/g, " ")
+    .split(/\s+/)
+    .map((token) => token.trim())
+    .filter((token) => token.length >= 3 && !stopWords.has(token));
+  return new Set(tokens);
+}
+
+function overlapCount(values: Set<string>, query: Set<string>): number {
+  if (values.size === 0 || query.size === 0) {
+    return 0;
+  }
+  let count = 0;
+  for (const value of values) {
+    if (query.has(value)) {
+      count += 1;
+    }
+  }
+  return count;
+}
+
+function normalizeForDedup(value: string): string {
+  return value.toLowerCase().replace(/\s+/g, " ").trim();
+}
+
+function trimChunkText(value: string, maxLength: number): string {
+  if (value.length <= maxLength) {
+    return value;
+  }
+  const trimmed = value.slice(0, maxLength - 1).trimEnd();
+  return `${trimmed}…`;
+}
+
+function dedupeRetrievedChunks(
+  chunks: Array<{ source: string; label: string; text: string }>
+): Array<{ source: string; label: string; text: string }> {
+  const seen = new Set<string>();
+  const next: Array<{ source: string; label: string; text: string }> = [];
+  for (const chunk of chunks) {
+    const key = `${chunk.source}::${normalizeForDedup(chunk.label)}::${normalizeForDedup(chunk.text)}`;
+    if (seen.has(key)) {
+      continue;
+    }
+    seen.add(key);
+    next.push(chunk);
+  }
+  return next;
 }
 
 function withTitleNamingPayload(
@@ -830,6 +1616,7 @@ function createTitleStateSkeleton() {
     pending_query_sql: null,
     pending_query_limit: null,
     pending_single_query_request: null,
+    pending_followup_asks: [],
     last_single_query_snapshot: null,
     single_query_log: [],
     planner_summary: null,
@@ -907,6 +1694,29 @@ function parseProvider(rawProvider: string | ConversationProvider | undefined): 
 function parseBoolean(value: string): boolean {
   const normalized = value.trim().toLowerCase();
   return normalized === "true" || normalized === "1" || normalized === "yes";
+}
+
+function clampRagLevel(value: number): 1 | 2 {
+  return value >= 2 ? 2 : 1;
+}
+
+function clampRagCount(
+  value: number,
+  minValue: number,
+  maxValue: number,
+  fallback: number
+): number {
+  if (!Number.isFinite(value)) {
+    return fallback;
+  }
+  const rounded = Math.trunc(value);
+  if (rounded < minValue) {
+    return minValue;
+  }
+  if (rounded > maxValue) {
+    return maxValue;
+  }
+  return rounded;
 }
 
 async function fetchWithTimeout(
@@ -1007,6 +1817,468 @@ function parseJsonObjectFromText(text: string): unknown {
     throw new Error("No JSON object found in model output.");
   }
   return JSON.parse(trimmed.slice(open, close + 1));
+}
+
+const ORCHESTRATOR_INTENT_TYPES = new Set([
+  "new_question",
+  "clarification_answer",
+  "follow_up_request",
+  "duplicate",
+  "chitchat",
+  "other"
+]);
+
+const ORCHESTRATOR_NEXT_OWNERS = new Set([
+  "conversation_orchestrator",
+  "single_query_agent",
+  "data_architect_agent",
+  "query_planning_agent",
+  "data_prep_orchestrator",
+  "batch_analyst",
+  "super_summary",
+  "report_composer",
+  "qa",
+  "wait_for_user"
+]);
+
+const QUESTION_REGISTRY_STATUSES = new Set([
+  "open",
+  "scoped",
+  "prepared",
+  "analyzed",
+  "complete"
+]);
+
+function normalizeOrchestratorDecisionPayload(raw: unknown, userMessage: string): Record<string, unknown> {
+  const root = unwrapOrchestratorPayload(raw);
+
+  const pendingInputs = toArray(root.pending_inputs).map(normalizePendingInput).filter(isRecord);
+  const intentParts = toArray(root.intent_parts)
+    .map((entry, index) => normalizeIntentPart(entry, userMessage, index))
+    .filter(isRecord);
+
+  const resolvedScopeAnswers = toArray(root.resolved_scope_answers)
+    .map(normalizeResolvedScopeAnswer)
+    .filter(isRecord);
+
+  const newScopeQuestions = toArray(root.new_scope_questions)
+    .map(normalizeNewScopeQuestion)
+    .filter(isRecord);
+
+  const followUpRequests = toArray(root.follow_up_requests)
+    .map(normalizeFollowUpRequest)
+    .filter(isRecord);
+
+  const toolCalls = toArray(root.tool_calls).map(normalizeToolCall).filter(isRecord);
+  const stateUpdates = normalizeStateUpdates(root.state_updates);
+
+  return {
+    intent_parts: intentParts,
+    resolved_scope_answers: resolvedScopeAnswers,
+    new_scope_questions: newScopeQuestions,
+    follow_up_requests: followUpRequests,
+    pending_inputs: pendingInputs,
+    next_owner: normalizeNextOwner(root.next_owner, pendingInputs.length > 0),
+    tool_calls: toolCalls,
+    state_updates: stateUpdates
+  };
+}
+
+function unwrapOrchestratorPayload(raw: unknown): Record<string, unknown> {
+  if (!isRecord(raw)) {
+    return {};
+  }
+
+  const candidateKeys = ["decision", "orchestrator_decision", "result", "output", "data"];
+  for (const key of candidateKeys) {
+    const value = raw[key];
+    if (isRecord(value)) {
+      return value;
+    }
+  }
+
+  return raw;
+}
+
+function normalizeIntentPart(
+  value: unknown,
+  userMessage: string,
+  index: number
+): Record<string, unknown> | null {
+  if (!isRecord(value)) {
+    return null;
+  }
+
+  const text =
+    toNonEmptyString(value.text) ??
+    toNonEmptyString(value.question_text) ??
+    toNonEmptyString(value.question) ??
+    (index === 0 ? toNonEmptyString(userMessage) : undefined);
+  if (!text) {
+    return null;
+  }
+
+  const normalized: Record<string, unknown> = {
+    type: normalizeIntentType(value.type),
+    text
+  };
+
+  const partId = toNonEmptyString(value.part_id);
+  if (partId) {
+    normalized.part_id = partId;
+  }
+
+  const questionRef =
+    toNonEmptyString(value.question_ref) ??
+    toNonEmptyString(value.questionRef) ??
+    toNonEmptyString(value.question_id);
+  if (questionRef) {
+    normalized.question_ref = questionRef;
+  }
+
+  return normalized;
+}
+
+function normalizeResolvedScopeAnswer(value: unknown): Record<string, unknown> | null {
+  if (!isRecord(value)) {
+    return null;
+  }
+
+  const questionNumber =
+    toPositiveInt(value.question_number) ??
+    toPositiveInt(value.questionNumber) ??
+    toPositiveInt(value.q);
+  const answer = toNonEmptyString(value.answer) ?? toNonEmptyString(value.text);
+  if (!questionNumber || !answer) {
+    return null;
+  }
+
+  const normalized: Record<string, unknown> = {
+    question_number: questionNumber,
+    answer
+  };
+
+  const sourcePartId =
+    toNonEmptyString(value.source_part_id) ?? toNonEmptyString(value.sourcePartId);
+  if (sourcePartId) {
+    normalized.source_part_id = sourcePartId;
+  }
+
+  return normalized;
+}
+
+function normalizeNewScopeQuestion(value: unknown): Record<string, unknown> | null {
+  if (!isRecord(value)) {
+    return null;
+  }
+
+  const questionText =
+    toNonEmptyString(value.question_text) ??
+    toNonEmptyString(value.question) ??
+    toNonEmptyString(value.text);
+  if (!questionText) {
+    return null;
+  }
+
+  const clarification =
+    toNonEmptyString(value.clarification) ??
+    toNonEmptyString(value.prompt) ??
+    "Confirm the exact scope and filters for this question.";
+
+  const normalized: Record<string, unknown> = {
+    question_text: questionText,
+    clarification
+  };
+
+  const reason = toNonEmptyString(value.reason);
+  if (reason) {
+    normalized.reason = reason;
+  }
+
+  return normalized;
+}
+
+function normalizeFollowUpRequest(value: unknown): Record<string, unknown> | null {
+  if (!isRecord(value)) {
+    return null;
+  }
+
+  const questionText =
+    toNonEmptyString(value.question_text) ??
+    toNonEmptyString(value.question) ??
+    toNonEmptyString(value.text);
+  if (!questionText) {
+    return null;
+  }
+
+  return {
+    question_text: questionText,
+    requires_new_data: toBoolean(value.requires_new_data),
+    grounded_in_existing_payload: toBoolean(value.grounded_in_existing_payload),
+    referenced_question_ids: toStringArray(value.referenced_question_ids)
+  };
+}
+
+function normalizePendingInput(value: unknown): Record<string, unknown> | null {
+  if (!isRecord(value)) {
+    return null;
+  }
+
+  const inputKey = toNonEmptyString(value.input_key) ?? toNonEmptyString(value.key);
+  const prompt =
+    toNonEmptyString(value.prompt) ?? toNonEmptyString(value.question) ?? toNonEmptyString(value.text);
+  if (!inputKey || !prompt) {
+    return null;
+  }
+
+  const normalized: Record<string, unknown> = {
+    input_key: inputKey,
+    prompt
+  };
+
+  const reason = toNonEmptyString(value.reason);
+  if (reason) {
+    normalized.reason = reason;
+  }
+
+  const questionNumber =
+    toPositiveInt(value.question_number) ??
+    toPositiveInt(value.questionNumber) ??
+    toPositiveInt(value.q);
+  if (questionNumber) {
+    normalized.question_number = questionNumber;
+  }
+
+  return normalized;
+}
+
+function normalizeToolCall(value: unknown): Record<string, unknown> | null {
+  if (!isRecord(value)) {
+    return null;
+  }
+
+  const toolName = toNonEmptyString(value.tool_name) ?? toNonEmptyString(value.toolName);
+  if (!toolName) {
+    return null;
+  }
+
+  const normalized: Record<string, unknown> = {
+    tool_name: toolName,
+    payload: isRecord(value.payload) ? value.payload : {}
+  };
+
+  const reason = toNonEmptyString(value.reason);
+  if (reason) {
+    normalized.reason = reason;
+  }
+
+  return normalized;
+}
+
+function normalizeStateUpdates(value: unknown): Record<string, unknown> {
+  const updates = isRecord(value) ? value : {};
+  const summaryRaw = updates.summary;
+  const summary =
+    summaryRaw === null ? null : toNonEmptyString(summaryRaw) ?? null;
+
+  const questionRegistryUpdates = toArray(updates.question_registry_updates)
+    .map(normalizeQuestionRegistryUpdate)
+    .filter(isRecord);
+
+  return {
+    mark_scope_complete: toBoolean(updates.mark_scope_complete),
+    append_new_questions: toBoolean(updates.append_new_questions),
+    clear_pending_inputs: toBoolean(updates.clear_pending_inputs),
+    summary,
+    question_registry_updates: questionRegistryUpdates
+  };
+}
+
+function normalizeQuestionRegistryUpdate(value: unknown): Record<string, unknown> | null {
+  if (!isRecord(value)) {
+    return null;
+  }
+
+  const questionNumber =
+    toPositiveInt(value.question_number) ?? toPositiveInt(value.questionNumber);
+  if (!questionNumber) {
+    return null;
+  }
+
+  const normalized: Record<string, unknown> = {
+    question_number: questionNumber,
+    status: normalizeQuestionRegistryStatus(value.status)
+  };
+
+  const questionId = toNonEmptyString(value.question_id) ?? toNonEmptyString(value.questionId);
+  if (questionId) {
+    normalized.question_id = questionId;
+  }
+
+  return normalized;
+}
+
+function normalizeIntentType(value: unknown): string {
+  const normalized = String(value ?? "").trim().toLowerCase();
+  if (ORCHESTRATOR_INTENT_TYPES.has(normalized)) {
+    return normalized;
+  }
+  return "other";
+}
+
+function normalizeNextOwner(value: unknown, hasPendingInputs: boolean): string {
+  const normalized = String(value ?? "").trim().toLowerCase();
+  if (ORCHESTRATOR_NEXT_OWNERS.has(normalized)) {
+    return normalized;
+  }
+  return hasPendingInputs ? "wait_for_user" : "conversation_orchestrator";
+}
+
+function normalizeQuestionRegistryStatus(value: unknown): string {
+  const normalized = String(value ?? "").trim().toLowerCase();
+  if (QUESTION_REGISTRY_STATUSES.has(normalized)) {
+    return normalized;
+  }
+  return "open";
+}
+
+function toArray(value: unknown): unknown[] {
+  return Array.isArray(value) ? value : [];
+}
+
+function toBoolean(value: unknown): boolean {
+  if (typeof value === "boolean") {
+    return value;
+  }
+  if (typeof value === "number") {
+    return value !== 0;
+  }
+  if (typeof value === "string") {
+    const normalized = value.trim().toLowerCase();
+    if (["true", "1", "yes", "y"].includes(normalized)) {
+      return true;
+    }
+    if (["false", "0", "no", "n"].includes(normalized)) {
+      return false;
+    }
+  }
+  return false;
+}
+
+function toNonEmptyString(value: unknown): string | undefined {
+  if (typeof value !== "string") {
+    return undefined;
+  }
+  const trimmed = value.trim();
+  return trimmed.length > 0 ? trimmed : undefined;
+}
+
+function toPositiveInt(value: unknown): number | undefined {
+  if (typeof value === "number" && Number.isFinite(value)) {
+    const intValue = Math.trunc(value);
+    return intValue > 0 ? intValue : undefined;
+  }
+  if (typeof value === "string") {
+    const trimmed = value.trim();
+    if (trimmed.length === 0) {
+      return undefined;
+    }
+    const direct = Number.parseInt(trimmed, 10);
+    if (Number.isFinite(direct) && direct > 0) {
+      return direct;
+    }
+    const match = trimmed.match(/\d+/);
+    if (match) {
+      const fromMatch = Number.parseInt(match[0], 10);
+      return Number.isFinite(fromMatch) && fromMatch > 0 ? fromMatch : undefined;
+    }
+  }
+  return undefined;
+}
+
+function toStringArray(value: unknown): string[] {
+  if (!Array.isArray(value)) {
+    return [];
+  }
+  return value
+    .map((entry) => toNonEmptyString(entry))
+    .filter((entry): entry is string => Boolean(entry));
+}
+
+function selectRelevantMetricDefinitions(
+  metricDefinitions: Array<{ metric_key: string; display_name: string; definition: string }>,
+  userMessage: string,
+  history: ChatHistoryTurn[]
+): Array<{ metric_key: string; display_name: string; definition: string }> {
+  if (!Array.isArray(metricDefinitions) || metricDefinitions.length === 0) {
+    return [];
+  }
+
+  const recentHistory = history
+    .slice(-20)
+    .map((entry) => entry.content)
+    .join("\n");
+  const haystack = `${userMessage}\n${recentHistory}`.toLowerCase();
+
+  const matched = metricDefinitions.filter((entry) => {
+    const phrases = collectMetricMatchPhrases(entry);
+    if (phrases.some((phrase) => phrase.length > 0 && haystack.includes(phrase))) {
+      return true;
+    }
+    const tokenSet = new Set(
+      phrases
+        .flatMap((phrase) => phrase.split(/\s+/))
+        .map((token) => token.trim())
+        .filter((token) => token.length >= 4)
+    );
+    if (tokenSet.size === 0) {
+      return false;
+    }
+    const hitCount = Array.from(tokenSet).filter((token) => haystack.includes(token)).length;
+    return hitCount >= Math.min(2, tokenSet.size);
+  });
+
+  return matched.slice(0, 8).map((entry) => ({
+    metric_key: entry.metric_key,
+    display_name: entry.display_name,
+    definition: entry.definition
+  }));
+}
+
+function collectMetricMatchPhrases(entry: {
+  metric_key: string;
+  display_name: string;
+  definition: string;
+}): string[] {
+  const normalize = (value: string): string =>
+    value
+      .toLowerCase()
+      .replace(/[_-]+/g, " ")
+      .replace(/[^a-z0-9\s]/g, " ")
+      .replace(/\s+/g, " ")
+      .trim();
+
+  const keyPhrase = normalize(entry.metric_key);
+  const displayPhrase = normalize(entry.display_name);
+  const phrases = new Set<string>();
+  if (keyPhrase.length > 0) {
+    phrases.add(keyPhrase);
+  }
+  if (displayPhrase.length > 0) {
+    phrases.add(displayPhrase);
+  }
+  if (/\brefund\b/.test(`${keyPhrase} ${displayPhrase}`) && /\brate\b/.test(`${keyPhrase} ${displayPhrase}`)) {
+    phrases.add("refund rate");
+    phrases.add("refund-rate");
+    phrases.add("refunded rate");
+  }
+  const definitionTokens = normalize(entry.definition)
+    .split(/\s+/)
+    .filter((token) => token.length >= 5);
+  if (definitionTokens.length > 0) {
+    phrases.add(definitionTokens.slice(0, 3).join(" "));
+  }
+  return Array.from(phrases).filter((phrase) => phrase.length > 0);
 }
 
 function extractPendingInputsFromState(state: ChatState): Array<{

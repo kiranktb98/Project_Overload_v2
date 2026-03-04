@@ -88,6 +88,8 @@ export const ConversationOrchestratorDecisionSchema = z.object({
   pending_inputs: z.array(PendingInputSchema).default([]),
   next_owner: z.enum([
     "conversation_orchestrator",
+    "single_query_agent",
+    "data_architect_agent",
     "query_planning_agent",
     "data_prep_orchestrator",
     "batch_analyst",

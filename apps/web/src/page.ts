@@ -2480,7 +2480,7 @@ export function renderChatPage(): string {
             sTable.className = "queries-table";
             const sThead = document.createElement("thead");
             const sHr = document.createElement("tr");
-            ["#", "Question", "SQL Query", "Rows / Time"].forEach(function (h) {
+            ["#", "Question", "SQL Query", "Sample Output"].forEach(function (h) {
               const th = document.createElement("th");
               th.textContent = h;
               sHr.appendChild(th);
@@ -2503,10 +2503,10 @@ export function renderChatPage(): string {
               qDiv.className = "qt-question";
               qDiv.textContent = sq.question || "";
               tdQ.appendChild(qDiv);
-              const idDiv = document.createElement("div");
-              idDiv.className = "qt-purpose";
-              idDiv.textContent = "ID: " + (sq.query_id || "");
-              tdQ.appendChild(idDiv);
+              const metaDiv = document.createElement("div");
+              metaDiv.className = "qt-purpose";
+              metaDiv.textContent = (sq.row_count != null ? sq.row_count + " rows" : "") + (sq.elapsed_ms != null ? " \u00B7 " + sq.elapsed_ms + "ms" : "");
+              tdQ.appendChild(metaDiv);
               row.appendChild(tdQ);
 
               const tdSql = document.createElement("td");
@@ -2522,10 +2522,40 @@ export function renderChatPage(): string {
               }
               row.appendChild(tdSql);
 
-              const tdMeta = document.createElement("td");
-              tdMeta.className = "qt-output";
-              tdMeta.textContent = (sq.row_count != null ? sq.row_count + " rows" : "") + (sq.elapsed_ms != null ? " \u00B7 " + sq.elapsed_ms + "ms" : "");
-              row.appendChild(tdMeta);
+              const tdOutput = document.createElement("td");
+              tdOutput.className = "qt-output";
+              const sampleRows = sq.sample_rows || [];
+              if (sampleRows.length > 0) {
+                const cols = Object.keys(sampleRows[0]);
+                const miniTable = document.createElement("table");
+                miniTable.className = "qc-sample-table";
+                const mThead = document.createElement("thead");
+                const mHr = document.createElement("tr");
+                cols.forEach(function (col) {
+                  const th = document.createElement("th");
+                  th.textContent = col;
+                  mHr.appendChild(th);
+                });
+                mThead.appendChild(mHr);
+                miniTable.appendChild(mThead);
+                const mTbody = document.createElement("tbody");
+                sampleRows.slice(0, 10).forEach(function (rowData) {
+                  const tr = document.createElement("tr");
+                  cols.forEach(function (col) {
+                    const td = document.createElement("td");
+                    const val = rowData[col];
+                    td.textContent = val == null ? "" : String(val);
+                    tr.appendChild(td);
+                  });
+                  mTbody.appendChild(tr);
+                });
+                miniTable.appendChild(mTbody);
+                tdOutput.appendChild(miniTable);
+              } else {
+                tdOutput.style.color = "#4a6080";
+                tdOutput.textContent = "\u2014";
+              }
+              row.appendChild(tdOutput);
 
               sTbody.appendChild(row);
             }
@@ -2841,6 +2871,7 @@ export function renderChatPage(): string {
               headers: { "content-type": "application/json" },
               body: JSON.stringify({
                 message: value,
+                chat_session_id: targetChatId,
                 state: requestStateSnapshot
               })
             });
@@ -3010,13 +3041,7 @@ export function renderChatPage(): string {
                       return {
                         metric_key: m.metric_key || "",
                         display_name: m.display_name || "",
-                        definition: m.definition || "",
-                        source_type: "derived",
-                        source_columns: [],
-                        requires_confirmation: false,
-                        confirmation_question: null,
-                        confirmed: true,
-                        context: "deep_analysis"
+                        definition: m.definition || ""
                       };
                     });
                   }
@@ -3210,6 +3235,11 @@ export function renderChatPage(): string {
         initializeSessions();
         void hydrateSessionsFromServer();
         refreshDecisionFromState(stateRef.value);
+
+        // Refresh history list timestamps every 30 seconds so "just now" ages properly
+        setInterval(function () {
+          renderHistoryList();
+        }, 30_000);
         renderStatus();
         loadRuntimeStatus();
         if (!composerStateRef.locked) {

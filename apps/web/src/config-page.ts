@@ -127,11 +127,22 @@ export function renderGlobalConfigPage(): string {
       }
 
       .platform-link .link-icon {
-        width: 22px;
-        text-align: center;
+        width: 16px;
+        height: 16px;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        flex-shrink: 0;
         color: #6f8ac1;
-        font-family: "JetBrains Mono", monospace;
-        font-size: 0.7rem;
+      }
+      .platform-link .link-icon svg {
+        width: 16px;
+        height: 16px;
+        stroke: currentColor;
+        fill: none;
+        stroke-width: 1.8;
+        stroke-linecap: round;
+        stroke-linejoin: round;
       }
 
       .platform-link:hover {
@@ -628,13 +639,13 @@ export function renderGlobalConfigPage(): string {
           </div>
           <div class="platform-section">Core Platform</div>
           <nav class="platform-nav">
-            <a class="platform-link" href="/"><span class="link-icon">[]</span>Chat Explorer</a>
-            <a class="platform-link" href="/usage"><span class="link-icon">=</span>Usage Metrics</a>
+            <a class="platform-link" href="/"><span class="link-icon"><svg viewBox="0 0 24 24"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg></span>Chat Explorer</a>
+            <a class="platform-link" href="/usage"><span class="link-icon"><svg viewBox="0 0 24 24"><path d="M18 20V10"/><path d="M12 20V4"/><path d="M6 20v-6"/></svg></span>Usage Metrics</a>
           </nav>
           <div class="platform-section">Infrastructure</div>
           <nav class="platform-nav">
-            <a class="platform-link" href="/connect"><span class="link-icon">DB</span>Data Sources</a>
-            <a class="platform-link active" href="/config"><span class="link-icon">CFG</span>Global Config</a>
+            <a class="platform-link" href="/connect"><span class="link-icon"><svg viewBox="0 0 24 24"><ellipse cx="12" cy="5" rx="9" ry="3"/><path d="M21 12c0 1.66-4 3-9 3s-9-1.34-9-3"/><path d="M3 5v14c0 1.66 4 3 9 3s9-1.34 9-3V5"/></svg></span>Data Sources</a>
+            <a class="platform-link active" href="/config"><span class="link-icon"><svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83-2.83l.06-.06A1.65 1.65 0 0 0 4.68 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 2.83-2.83l.06.06A1.65 1.65 0 0 0 9 4.68a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 2.83l-.06.06A1.65 1.65 0 0 0 19.4 9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg></span>Global Config</a>
           </nav>
           <div class="platform-footer">
             <div class="platform-user">
@@ -678,7 +689,7 @@ export function renderGlobalConfigPage(): string {
               <h2>Metric Definitions</h2>
               <button class="btn-secondary" id="add-metric-btn" type="button">+ Add Metric</button>
             </div>
-            <p class="section-hint">Define how key business metrics should be calculated. Specify a filter column and values from your catalog to auto-apply WHERE clauses in queries.</p>
+            <p class="section-hint">Define how key business metrics should be calculated. These definitions are saved to your profile and used by AI agents when relevant.</p>
 
             <table class="metric-table" id="metric-table">
               <thead>
@@ -686,13 +697,11 @@ export function renderGlobalConfigPage(): string {
                   <th>Key</th>
                   <th>Display Name</th>
                   <th>Definition</th>
-                  <th>Filter</th>
-                  <th>Status</th>
                   <th></th>
                 </tr>
               </thead>
               <tbody id="metric-tbody">
-                <tr><td colspan="6" class="empty-state">No metric definitions yet. Click "+ Add Metric" to create one.</td></tr>
+                <tr><td colspan="4" class="empty-state">No metric definitions yet. Click "+ Add Metric" to create one.</td></tr>
               </tbody>
             </table>
 
@@ -709,27 +718,8 @@ export function renderGlobalConfigPage(): string {
                 </div>
               </div>
               <div class="form-group" style="margin-bottom:10px">
-                <label for="mf-def">Definition (how to calculate this metric)</label>
-                <input type="text" id="mf-def" placeholder="e.g. SUM(order_amount) for all completed orders" />
-              </div>
-              <div class="form-group" style="margin-bottom:10px">
-                <label for="mf-filter-desc">Filter Description (plain English)</label>
-                <input type="text" id="mf-filter-desc" placeholder="e.g. Only completed orders" />
-              </div>
-              <div class="form-row">
-                <div class="form-group">
-                  <label for="mf-filter-col">Filter Column (from catalog)</label>
-                  <div class="col-input-wrap">
-                    <input type="text" id="mf-filter-col" placeholder="Start typing a column name..." autocomplete="off" />
-                    <div class="col-dropdown" id="mf-col-dropdown"></div>
-                  </div>
-                </div>
-                <div class="form-group">
-                  <label>Filter Values (click to select)</label>
-                  <div class="value-pills" id="mf-value-pills">
-                    <span class="value-pills-empty">Select a column to see available values</span>
-                  </div>
-                </div>
+                <label for="mf-def">Definition (plain English — how to calculate this metric)</label>
+                <input type="text" id="mf-def" placeholder="e.g. Refunded Revenue / Total Revenue" />
               </div>
               <div class="form-actions">
                 <button class="btn-primary" id="mf-save" type="button">Save Metric</button>
@@ -828,40 +818,14 @@ export function renderGlobalConfigPage(): string {
         const mfKey = document.getElementById("mf-key");
         const mfName = document.getElementById("mf-name");
         const mfDef = document.getElementById("mf-def");
-        const mfFilterDesc = document.getElementById("mf-filter-desc");
-        const mfFilterCol = document.getElementById("mf-filter-col");
-        const mfColDropdown = document.getElementById("mf-col-dropdown");
-        const mfValuePills = document.getElementById("mf-value-pills");
         const mfSave = document.getElementById("mf-save");
         const mfCancel = document.getElementById("mf-cancel");
 
         function esc(s) { var d = document.createElement("div"); d.textContent = s; return d.innerHTML; }
 
-        function statusBadgeHtml(status) {
-          var cls = "status-" + (status || "pending");
-          return '<span class="status-badge ' + cls + '">' + esc(status || "pending") + '</span>';
-        }
-
-        function filterCellHtml(m) {
-          if (!m.filter_column && !m.filter_description) return '<span style="color:var(--ink-soft)">-</span>';
-          var parts = [];
-          if (m.filter_description) {
-            parts.push('<div style="font-size:0.74rem;color:var(--ink-soft);margin-bottom:2px">' + esc(m.filter_description) + '</div>');
-          }
-          if (m.filter_column) {
-            parts.push('<span class="filter-col">' + esc(m.filter_column) + '</span>');
-          }
-          if (m.filter_values && m.filter_values.length > 0) {
-            parts.push('<div class="filter-vals">' + m.filter_values.map(function(v) {
-              return '<span class="filter-val-tag">' + esc(v) + '</span>';
-            }).join("") + '</div>');
-          }
-          return '<div class="filter-info">' + parts.join("") + '</div>';
-        }
-
         function renderMetrics() {
           if (metrics.length === 0) {
-            metricsTbody.innerHTML = '<tr><td colspan="6" class="empty-state">No metric definitions yet. Click "+ Add Metric" to create one.</td></tr>';
+            metricsTbody.innerHTML = '<tr><td colspan="4" class="empty-state">No metric definitions yet. Click "+ Add Metric" to create one.</td></tr>';
             return;
           }
           metricsTbody.innerHTML = metrics.map(function(m, i) {
@@ -869,8 +833,6 @@ export function renderGlobalConfigPage(): string {
               + '<td class="metric-key">' + esc(m.metric_key) + '</td>'
               + '<td>' + esc(m.display_name) + '</td>'
               + '<td>' + esc(m.definition) + '</td>'
-              + '<td>' + filterCellHtml(m) + '</td>'
-              + '<td>' + statusBadgeHtml(m.status) + '</td>'
               + '<td><button class="btn-secondary" data-edit="' + i + '">Edit</button> <button class="btn-danger" data-del="' + i + '">Del</button></td>'
               + '</tr>';
           }).join("");
@@ -883,88 +845,12 @@ export function renderGlobalConfigPage(): string {
           if (del) { metrics.splice(parseInt(del.dataset.del, 10), 1); renderMetrics(); return; }
         });
 
-        /* ── Column Autocomplete ── */
-        function showColumnDropdown(query) {
-          var q = query.toLowerCase();
-          var matches = catalogColumns.filter(function(c) {
-            return c.qualified.toLowerCase().indexOf(q) >= 0 || c.column.toLowerCase().indexOf(q) >= 0;
-          }).slice(0, 15);
-
-          if (matches.length === 0 || q.length === 0) {
-            mfColDropdown.classList.remove("open");
-            return;
-          }
-
-          mfColDropdown.innerHTML = matches.map(function(c) {
-            return '<div class="col-option" data-col="' + esc(c.qualified) + '">'
-              + esc(c.column) + ' <span class="col-table">' + esc(c.table) + '</span>'
-              + '</div>';
-          }).join("");
-          mfColDropdown.classList.add("open");
-        }
-
-        mfFilterCol.addEventListener("input", function() {
-          showColumnDropdown(mfFilterCol.value.trim());
-        });
-
-        mfFilterCol.addEventListener("focus", function() {
-          if (mfFilterCol.value.trim().length > 0) showColumnDropdown(mfFilterCol.value.trim());
-        });
-
-        mfColDropdown.addEventListener("click", function(e) {
-          var opt = e.target.closest(".col-option");
-          if (!opt) return;
-          mfFilterCol.value = opt.dataset.col;
-          mfColDropdown.classList.remove("open");
-          renderValuePills(opt.dataset.col);
-        });
-
-        document.addEventListener("click", function(e) {
-          if (!e.target.closest(".col-input-wrap")) {
-            mfColDropdown.classList.remove("open");
-          }
-        });
-
-        /* ── Value Pills ── */
-        function renderValuePills(qualifiedCol) {
-          var match = catalogColumns.find(function(c) { return c.qualified === qualifiedCol; });
-          var values = match ? match.distinct_values : [];
-
-          if (values.length === 0) {
-            mfValuePills.innerHTML = '<span class="value-pills-empty">No distinct values available for this column</span>';
-            return;
-          }
-
-          mfValuePills.innerHTML = values.map(function(v) {
-            var isSelected = selectedFilterValues.indexOf(v) >= 0;
-            return '<span class="value-pill' + (isSelected ? ' selected' : '') + '" data-val="' + esc(v) + '">' + esc(v) + '</span>';
-          }).join("");
-        }
-
-        mfValuePills.addEventListener("click", function(e) {
-          var pill = e.target.closest(".value-pill");
-          if (!pill) return;
-          var val = pill.dataset.val;
-          var idx = selectedFilterValues.indexOf(val);
-          if (idx >= 0) {
-            selectedFilterValues.splice(idx, 1);
-            pill.classList.remove("selected");
-          } else {
-            selectedFilterValues.push(val);
-            pill.classList.add("selected");
-          }
-        });
-
         /* ── Form Open/Close ── */
         function openAddForm() {
           editingIndex = -1;
           mfKey.value = "";
           mfName.value = "";
           mfDef.value = "";
-          mfFilterDesc.value = "";
-          mfFilterCol.value = "";
-          selectedFilterValues = [];
-          mfValuePills.innerHTML = '<span class="value-pills-empty">Select a column to see available values</span>';
           form.classList.add("visible");
           mfKey.focus();
         }
@@ -976,14 +862,6 @@ export function renderGlobalConfigPage(): string {
           mfKey.value = m.metric_key;
           mfName.value = m.display_name;
           mfDef.value = m.definition;
-          mfFilterDesc.value = m.filter_description || "";
-          mfFilterCol.value = m.filter_column || "";
-          selectedFilterValues = (m.filter_values || []).slice();
-          if (m.filter_column) {
-            renderValuePills(m.filter_column);
-          } else {
-            mfValuePills.innerHTML = '<span class="value-pills-empty">Select a column to see available values</span>';
-          }
           form.classList.add("visible");
           mfKey.focus();
         }
@@ -991,20 +869,6 @@ export function renderGlobalConfigPage(): string {
         function closeForm() {
           form.classList.remove("visible");
           editingIndex = -1;
-          selectedFilterValues = [];
-        }
-
-        /* ── Status Computation ── */
-        function computeStatus(filterCol, filterValues, filterDesc) {
-          if (!filterCol && !filterDesc) return "pending";
-          if (!filterCol) return "pending";
-          var match = catalogColumns.find(function(c) { return c.qualified === filterCol; });
-          if (!match) return "unresolved";
-          if (filterValues.length === 0) return "unresolved";
-          var catalogVals = match.distinct_values;
-          if (catalogVals.length === 0) return "resolved"; // Column found but no distinct values profiled — trust it
-          var allFound = filterValues.every(function(v) { return catalogVals.indexOf(v) >= 0; });
-          return allFound ? "resolved" : "unresolved";
         }
 
         /* ── Save Form ── */
@@ -1016,19 +880,11 @@ export function renderGlobalConfigPage(): string {
             metricsStatus.textContent = "Metric key, display name, and definition are required.";
             return;
           }
-          var filterCol = mfFilterCol.value.trim();
-          var filterDesc = mfFilterDesc.value.trim();
-          var filterVals = selectedFilterValues.slice();
-          var status = computeStatus(filterCol, filterVals, filterDesc);
 
           var entry = {
             metric_key: key,
             display_name: name,
-            definition: def,
-            filter_description: filterDesc,
-            filter_column: filterCol,
-            filter_values: filterVals,
-            status: status
+            definition: def
           };
           if (editingIndex >= 0) {
             metrics[editingIndex] = entry;
@@ -1046,7 +902,7 @@ export function renderGlobalConfigPage(): string {
 
         async function loadMetrics() {
           try {
-            var res = await fetch("/api/config/global");
+            var res = await fetch("/api/config/user-settings");
             var data = await res.json();
             if (res.ok && Array.isArray(data.metric_definitions)) {
               metrics = data.metric_definitions;
@@ -1061,10 +917,13 @@ export function renderGlobalConfigPage(): string {
         async function saveMetrics() {
           metricsStatus.textContent = "Saving...";
           try {
-            var res = await fetch("/api/config/global", {
+            var res = await fetch("/api/config/user-settings", {
               method: "PUT",
               headers: { "content-type": "application/json" },
-              body: JSON.stringify({ metric_definitions: metrics })
+              body: JSON.stringify({
+                metric_definitions: metrics,
+                business_context: String(ctxTextarea.value || "")
+              })
             });
             var data = await res.json();
             metricsStatus.textContent = res.ok ? "Saved " + metrics.length + " metric definition(s)." : (data.message || "Failed to save.");

@@ -9,8 +9,7 @@ import {
 import type {
   AnalystClient,
   QueryStrategistClient,
-  ReportComposerClient,
-  SuperSummaryClient
+  ReportComposerClient
 } from "@project-overload/llm-client";
 import type { QueryStrategyOutput, ReportContract } from "@project-overload/shared";
 import { InMemoryMetadataStore } from "../src/store/create-store";
@@ -286,26 +285,6 @@ describe("run pipeline", () => {
       ]
     ]);
 
-    const summarizeCalls: Array<{ allow_query_planning: boolean }> = [];
-    const superSummaryClient: SuperSummaryClient = {
-      provider: "stub",
-      async summarize(input) {
-        summarizeCalls.push({ allow_query_planning: Boolean(input.allow_query_planning) });
-        return {
-          summary: "Summary completed.",
-          issue_detected: false,
-          intervention_actions: [],
-          context_queries: [
-            "SELECT region, COUNT(*) AS cnt FROM public.sales GROUP BY region LIMIT 5"
-          ],
-          notes: []
-        };
-      },
-      drainUsageEvents() {
-        return [];
-      }
-    };
-
     const result = await runReportContractPipeline({
       contract: makeContract(),
       store: new InMemoryMetadataStore(),
@@ -313,15 +292,13 @@ describe("run pipeline", () => {
       analyst_client: analystClient,
       query_strategist: strategist,
       report_composer: createStubReportComposerClient(),
-      super_summary_client: superSummaryClient,
       planner_client: createStubPlannerClient(),
       catalog_summary: "public.sales [TABLE]: amount, event_time, region"
     });
 
     expect(analystCalls).toBeGreaterThanOrEqual(2);
-    expect(summarizeCalls).toHaveLength(1);
-    expect(summarizeCalls[0]?.allow_query_planning).toBe(false);
     const plan = result.run.query_plan as Record<string, unknown>;
+    expect(plan["super_summary"]).toBeNull();
     expect(plan["super_summary_context_queries"]).toEqual([]);
   });
 
@@ -758,11 +735,7 @@ describe("run pipeline", () => {
           {
             metric_key: "refund_rate",
             display_name: "Refund Rate",
-            definition: "refunded_orders / total_orders",
-            filter_description: "Only refunded orders",
-            filter_column: "status",
-            filter_values: ["refunded"],
-            status: "resolved"
+            definition: "refunded_orders / total_orders"
           }
         ]
       }),
@@ -801,11 +774,7 @@ describe("run pipeline", () => {
           {
             metric_key: "refund_rate",
             display_name: "Refund Rate",
-            definition: "Refund rate with partial data coverage in this period",
-            filter_description: "missing months in source data",
-            filter_column: "status",
-            filter_values: ["refunded"],
-            status: "resolved"
+            definition: "Refund rate with partial data coverage in this period"
           }
         ]
       }),
@@ -863,44 +832,10 @@ describe("run pipeline", () => {
     expect(result.html).toMatch(/Bengaluru|Mumbai|Delhi/);
   });
 
-  it("runs super summary stage with optional context queries before composing html", async () => {
+  it("passes per-question summaries directly to html composer without super-summary stage", async () => {
     const strategist = fixedStrategist([
       { question: "Q1", sql: "SELECT * FROM public.sales", purpose: "Test" }
     ]);
-    const summarizeCalls: Array<{ allow_query_planning: boolean; context_rows: number }> = [];
-
-    const superSummaryClient: SuperSummaryClient = {
-      provider: "stub",
-      async summarize(input) {
-        summarizeCalls.push({
-          allow_query_planning: Boolean(input.allow_query_planning),
-          context_rows: (input.context_query_results ?? []).reduce((sum, item) => sum + item.row_count, 0)
-        });
-
-        if (input.allow_query_planning) {
-          return {
-            summary: "Initial executive synthesis from prepared payloads.",
-            issue_detected: true,
-            intervention_actions: ["Investigate top refund drivers by issue type."],
-            context_queries: [
-              "SELECT region, COUNT(*) AS cnt FROM public.sales GROUP BY region LIMIT 5"
-            ],
-            notes: ["Context query requested for regional concentration check."]
-          };
-        }
-
-        return {
-          summary: "Final executive synthesis with regional context validated.",
-          issue_detected: true,
-          intervention_actions: ["Prioritize intervention in highest-concentration region."],
-          context_queries: [],
-          notes: ["Context query was executed and incorporated."]
-        };
-      },
-      drainUsageEvents() {
-        return [];
-      }
-    };
 
     const result = await runReportContractPipeline({
       contract: makeContract(),
@@ -909,23 +844,18 @@ describe("run pipeline", () => {
       analyst_client: createStubAnalystClient(),
       query_strategist: strategist,
       report_composer: createStubReportComposerClient(),
-      super_summary_client: superSummaryClient,
       planner_client: createStubPlannerClient(),
       catalog_summary: "public.sales [table]: region(text), amount(numeric), event_time(timestamp)"
     });
 
-    expect(summarizeCalls).toHaveLength(2);
-    expect(summarizeCalls[0].allow_query_planning).toBe(true);
-    expect(summarizeCalls[1].allow_query_planning).toBe(false);
-    expect(summarizeCalls[1].context_rows).toBeGreaterThanOrEqual(0);
-
     const plan = result.run.query_plan as Record<string, unknown>;
-    const superSummary = plan["super_summary"] as Record<string, unknown>;
-    expect(superSummary).toBeDefined();
-    expect(String(superSummary["summary"])).toContain("Final executive synthesis");
-    expect(Array.isArray(plan["super_summary_context_queries"])).toBe(true);
-    expect(result.html).toContain("Executive Super Summary");
-    expect(result.html).toContain("AI Recommended Actions for Intervention");
+    expect(plan["super_summary"]).toBeNull();
+    expect(plan["super_summary_context_queries"]).toEqual([]);
+    expect(plan["super_summary_context_results"]).toEqual([]);
+    const perQuestionSummaries = plan["per_question_summaries"] as Array<Record<string, unknown>>;
+    expect(perQuestionSummaries.length).toBeGreaterThanOrEqual(1);
+    expect(perQuestionSummaries[0]).toHaveProperty("question_text");
+    expect(perQuestionSummaries[0]).toHaveProperty("findings");
   });
 
   it("computes deltas against previous run", async () => {

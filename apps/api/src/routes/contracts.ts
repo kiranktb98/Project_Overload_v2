@@ -16,8 +16,7 @@ import type {
   AnalystClient,
   PlannerClient,
   QueryStrategistClient,
-  ReportComposerClient,
-  SuperSummaryClient
+  ReportComposerClient
 } from "@project-overload/llm-client";
 import { renderExecBriefHtml, renderPdfFromHtml } from "@project-overload/report-render";
 import type { MetadataStore } from "../store";
@@ -38,7 +37,6 @@ export function registerContractRoutes(
   analystClient: AnalystClient,
   queryStrategist: QueryStrategistClient,
   reportComposer: ReportComposerClient,
-  superSummaryClient: SuperSummaryClient,
   plannerClient: PlannerClient,
   connectionRegistry: UserConnectionRegistry
 ): void {
@@ -272,7 +270,6 @@ export function registerContractRoutes(
           analyst_client: analystClient,
           query_strategist: queryStrategist,
           report_composer: reportComposer,
-          super_summary_client: superSummaryClient,
           planner_client: plannerClient,
           catalog_summary: catalogSummary,
           sql_dialect: sqlDialect

@@ -253,6 +253,14 @@ export function buildWebApp(options: WebAppDependencies = {}) {
     }
 
     const state = coerceIncomingChatState(parsed.data.state);
+    const userSettings = await loadUserSettingsSafe(apiClient);
+    const hydratedState = hydrateStateFromUserSettings(state, userSettings);
+    const sessionId = typeof parsed.data.chat_session_id === "string" ? parsed.data.chat_session_id.trim() : "";
+    const ragMemory = await loadRagMemorySafe(apiClient, {
+      session_id: sessionId.length > 0 ? sessionId : null,
+      query_text: parsed.data.message,
+      limit: 12
+    });
 
     try {
       let orchestratorDecision: Awaited<
@@ -260,40 +268,51 @@ export function buildWebApp(options: WebAppDependencies = {}) {
       > | null = null;
 
       const skipOrchestratorForMessage =
-        isUiControlMessage(parsed.data.message) || hasPendingWorkflowDecision(state);
+        isUiControlMessage(parsed.data.message) || hasPendingWorkflowDecision(hydratedState);
       if (orchestratorEnabled && conversationClient.orchestrateTurn && !skipOrchestratorForMessage) {
         try {
           const catalogCtx = await fetchCatalogContext(apiClient);
+          const businessContext =
+            userSettings.business_context.trim().length > 0
+              ? userSettings.business_context
+              : catalogCtx.business_context;
           orchestratorDecision = await conversationClient.orchestrateTurn({
             user_message: parsed.data.message,
-            state,
-            history: state.conversation_history,
+            state: hydratedState,
+            history: hydratedState.conversation_history,
             catalog_summary: catalogCtx.catalog_summary,
-            business_context: catalogCtx.business_context
+            business_context: businessContext,
+            retrieved_context: ragMemory
           });
         } catch (orchestratorError) {
+          console.error("[orchestrator] decision failed:", orchestratorError);
           throw new ChatStageError("orchestrator_decision", orchestratorError);
         }
       }
 
       const response = await handleChatTurn({
         message: parsed.data.message,
-        state,
+        state: hydratedState,
         api_client: apiClient,
         query_router: queryRouter,
         orchestrator_decision: orchestratorDecision
       });
 
       const catalogCtx = await fetchCatalogContext(apiClient);
+      const businessContext =
+        userSettings.business_context.trim().length > 0
+          ? userSettings.business_context
+          : catalogCtx.business_context;
       let conversationResponse: Awaited<ReturnType<ConversationClient["respond"]>>;
       try {
         conversationResponse = await conversationClient.respond({
           user_message: parsed.data.message,
           action_context: response.assistant_message,
           state: response.state,
-          history: state.conversation_history,
+          history: hydratedState.conversation_history,
           catalog_summary: catalogCtx.catalog_summary,
-          business_context: catalogCtx.business_context
+          business_context: businessContext,
+          retrieved_context: ragMemory
         });
       } catch (conversationError) {
         const normalizedState = normalizeWorkflowDecisionState(response.state);
@@ -344,6 +363,28 @@ export function buildWebApp(options: WebAppDependencies = {}) {
       }
 
       const nextState = appendConversationTurn(stateAfterLlm, parsed.data.message, safeAiMessage);
+      void apiClient
+        .indexRagTurn({
+          session_id: sessionId.length > 0 ? sessionId : null,
+          chunks: [
+            {
+              source: "user_turn",
+              label: "User message",
+              text: parsed.data.message
+            },
+            {
+              source: "assistant_turn",
+              label: "Assistant reply",
+              text: safeAiMessage
+            }
+          ]
+        })
+        .catch((error) => {
+          app.log.warn(
+            { err: error, path: "/api/chat" },
+            "RAG index update failed; chat response already returned."
+          );
+        });
 
       return reply.code(200).send({
         ...response,
@@ -369,7 +410,7 @@ export function buildWebApp(options: WebAppDependencies = {}) {
         },
         "Chat route failed; returning explicit stage failure."
       );
-      const nextState = appendConversationTurn(state, parsed.data.message, safeMessage);
+      const nextState = appendConversationTurn(hydratedState, parsed.data.message, safeMessage);
       return reply.code(200).send({
         assistant_message: safeMessage,
         state: nextState
@@ -698,6 +739,76 @@ function coerceIncomingChatState(value: unknown) {
   return parseChatState(merged);
 }
 
+async function loadUserSettingsSafe(apiClient: ReturnType<typeof createWebApiClient>): Promise<{
+  metric_definitions: Array<{ metric_key: string; display_name: string; definition: string }>;
+  business_context: string;
+}> {
+  try {
+    const settings = await apiClient.getUserSettings();
+    return {
+      metric_definitions: Array.isArray(settings.metric_definitions)
+        ? settings.metric_definitions
+            .map((entry) => ({
+              metric_key: String(entry.metric_key ?? "").trim(),
+              display_name: String(entry.display_name ?? "").trim(),
+              definition: String(entry.definition ?? "").trim()
+            }))
+            .filter(
+              (entry) =>
+                entry.metric_key.length > 0 &&
+                entry.display_name.length > 0 &&
+                entry.definition.length > 0
+            )
+        : [],
+      business_context:
+        typeof settings.business_context === "string" ? settings.business_context : ""
+    };
+  } catch {
+    return { metric_definitions: [], business_context: "" };
+  }
+}
+
+async function loadRagMemorySafe(
+  apiClient: ReturnType<typeof createWebApiClient>,
+  payload: {
+    session_id: string | null;
+    query_text: string;
+    limit: number;
+  }
+): Promise<Array<{ source: string; label: string; text: string }>> {
+  try {
+    const chunks = await apiClient.searchRagMemory(payload);
+    return chunks.map((entry) => ({
+      source: entry.source,
+      label: entry.label,
+      text: entry.text
+    }));
+  } catch {
+    return [];
+  }
+}
+
+function hydrateStateFromUserSettings(
+  state: ReturnType<typeof parseChatState>,
+  settings: {
+    metric_definitions: Array<{ metric_key: string; display_name: string; definition: string }>;
+    business_context: string;
+  }
+) {
+  const next = parseChatState(state);
+  if (settings.metric_definitions.length > 0) {
+    next.metric_definitions = settings.metric_definitions.map((entry) => ({
+      metric_key: entry.metric_key,
+      display_name: entry.display_name,
+      definition: entry.definition
+    }));
+  }
+  if (settings.business_context.trim().length > 0) {
+    next.scope_business_context = settings.business_context;
+  }
+  return next;
+}
+
 function isExecutionOutcomeContext(actionContext: string): boolean {
   return (
     /^Query completed\. Query ID:/i.test(actionContext) ||
@@ -855,24 +966,17 @@ function syncDecisionStateFromAssistantMessage(state: unknown, assistantMessage:
     scopeLockSignal &&
     !isAskingQuestions &&
     nextState.scope_questions.length > 0;
-
-  if (explicitScopeLockSignal) {
-    nextState.scope_questions = nextState.scope_questions.map((entry) => {
-      if (entry.answer && entry.answer.trim().length > 0) {
-        return entry;
-      }
-      return {
-        ...entry,
-        answer: "Confirmed from locked scope summary."
-      };
-    });
-  }
+  const hasUnansweredScopeItems = nextState.scope_questions.some(
+    (entry: { answer?: string | null }) => !entry.answer || entry.answer.trim().length === 0
+  );
 
   if (prepSignal) {
     if (
       !nextState.prep_complete &&
       !isAskingQuestions &&
-      (hasAnsweredScope || explicitScopeLockSignal)
+      (hasAnsweredScope || explicitScopeLockSignal) &&
+      !hasUnansweredScopeItems &&
+      nextState.pending_inputs.length === 0
     ) {
       nextState.scope_finalized = true;
       nextState.scope_clarification_pending = false;
@@ -939,15 +1043,21 @@ function normalizeWorkflowDecisionState(state: unknown) {
     parsed.awaiting_schedule_mode_selection ||
     parsed.awaiting_custom_day_input;
 
-  if (hasUnansweredScopeItems && !hasScopeReadyContext) {
+  if (hasUnansweredScopeItems) {
     parsed.scope_clarification_pending = true;
     parsed.scope_finalized = false;
     parsed.prep_pending = false;
     parsed.scope_pending = false;
   }
 
+  const hasScopeQuestions = parsed.scope_questions.length > 0;
+  const canPromoteToPrep =
+    hasScopeQuestions
+      ? hasAnsweredScopeItems && !hasUnansweredScopeItems
+      : hasScopeReadyContext;
+
   if (
-    (hasAnsweredScopeItems || hasScopeReadyContext) &&
+    canPromoteToPrep &&
     hasScopeReadyContext &&
     !hasBlockingDecision &&
     !parsed.prep_complete

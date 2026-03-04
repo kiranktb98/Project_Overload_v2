@@ -20,22 +20,29 @@ function parseTimeoutMsFromEnv(value: string | undefined, fallbackMs: number): n
   return parsed;
 }
 
-const DEFAULT_TIMEOUT_MS = parseTimeoutMsFromEnv(
+function clampTimeoutMs(value: number, minMs: number, maxMs: number): number {
+  if (!Number.isFinite(value)) {
+    return minMs;
+  }
+  return Math.max(minMs, Math.min(maxMs, Math.trunc(value)));
+}
+
+const DEFAULT_TIMEOUT_MS = clampTimeoutMs(parseTimeoutMsFromEnv(
   process.env.DEFAULT_QUERY_TIMEOUT_MS ?? process.env.LLM_TIMEOUT_MS,
   900_000
-);
-const DEFAULT_WEB_API_TIMEOUT_MS = parseTimeoutMsFromEnv(
+), 5_000, 3_600_000);
+const DEFAULT_WEB_API_TIMEOUT_MS = clampTimeoutMs(parseTimeoutMsFromEnv(
   process.env.WEB_API_TIMEOUT_MS ?? process.env.LLM_TIMEOUT_MS,
   900_000
-);
-const PREPARE_TIMEOUT_MS = parseTimeoutMsFromEnv(
+), 5_000, 3_600_000);
+const PREPARE_TIMEOUT_MS = clampTimeoutMs(parseTimeoutMsFromEnv(
   process.env.WEB_PREPARE_TIMEOUT_MS ?? process.env.WEB_API_TIMEOUT_MS,
   900_000
-);
-const PDF_TIMEOUT_MS = parseTimeoutMsFromEnv(
+), 10_000, 3_600_000);
+const PDF_TIMEOUT_MS = clampTimeoutMs(parseTimeoutMsFromEnv(
   process.env.WEB_PDF_TIMEOUT_MS ?? process.env.WEB_API_TIMEOUT_MS,
   900_000
-);
+), 10_000, 3_600_000);
 
 function isTestRuntime(): boolean {
   return process.env.NODE_ENV === "test" || process.env.VITEST === "true";
@@ -63,13 +70,7 @@ export const ChatHistoryTurnSchema = z.object({
 const ChatMetricDefinitionSchema = z.object({
   metric_key: z.string().min(1),
   display_name: z.string().min(1),
-  definition: z.string().min(1),
-  source_type: z.enum(["column", "derived"]).default("derived"),
-  source_columns: z.array(z.string().min(1)).default([]),
-  requires_confirmation: z.boolean().default(false),
-  confirmation_question: z.string().nullable().default(null),
-  confirmed: z.boolean().default(true),
-  context: z.enum(["single_query", "deep_analysis"]).default("deep_analysis")
+  definition: z.string().min(1)
 });
 
 const ChatPendingInputSchema = z.object({
@@ -125,6 +126,7 @@ export const ChatStateSchema = z.object({
   pending_query_sql: z.string().nullable().default(null),
   pending_query_limit: z.number().int().positive().nullable().default(null),
   pending_single_query_request: z.string().nullable().default(null),
+  pending_followup_asks: z.array(z.string().min(1)).max(5).default([]),
   last_single_query_snapshot: z
     .object({
       normalized_request: z.string().min(1),
@@ -143,7 +145,8 @@ export const ChatStateSchema = z.object({
         governed_sql: z.string().min(1),
         row_count: z.number().int().min(0),
         elapsed_ms: z.number().int().min(0),
-        created_at: z.string().datetime()
+        created_at: z.string().datetime(),
+        sample_rows: z.array(z.record(z.string(), z.unknown())).max(10).default([])
       })
     )
     .max(20)
@@ -250,6 +253,7 @@ export const ChatStateSchema = z.object({
 
 export const ChatTurnRequestSchema = z.object({
   message: z.string().trim().min(1),
+  chat_session_id: z.string().trim().max(128).optional().nullable(),
   state: z.unknown().optional()
 });
 
@@ -331,6 +335,15 @@ export interface WebApiClient {
   getTableHealth(): Promise<RelationHealthRecord[]>;
   getUserSettings(): Promise<{ metric_definitions: Array<{ metric_key: string; display_name: string; definition: string }>; business_context: string }>;
   saveUserSettings(settings: { metric_definitions: Array<{ metric_key: string; display_name: string; definition: string }>; business_context: string }): Promise<void>;
+  indexRagTurn(payload: {
+    session_id?: string | null;
+    chunks: Array<{ source: string; label: string; text: string }>;
+  }): Promise<void>;
+  searchRagMemory(payload: {
+    session_id?: string | null;
+    query_text: string;
+    limit?: number;
+  }): Promise<Array<{ source: string; label: string; text: string; similarity: number }>>;
 }
 
 const TokenUsageSchema = z.object({
@@ -458,6 +471,17 @@ const SafeQueryResponseSchema = z.object({
   warnings: z.array(z.string()).default([])
 });
 
+const RagMemoryChunkSchema = z.object({
+  source: z.string().min(1),
+  label: z.string().min(1),
+  text: z.string().min(1),
+  similarity: z.number()
+});
+
+const RagMemorySearchResponseSchema = z.object({
+  chunks: z.array(RagMemoryChunkSchema).default([])
+});
+
 const TableColumnInfoSchema = z.object({
   column_name: z.string(),
   data_type: z.string(),
@@ -567,6 +591,7 @@ export function createInitialChatState(): ChatState {
     pending_query_sql: null,
     pending_query_limit: null,
     pending_single_query_request: null,
+    pending_followup_asks: [],
     last_single_query_snapshot: null,
     single_query_log: [],
     planner_summary: null,
@@ -622,24 +647,12 @@ export function parseChatState(value: unknown): ChatState {
     metric_definitions: parsed.data.metric_definitions.map((entry) => ({
       metric_key: entry.metric_key,
       display_name: entry.display_name,
-      definition: entry.definition,
-      source_type: entry.source_type,
-      source_columns: [...entry.source_columns],
-      requires_confirmation: entry.requires_confirmation,
-      confirmation_question: entry.confirmation_question ?? null,
-      confirmed: entry.confirmed ?? true,
-      context: entry.context
+      definition: entry.definition
     })),
     pending_metric_confirmations: parsed.data.pending_metric_confirmations.map((entry) => ({
       metric_key: entry.metric_key,
       display_name: entry.display_name,
-      definition: entry.definition,
-      source_type: entry.source_type,
-      source_columns: [...entry.source_columns],
-      requires_confirmation: entry.requires_confirmation,
-      confirmation_question: entry.confirmation_question ?? null,
-      confirmed: entry.confirmed ?? false,
-      context: entry.context
+      definition: entry.definition
     })),
     pending_metric_resume_message: parsed.data.pending_metric_resume_message ?? null,
     pending_metric_resume_mode: parsed.data.pending_metric_resume_mode ?? null,
@@ -659,6 +672,7 @@ export function parseChatState(value: unknown): ChatState {
     pending_query_sql: parsed.data.pending_query_sql ?? null,
     pending_query_limit: parsed.data.pending_query_limit ?? null,
     pending_single_query_request: parsed.data.pending_single_query_request ?? null,
+    pending_followup_asks: [...(parsed.data.pending_followup_asks ?? [])],
     last_single_query_snapshot: parsed.data.last_single_query_snapshot ?? null,
     single_query_log: [...(parsed.data.single_query_log ?? [])],
     planner_summary: parsed.data.planner_summary ?? null,
@@ -778,14 +792,19 @@ function applyConversationOrchestratorDecision(
 ): ChatState {
   const next = parseChatState(state);
   const hadScopeQuestionsBefore = state.scope_questions.length > 0;
-  const explicitFinalizeSignal =
-    typeof userCommand === "string" && isScopeFinalizeChoice(userCommand.trim().toLowerCase());
   const parsed = ConversationOrchestratorDecisionSchema.safeParse(decision);
   if (!parsed.success) {
     return next;
   }
 
   const resolved = parsed.data;
+  const userMessageText = typeof userCommand === "string" ? userCommand : "";
+  const inClarificationPhase =
+    hadScopeQuestionsBefore && (state.scope_clarification_pending || state.scope_questions.length > 0);
+  const explicitAddQuestionSignal =
+    /\b(also|add|include|another|one more|new question|follow up|follow-up)\b/.test(userMessageText) ||
+    looksLikeNewQuestionWhileClarifying(userMessageText);
+
   next.orchestrator_context_version = 1;
   next.last_orchestrator_decision = resolved;
   next.orchestrator_summary = resolved.state_updates.summary ?? null;
@@ -801,7 +820,7 @@ function applyConversationOrchestratorDecision(
     }));
   }
 
-  const newQuestions = resolved.new_scope_questions.map((entry) => ({
+  const rawNewQuestions = resolved.new_scope_questions.map((entry) => ({
     question_number: next.scope_questions.length + 1,
     question: entry.question_text,
     clarification: entry.clarification,
@@ -812,7 +831,7 @@ function applyConversationOrchestratorDecision(
     metric_source_columns: []
   }));
 
-  const followUpQuestions = resolved.follow_up_requests
+  const rawFollowUpQuestions = resolved.follow_up_requests
     .filter((entry) => entry.requires_new_data)
     .map((entry) => ({
       question_number: next.scope_questions.length + 1,
@@ -825,7 +844,22 @@ function applyConversationOrchestratorDecision(
       metric_source_columns: []
     }));
 
-  if (newQuestions.length > 0 || followUpQuestions.length > 0) {
+  // During active clarification, only append new questions when the user explicitly asks to add one.
+  // This prevents suggested/accidental question drift that keeps scope in a pending loop.
+  const newQuestions =
+    inClarificationPhase && !explicitAddQuestionSignal ? [] : rawNewQuestions;
+  const followUpQuestions =
+    inClarificationPhase && !explicitAddQuestionSignal ? [] : rawFollowUpQuestions;
+
+  // Only process scope questions for deep analysis routes — single_query_agent and
+  // data_architect_agent must never create scope questions even if the LLM hallucinates them.
+  const isDeepAnalysisRoute =
+    resolved.next_owner === "query_planning_agent" ||
+    resolved.next_owner === "data_prep_orchestrator" ||
+    resolved.next_owner === "wait_for_user" ||
+    resolved.next_owner === "conversation_orchestrator";
+
+  if ((newQuestions.length > 0 || followUpQuestions.length > 0) && isDeepAnalysisRoute) {
     next.scope_questions = renumberScopeQuestions(
       removeDuplicateScopeQuestions(
         splitCompoundScopeQuestions(
@@ -833,6 +867,7 @@ function applyConversationOrchestratorDecision(
         )
       )
     );
+    applySavedMetricDefinitionsToScopeQuestions(next);
     next.scope_clarification_pending = true;
     next.scope_pending = false;
     next.prep_pending = false;
@@ -842,11 +877,14 @@ function applyConversationOrchestratorDecision(
   const shouldIgnoreResolvedAnswersForNewSessionQuestions =
     !hadScopeQuestionsBefore && (newQuestions.length > 0 || followUpQuestions.length > 0);
 
-  if (
-    !shouldIgnoreResolvedAnswersForNewSessionQuestions &&
-    !next.scope_clarification_pending &&
-    resolved.resolved_scope_answers.length > 0
-  ) {
+  const explicitAssignments = parseExplicitScopeAnswerAssignments(userMessageText);
+  const explicitAssignmentNumbers = new Set(explicitAssignments.map((entry) => entry.question_number));
+  const explicitApplyToAll =
+    /\b(same for all|all questions|for all questions|apply to all|across all questions|for each question)\b/i.test(
+      userMessageText
+    );
+
+  if (!shouldIgnoreResolvedAnswersForNewSessionQuestions && resolved.resolved_scope_answers.length > 0) {
     for (const answer of resolved.resolved_scope_answers) {
       const target = next.scope_questions.find(
         (entry) => entry.question_number === answer.question_number
@@ -854,8 +892,31 @@ function applyConversationOrchestratorDecision(
       if (!target) {
         continue;
       }
+      if (
+        !shouldAcceptResolvedScopeAssignment({
+          raw_message: userMessageText,
+          target_question: target,
+          explicit_assignment_numbers: explicitAssignmentNumbers,
+          explicit_apply_to_all: explicitApplyToAll
+        })
+      ) {
+        continue;
+      }
       target.answer = answer.answer.trim();
     }
+  }
+
+  if (next.pending_inputs.length > 0) {
+    const answeredQuestionNumbers = new Set(
+      next.scope_questions
+        .filter((entry) => Boolean(entry.answer && entry.answer.trim().length > 0))
+        .map((entry) => entry.question_number)
+    );
+    next.pending_inputs = next.pending_inputs.filter((entry) =>
+      typeof entry.question_number === "number"
+        ? !answeredQuestionNumbers.has(entry.question_number)
+        : true
+    );
   }
 
   const answeredScopeCount = next.scope_questions.filter(
@@ -869,22 +930,16 @@ function applyConversationOrchestratorDecision(
     allScopeAnswered &&
     next.pending_inputs.length === 0
   ) {
-    if (explicitFinalizeSignal) {
-      next.scope_clarification_pending = false;
-      next.scope_finalized = true;
-      if (!next.prep_complete) {
-        next.prep_pending = true;
-      }
-    } else {
-      next.scope_clarification_pending = true;
-      next.scope_finalized = false;
-      next.prep_pending = false;
-      next.scope_pending = false;
+    next.scope_clarification_pending = false;
+    next.scope_finalized = true;
+    next.scope_pending = false;
+    if (!next.prep_complete) {
+      next.prep_pending = true;
     }
   }
 
   if (resolved.next_owner === "wait_for_user") {
-    if (next.scope_questions.length > 0) {
+    if (next.scope_questions.length > 0 && !allScopeAnswered) {
       next.scope_clarification_pending = true;
       next.prep_pending = false;
       next.scope_pending = false;
@@ -944,6 +999,66 @@ function applyConversationOrchestratorDecision(
   }
 
   syncQuestionRegistryFromScope(next);
+  return next;
+}
+
+function applySavedMetricDefinitionsToScopeQuestions(state: ChatState): void {
+  if (!Array.isArray(state.scope_questions) || state.scope_questions.length === 0) {
+    return;
+  }
+  if (!Array.isArray(state.metric_definitions) || state.metric_definitions.length === 0) {
+    return;
+  }
+
+  for (const question of state.scope_questions) {
+    const matched = findSavedMetricDefinitionForText(
+      state.metric_definitions,
+      `${question.question} ${question.clarification}`
+    );
+    if (!matched) {
+      continue;
+    }
+    if (!question.metric_key || question.metric_key.trim().length === 0) {
+      question.metric_key = matched.metric_key;
+    }
+    if (!question.metric_display_name || question.metric_display_name.trim().length === 0) {
+      question.metric_display_name = matched.display_name;
+    }
+    if (!question.metric_definition_draft || question.metric_definition_draft.trim().length === 0) {
+      question.metric_definition_draft = matched.definition;
+    }
+
+    const savedFormula = matched.definition.trim();
+    if (savedFormula.length > 0) {
+      question.question = rewriteRefundRateFormulaText(question.question, savedFormula);
+      question.clarification = rewriteRefundRateFormulaText(question.clarification, savedFormula);
+    }
+
+    const hasSavedMetricLine = /using saved metric:/i.test(question.clarification);
+    if (!hasSavedMetricLine) {
+      question.clarification = [
+        question.clarification.trim(),
+        `Using saved metric: ${matched.display_name} = ${matched.definition}.`
+      ]
+        .filter((line) => line.length > 0)
+        .join(" ");
+    }
+  }
+}
+
+function rewriteRefundRateFormulaText(text: string, savedFormula: string): string {
+  if (!/\brefund rate\b/i.test(text)) {
+    return text;
+  }
+
+  let next = text;
+  next = next.replace(/refund rate\s*=\s*[^,.]+/gi, `Refund rate = ${savedFormula}`);
+  next = next.replace(/defined as\s+[^,.]+/gi, `defined as ${savedFormula}`);
+  next = next.replace(/refunded orders\s*\/\s*total orders/gi, savedFormula);
+  next = next.replace(
+    /count of orders with status\s*=\s*['"`]?refunded['"`]?\s*\/\s*total count of all orders/gi,
+    savedFormula
+  );
   return next;
 }
 
@@ -1231,17 +1346,25 @@ export function createWebApiClient(options: CreateWebApiClientOptions): WebApiCl
       return parseJsonResponse(response, ReportContractSchema);
     },
     async prepareContract(contractId) {
-      const response = await requestWithRetry(
-        `/report-contracts/${encodeURIComponent(contractId)}/prepare`,
-        {
-          method: "POST",
-          headers: { "content-type": "application/json" },
-          body: "{}"
-        },
-        { retries: 2, timeout_ms: PREPARE_TIMEOUT_MS }
-      );
+      try {
+        const response = await requestWithRetry(
+          `/report-contracts/${encodeURIComponent(contractId)}/prepare`,
+          {
+            method: "POST",
+            headers: { "content-type": "application/json" },
+            body: "{}"
+          },
+          { retries: 0, timeout_ms: PREPARE_TIMEOUT_MS }
+        );
 
-      return parseJsonResponse(response, PrepareContractResponseSchema);
+        return parseJsonResponse(response, PrepareContractResponseSchema);
+      } catch (error) {
+        if ((error as { name?: string } | null)?.name === "AbortError") {
+          const seconds = Math.max(1, Math.round(PREPARE_TIMEOUT_MS / 1_000));
+          throw new Error(`Preparation timed out after ${seconds}s. Try narrowing the scope and run again.`);
+        }
+        throw error;
+      }
     },
     async submitRun(contractId) {
       const response = await requestWithRetry(
@@ -1251,7 +1374,7 @@ export function createWebApiClient(options: CreateWebApiClientOptions): WebApiCl
           headers: { "content-type": "application/json" },
           body: "{}"
         },
-        { retries: 0, timeout_ms: 15_000 }
+        { retries: 0, timeout_ms: DEFAULT_WEB_API_TIMEOUT_MS }
       );
       return parseJsonResponse(response, z.object({ run_id: z.string().min(1), status: z.string() }));
     },
@@ -1259,7 +1382,7 @@ export function createWebApiClient(options: CreateWebApiClientOptions): WebApiCl
       const response = await requestWithRetry(
         `/report-runs/${encodeURIComponent(runId)}`,
         { method: "GET" },
-        { retries: 1, timeout_ms: 10_000 }
+        { retries: 1, timeout_ms: DEFAULT_WEB_API_TIMEOUT_MS }
       );
       return parseJsonResponse(response, RunStatusResponseSchema);
     },
@@ -1376,6 +1499,41 @@ export function createWebApiClient(options: CreateWebApiClientOptions): WebApiCl
       } catch {
         // Fire-and-forget — don't block the chat flow
       }
+    },
+    async indexRagTurn(payload) {
+      if (!Array.isArray(payload.chunks) || payload.chunks.length === 0) {
+        return;
+      }
+
+      await requestWithRetry(
+        "/ui/rag/index-turn",
+        {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({
+            session_id: payload.session_id ?? null,
+            chunks: payload.chunks
+          })
+        },
+        { retries: 1, timeout_ms: 20_000 }
+      );
+    },
+    async searchRagMemory(payload) {
+      const response = await requestWithRetry(
+        "/ui/rag/search",
+        {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({
+            session_id: payload.session_id ?? null,
+            query_text: payload.query_text,
+            limit: payload.limit ?? 12
+          })
+        },
+        { retries: 1, timeout_ms: 20_000 }
+      );
+      const parsed = await parseJsonResponse(response, RagMemorySearchResponseSchema);
+      return parsed.chunks;
     }
   };
 }
@@ -1406,6 +1564,184 @@ export async function handleChatTurn(input: {
     nextState = applyConversationOrchestratorDecision(nextState, input.orchestrator_decision, command);
   }
 
+  // --- Pending follow-up asks from multi-part single query messages ---
+  if (nextState.pending_followup_asks.length > 0) {
+    if (looksLikeConfirmation(command)) {
+      // User confirmed — execute the next queued follow-up ask
+      const nextAsk = nextState.pending_followup_asks[0]!;
+      nextState.pending_followup_asks = nextState.pending_followup_asks.slice(1);
+      const followupResult = await attemptSingleQueryOrAnalysisRouting(
+        nextAsk,
+        nextState,
+        input.api_client,
+        input.query_router,
+        { orchestratorForcedSingleQuery: true }
+      );
+      if (followupResult) {
+        // If more follow-ups remain, append acknowledgment
+        if (nextState.pending_followup_asks.length > 0) {
+          const remaining = nextState.pending_followup_asks
+            .map((ask) => `- ${ask}`)
+            .join("\n");
+          followupResult.assistant_message +=
+            `\n\nI also have another request queued:\n${remaining}\n\nWould you like me to run this next?`;
+          followupResult.state = nextState;
+        }
+        return followupResult;
+      }
+      // Fallback: if routing failed, clear queue and fall through
+      nextState.pending_followup_asks = [];
+    } else if (looksLikeRejection(command)) {
+      // User declined — clear the queue
+      nextState.pending_followup_asks = [];
+    } else {
+      // User sent a new message — clear the queue (they moved on)
+      nextState.pending_followup_asks = [];
+    }
+  }
+
+  // --- Orchestrator-driven workflow routing (takes priority over legacy blocking gates) ---
+  // Cast to string to allow comparison with new next_owner values that may not yet
+  // be reflected in TypeScript's cached type resolution of the shared schema.
+  const orchestratorRoute = nextState.last_orchestrator_decision?.next_owner as string | undefined;
+
+  if (orchestratorRoute === "single_query_agent") {
+    // Save pending clarification before clearing — the user may be answering a previous
+    // clarification AND adding a follow-up in the same message.
+    const pendingClarification = nextState.pending_single_query_request;
+    nextState.pending_single_query_request = null;
+
+    // Detect multi-part messages: if the orchestrator split the message into multiple
+    // intent_parts, queue secondary asks and execute only the primary one first.
+    const intentParts = nextState.last_orchestrator_decision?.intent_parts ?? [];
+
+    // --- Clarification + follow-up handling ---
+    // When a previous single query was awaiting clarification, separate the clarification
+    // answer from any new follow-up requests so the original query executes first.
+    if (pendingClarification) {
+      const clarificationParts = intentParts.filter(
+        (part) => part.type === "clarification_answer"
+      );
+      const followUpParts = intentParts.filter(
+        (part) => part.type === "new_question" || part.type === "follow_up_request"
+      );
+
+      // Build clarification text — use tagged parts if available, otherwise full message
+      const clarificationText = clarificationParts.length > 0
+        ? clarificationParts.map((p) => p.text).join(". ")
+        : rawMessage;
+
+      // Merge clarification with the original pending query
+      const mergedMessage = [
+        pendingClarification,
+        `Clarification: ${clarificationText}`
+      ].join("\n");
+
+      // Queue any follow-up asks for sequential execution after the primary query
+      if (followUpParts.length > 0) {
+        nextState.pending_followup_asks = followUpParts.map((p) => p.text);
+      }
+
+      const clarifiedResult = await attemptSingleQueryOrAnalysisRouting(
+        mergedMessage,
+        nextState,
+        input.api_client,
+        input.query_router,
+        { orchestratorForcedSingleQuery: true }
+      );
+      if (clarifiedResult) {
+        if (nextState.pending_followup_asks.length > 0) {
+          const followupList = nextState.pending_followup_asks
+            .map((ask, i) => `${nextState.pending_followup_asks.length > 1 ? `${i + 1}. ` : "- "}${ask}`)
+            .join("\n");
+          clarifiedResult.assistant_message +=
+            `\n\nI also noted your next request:\n${followupList}\n\nWould you like me to run this next?`;
+          clarifiedResult.state = nextState;
+        }
+        return clarifiedResult;
+      }
+      // Fallback: if clarification routing failed, fall through to fresh query logic
+    }
+
+    // --- Fresh query multi-part handling (no pending clarification) ---
+    const distinctAsks = intentParts.filter(
+      (part) => part.type === "new_question" || part.type === "follow_up_request"
+    );
+
+    // If there are 3+ distinct asks in one message, escalate to deep diagnostic mode
+    // — this is clearly a multi-part analysis, not a series of single queries.
+    if (distinctAsks.length >= 3) {
+      const askList = distinctAsks.map((ask, i) => `${i + 1}. ${ask.text}`).join("\n");
+      const escalationMessage = [
+        "Your message contains multiple analytical questions. I'm switching to **deep diagnostic mode** to handle them together with a comprehensive analysis.",
+        "",
+        "Questions I identified:",
+        askList,
+        "",
+        "Let me set up the scope for this analysis."
+      ].join("\n");
+      // Route to deep diagnostic: build scope clarification step
+      const scopeResult = await buildScopeClarificationStep(
+        nextState,
+        rawMessage,
+        input.api_client,
+        input.query_router
+      );
+      if (scopeResult) {
+        scopeResult.assistant_message = escalationMessage + "\n\n" + scopeResult.assistant_message;
+        return scopeResult;
+      }
+    }
+
+    const secondaryAsks = distinctAsks
+      .slice(1)
+      .map((part) => part.text);
+
+    // Determine the effective message: use only the primary ask for SQL generation
+    const primaryMessage = secondaryAsks.length > 0 && intentParts[0]
+      ? intentParts[0].text
+      : rawMessage;
+    const effectiveMessage = secondaryAsks.length > 0 ? primaryMessage : rawMessage;
+
+    if (secondaryAsks.length > 0) {
+      nextState.pending_followup_asks = [...secondaryAsks];
+    }
+
+    // Use existing query router infrastructure to generate SQL + execute
+    // Pass orchestratorForcedSingleQuery to prevent heuristic deep-analysis escalation
+    const singleQueryResult = await attemptSingleQueryOrAnalysisRouting(
+      effectiveMessage,
+      nextState,
+      input.api_client,
+      input.query_router,
+      { orchestratorForcedSingleQuery: true }
+    );
+    if (singleQueryResult) {
+      // If there are queued follow-up asks, append acknowledgment to the response
+      if (nextState.pending_followup_asks.length > 0) {
+        const followupList = nextState.pending_followup_asks
+          .map((ask, i) => `${nextState.pending_followup_asks.length > 1 ? `${i + 1}. ` : "- "}${ask}`)
+          .join("\n");
+        singleQueryResult.assistant_message +=
+          `\n\nI also noted your next request:\n${followupList}\n\nWould you like me to run this next?`;
+        singleQueryResult.state = nextState;
+      }
+      return singleQueryResult;
+    }
+    // Fallback: if routing failed, fall through to normal flow
+  }
+
+  if (orchestratorRoute === "data_architect_agent") {
+    const architectResult = await executeDataArchitectAgent(
+      rawMessage,
+      nextState,
+      input.api_client,
+      input.query_router
+    );
+    return architectResult;
+  }
+
+  // For all other next_owner values, fall through to existing blocking gates
   const scopeClarificationJustStartedThisTurn =
     !hadScopeClarificationPendingBefore &&
     unansweredScopeCountBefore === 0 &&
@@ -1426,7 +1762,13 @@ export async function handleChatTurn(input: {
   const hasUnansweredScopeItems = nextState.scope_questions.some(
     (entry) => !entry.answer || entry.answer.trim().length === 0
   );
-  if (hasUnansweredScopeItems) {
+  // Do not force scope_clarification_pending when the orchestrator explicitly routed
+  // to single_query_agent or data_architect_agent — allow mid-conversation switching.
+  if (
+    hasUnansweredScopeItems &&
+    orchestratorRoute !== "single_query_agent" &&
+    orchestratorRoute !== "data_architect_agent"
+  ) {
     nextState.scope_clarification_pending = true;
     nextState.scope_finalized = false;
     nextState.prep_pending = false;
@@ -1444,8 +1786,14 @@ export async function handleChatTurn(input: {
     nextState.awaiting_schedule_mode_selection ||
     nextState.awaiting_custom_day_input ||
     (nextState.scope_clarification_pending && hasUnansweredScopeItems);
+  const hasScopeQuestions = nextState.scope_questions.length > 0;
+  const canPromoteToPrep =
+    hasScopeQuestions
+      ? hasAnsweredScopeItems && !hasUnansweredScopeItems
+      : hasScopeReadyContext;
+
   if (
-    hasAnsweredScopeItems &&
+    canPromoteToPrep &&
     hasScopeReadyContext &&
     !hasBlockingDecision &&
     !nextState.prep_complete
@@ -2321,7 +2669,7 @@ async function executePendingQuery(
     const result = await apiClient.runSafeQuery(compiled.sql, limit);
     const elapsedMs = Date.now() - startedAt;
     const preview = result.rows.slice(0, 10);
-    const combinedWarnings = [...result.warnings, ...(compiled.note ? [compiled.note] : [])];
+    const combinedWarnings = filterUserVisibleWarnings(result.warnings);
     const warnings = combinedWarnings.length > 0 ? `\nWarnings: ${combinedWarnings.join("; ")}` : "";
 
     return {
@@ -2379,7 +2727,7 @@ async function executeNaturalSimpleQuery(
       compiled.note ? `${action.explanation} ${compiled.note}` : action.explanation,
       result.governed_sql
     );
-    const warningLines = [...result.warnings, ...(compiled.note ? [compiled.note] : [])];
+    const warningLines = filterUserVisibleWarnings(result.warnings);
     const warnings = warningLines.length > 0 ? `\nWarnings: ${warningLines.join("; ")}` : "";
     const naturalNarration = await maybeNarrateSingleQueryResponse({
       query_router: options.query_router,
@@ -2401,7 +2749,8 @@ async function executeNaturalSimpleQuery(
       governed_sql: result.governed_sql,
       row_count: result.row_count,
       elapsed_ms: elapsedMs,
-      created_at: new Date().toISOString()
+      created_at: new Date().toISOString(),
+      sample_rows: (result.rows ?? []).slice(0, 10)
     };
     nextState.single_query_log = [...(nextState.single_query_log ?? []), logEntry].slice(-20);
 
@@ -2565,11 +2914,12 @@ async function inferLlmQueryRoutingDecision(
   const sqlDialect = mapProviderToSqlDialect(connectionContext?.provider);
 
   try {
+    const effectiveBusinessContext = resolveBusinessContextForAgents(state, catalog.business_context);
     return await queryRouter.decide({
       message: rawMessage,
       now_iso: new Date().toISOString(),
       sql_dialect: sqlDialect,
-      business_context: catalog.business_context,
+      business_context: effectiveBusinessContext,
       catalog_summary: catalog.catalog_summary,
       allowed_relations: [...state.draft.allowed_relations],
       allowed_schemas: [...state.draft.allowed_schemas],
@@ -2594,7 +2944,8 @@ async function attemptSingleQueryOrAnalysisRouting(
   rawMessage: string,
   state: ChatState,
   apiClient: WebApiClient,
-  queryRouter: QueryRouterClient | undefined
+  queryRouter: QueryRouterClient | undefined,
+  options?: { orchestratorForcedSingleQuery?: boolean }
 ): Promise<ChatTurnResponse | null> {
   const lower = rawMessage.toLowerCase();
   const llmQueryRouting = await inferLlmQueryRoutingDecision(
@@ -2604,7 +2955,9 @@ async function attemptSingleQueryOrAnalysisRouting(
     queryRouter
   );
 
-  const forceDeepAnalysis = looksLikeComplexMultiQuestionPrompt(lower);
+  // When the orchestrator explicitly routed to single_query_agent, trust it —
+  // do not override with the heuristic deep-analysis escalation.
+  const forceDeepAnalysis = !options?.orchestratorForcedSingleQuery && looksLikeComplexMultiQuestionPrompt(lower);
   if (forceDeepAnalysis && llmQueryRouting?.route === "single_query") {
     return buildScopeClarificationStep(
       state,
@@ -2632,7 +2985,9 @@ async function attemptSingleQueryOrAnalysisRouting(
     return executeLlmRoutedSingleQuery(state, apiClient, rawMessage, llmQueryRouting, queryRouter);
   }
 
-  if (llmQueryRouting?.route === "deep_analysis") {
+  // When the orchestrator explicitly routed to single_query_agent, do not
+  // escalate to deep analysis even if the query router LLM says deep_analysis.
+  if (llmQueryRouting?.route === "deep_analysis" && !options?.orchestratorForcedSingleQuery) {
     const scopeClarification = await buildScopeClarificationStep(
       state,
       rawMessage,
@@ -2645,7 +3000,7 @@ async function attemptSingleQueryOrAnalysisRouting(
   // Fallback hardening: if provider routing is unavailable/uncertain but the
   // user request is clearly multi-part analysis, force scoped clarification
   // instead of letting conversational text lock workflow heuristics.
-  if (looksLikeComplexMultiQuestionPrompt(lower)) {
+  if (looksLikeComplexMultiQuestionPrompt(lower) && !options?.orchestratorForcedSingleQuery) {
     return buildScopeClarificationStep(
       state,
       rawMessage,
@@ -2678,6 +3033,91 @@ async function attemptSingleQueryOrAnalysisRouting(
     user_message: rawMessage,
     query_router: queryRouter
   });
+}
+
+async function executeDataArchitectAgent(
+  rawMessage: string,
+  state: ChatState,
+  apiClient: WebApiClient,
+  queryRouter?: QueryRouterClient
+): Promise<ChatTurnResponse> {
+  const nextState = parseChatState(state);
+  const catalog = await fetchCatalogContext(apiClient).catch(() => ({
+    catalog_summary: "",
+    business_context: ""
+  }));
+
+  // Optionally run a probe query for questions needing live data (date ranges, counts, etc.)
+  let probeResult: string | null = null;
+  if (queryRouter) {
+    const probeDecision = await inferLlmQueryRoutingDecision(
+      rawMessage,
+      nextState,
+      apiClient,
+      queryRouter
+    ).catch(() => null);
+    if (probeDecision?.route === "single_query" && probeDecision.sql) {
+      try {
+        const result = await apiClient.runSafeQuery(probeDecision.sql, 50);
+        probeResult = JSON.stringify(
+          Array.isArray(result.rows) ? result.rows.slice(0, 20) : []
+        );
+      } catch {
+        // Probe failed — answer from catalog only
+      }
+    }
+  }
+
+  // Call the data architect LLM via the query router's OpenRouter connection
+  let answer: string;
+  if (queryRouter?.answer_data_question) {
+    try {
+      answer = await queryRouter.answer_data_question({
+        message: rawMessage,
+        catalog_summary: catalog.catalog_summary,
+        business_context: resolveBusinessContextForAgents(nextState, catalog.business_context),
+        probe_result: probeResult,
+        conversation_history: nextState.conversation_history
+          .slice(-10)
+          .map((turn) => ({ role: turn.role, content: turn.content })),
+        recent_query_context: (nextState.single_query_log ?? [])
+          .slice(-3)
+          .map((entry) => ({
+            query_id: entry.query_id,
+            question: entry.question,
+            sql_executed: entry.governed_sql,
+            row_count: entry.row_count
+          }))
+      });
+    } catch {
+      // Fallback: return a catalog-based summary if the LLM call fails
+      answer = buildDataArchitectFallback(rawMessage, catalog, probeResult);
+    }
+  } else {
+    answer = buildDataArchitectFallback(rawMessage, catalog, probeResult);
+  }
+
+  const finalState = appendConversationTurn(nextState, rawMessage, answer);
+
+  return { assistant_message: answer, state: finalState };
+}
+
+function buildDataArchitectFallback(
+  rawMessage: string,
+  catalog: { catalog_summary: string; business_context: string },
+  probeResult: string | null
+): string {
+  const parts: string[] = [];
+  if (catalog.catalog_summary) {
+    parts.push("Here is the available data catalog:\n");
+    parts.push(catalog.catalog_summary);
+  } else {
+    parts.push("No data catalog is currently available. Please connect a database first.");
+  }
+  if (probeResult) {
+    parts.push("\n\nProbe query result:\n" + probeResult);
+  }
+  return parts.join("");
 }
 
 async function buildScopeClarificationStep(
@@ -2723,18 +3163,16 @@ async function buildScopeClarificationStep(
   if (scopeQuestions.length === 0 && !isTestRuntime()) {
     throw new Error("scope_clarification_generation_failed: llm returned no scope questions");
   }
-  const metricQuestions = await buildMetricScopeQuestions({
-    state: nextState,
-    raw_message: rawMessage,
-    existing_scope_questions: scopeQuestions,
-    api_client: apiClient,
-    query_router: queryRouter
-  });
-  const coreQuestions = removeDuplicateScopeQuestions([...scopeQuestions, ...metricQuestions]).map(sanitizeScopeQuestionLanguage);
-  const suggestedQuestions = buildSuggestedScopeQuestions(coreQuestions, nextState);
+  const coreQuestions = renumberScopeQuestions(
+    removeDuplicateScopeQuestions(
+      splitCompoundScopeQuestions(scopeQuestions.map(sanitizeScopeQuestionLanguage))
+    )
+  );
+  const suggestedQuestions = buildSuggestedScopeQuestions(coreQuestions);
   const allQuestions = renumberScopeQuestions([...coreQuestions, ...suggestedQuestions]);
 
   nextState.scope_questions = allQuestions;
+  applySavedMetricDefinitionsToScopeQuestions(nextState);
   nextState.scope_source_prompt = rawMessage;
   nextState.scope_clarification_pending = true;
   nextState.prep_pending = false;
@@ -2909,19 +3347,22 @@ async function generateLlmScopeQuestions(
   }
 
   try {
+    const effectiveBusinessContext = resolveBusinessContextForAgents(state, catalog.business_context);
     const response = await queryRouter.scope_clarifications({
       user_message: rawMessage,
       mode,
       now_iso: new Date().toISOString(),
-      business_context: catalog.business_context,
+      business_context: effectiveBusinessContext,
       catalog_summary: catalog.catalog_summary,
       allowed_relations: [...state.draft.allowed_relations],
       allowed_schemas: [...state.draft.allowed_schemas],
       draft_metrics: [...state.draft.metric_ids],
       draft_dimensions: [...state.draft.dimension_ids],
-      confirmed_metric_definitions: state.metric_definitions
-        .filter((m) => m.confirmed)
-        .map((m) => ({ metric_key: m.metric_key, display_name: m.display_name, definition: m.definition })),
+      confirmed_metric_definitions: selectRelevantMetricDefinitionsForText(
+        state.metric_definitions,
+        rawMessage,
+        state.conversation_history
+      ).map((m) => ({ metric_key: m.metric_key, display_name: m.display_name, definition: m.definition })),
       conversation_history: state.conversation_history
         .slice(-20)
         .map((turn) => ({ role: turn.role, content: turn.content }))
@@ -2971,18 +3412,21 @@ async function inferMetricDefinitionsFromLlm(input: {
   }
 
   try {
+    const effectiveBusinessContext = resolveBusinessContextForAgents(input.state, catalog.business_context);
     const response = await input.query_router.propose_metrics({
       user_message: input.raw_message,
       mode: input.mode,
       now_iso: new Date().toISOString(),
       sql: input.sql,
-      business_context: catalog.business_context,
+      business_context: effectiveBusinessContext,
       catalog_summary: catalog.catalog_summary,
       allowed_relations: [...input.state.draft.allowed_relations],
       allowed_schemas: [...input.state.draft.allowed_schemas],
-      existing_metric_definitions: input.state.metric_definitions
-        .filter((m) => m.confirmed)
-        .map((m) => ({ metric_key: m.metric_key, display_name: m.display_name, definition: m.definition })),
+      existing_metric_definitions: selectRelevantMetricDefinitionsForText(
+        input.state.metric_definitions,
+        input.raw_message,
+        input.state.conversation_history
+      ).map((m) => ({ metric_key: m.metric_key, display_name: m.display_name, definition: m.definition })),
       conversation_history: input.state.conversation_history
         .slice(-20)
         .map((turn) => ({ role: turn.role, content: turn.content }))
@@ -3037,40 +3481,24 @@ async function buildMetricScopeQuestions(input: {
     return [];
   }
 
-  const autoConfirmed = proposed.filter((entry) => !entry.requires_confirmation);
-  if (autoConfirmed.length > 0) {
-    mergeConfirmedMetricDefinitions(input.state, autoConfirmed);
+  // Metric definitions are now saved directly from config — no confirmation flow needed.
+  // Auto-merge any proposed metrics that don't already exist.
+  for (const entry of proposed) {
+    const key = entry.metric_key.trim().toLowerCase();
+    const exists = input.state.metric_definitions.some(
+      (m) => m.metric_key.trim().toLowerCase() === key
+    );
+    if (!exists) {
+      input.state.metric_definitions.push({
+        metric_key: entry.metric_key,
+        display_name: entry.display_name,
+        definition: entry.definition
+      });
+    }
   }
-
-  const pending = proposed.filter((entry) => {
-    if (!entry.requires_confirmation) {
-      return false;
-    }
-    if (isMetricClarificationAlreadyCovered(entry, input.existing_scope_questions)) {
-      return false;
-    }
-    return !hasConfirmedMetricDefinition(input.state, entry.metric_key, entry.definition);
-  });
-
-  return pending.map((entry, index) => {
-    const clarification =
-      entry.confirmation_question && entry.confirmation_question.trim().length > 0
-        ? entry.confirmation_question.trim()
-        : `Please confirm the exact formula for "${entry.display_name}".`;
-    const draftDefinition = entry.definition.trim();
-    const draftLine = draftDefinition.length > 0 ? ` Current interpretation: ${draftDefinition}` : "";
-    return {
-      question_number: index + 1,
-      question: `${entry.display_name} calculation`,
-      clarification: `${clarification}${draftLine}`,
-      answer: null,
-      metric_key: entry.metric_key,
-      metric_display_name: entry.display_name,
-      metric_definition_draft: entry.definition,
-      metric_source_columns: [...entry.source_columns]
-    };
-  });
+  return [];
 }
+void buildMetricScopeQuestions;
 
 function isMetricClarificationAlreadyCovered(
   metric: ChatMetricDefinition,
@@ -3108,6 +3536,53 @@ function isMetricClarificationAlreadyCovered(
 
   return false;
 }
+void isMetricClarificationAlreadyCovered;
+
+function selectRelevantMetricDefinitionsForText(
+  metricDefinitions: Array<{ metric_key: string; display_name: string; definition: string }>,
+  userMessage: string,
+  history: Array<{ content: string }>
+): Array<{ metric_key: string; display_name: string; definition: string }> {
+  if (!Array.isArray(metricDefinitions) || metricDefinitions.length === 0) {
+    return [];
+  }
+
+  const recentHistory = history
+    .slice(-20)
+    .map((entry) => entry.content)
+    .join("\n");
+  const haystack = `${userMessage}\n${recentHistory}`.toLowerCase();
+
+  return metricDefinitions.filter((entry) => {
+    const phrases = collectMetricMatchPhrases(entry);
+    if (phrases.some((phrase) => phrase.length > 0 && haystack.includes(phrase))) {
+      return true;
+    }
+
+    const tokenSet = new Set(
+      phrases
+        .flatMap((phrase) => phrase.split(/\s+/))
+        .map((token) => token.trim())
+        .filter((token) => token.length >= 4)
+    );
+    if (tokenSet.size === 0) {
+      return false;
+    }
+    const hitCount = Array.from(tokenSet).filter((token) => haystack.includes(token)).length;
+    return hitCount >= Math.min(2, tokenSet.size);
+  });
+}
+
+function resolveBusinessContextForAgents(
+  state: ChatState,
+  catalogBusinessContext: string
+): string {
+  const scoped = (state.scope_business_context ?? "").trim();
+  if (scoped.length > 0) {
+    return scoped;
+  }
+  return catalogBusinessContext;
+}
 
 type ScopeQuestionEntry = {
   question_number: number;
@@ -3140,7 +3615,8 @@ function splitCompoundScopeQuestions(questions: ScopeQuestionEntry[]): ScopeQues
         ...entry,
         question_number: 0, // will be renumbered later
         question: parts[i],
-        clarification: i === 0 ? entry.clarification : "Split from compound question.",
+        clarification:
+          i === 0 ? entry.clarification : deriveClarificationForQuestion(parts[i]),
         answer: i === 0 ? entry.answer : null,
         metric_key: i === 0 ? entry.metric_key : null,
         metric_display_name: i === 0 ? entry.metric_display_name : null,
@@ -3153,6 +3629,28 @@ function splitCompoundScopeQuestions(questions: ScopeQuestionEntry[]): ScopeQues
   return result;
 }
 
+function deriveClarificationForQuestion(question: string): string {
+  const text = question.toLowerCase();
+
+  if (/\b(refund|refunded)\b/.test(text) && /\b(rate|ratio|percent|percentage)\b/.test(text)) {
+    return "Confirm refund-rate formula (count-based vs value-based), scope window, and ranking cutoff.";
+  }
+
+  if (/\b(compare|comparison|vs|versus|prior|previous)\b/.test(text)) {
+    return "Confirm exact period A vs period B windows and whether to show absolute delta, percentage delta, or both.";
+  }
+
+  if (/\b(support|ticket|issue|reason)\b/.test(text)) {
+    return "Confirm join keys, ticket inclusion rules, and ranking method for top issues.";
+  }
+
+  if (/\b(trend|month|months|week|weeks|quarter|quarters)\b/.test(text)) {
+    return "Confirm date anchor, date column, and reporting granularity for the trend.";
+  }
+
+  return "Confirm final filters, timeframe, and grouping before data preparation.";
+}
+
 /**
  * Try to detect if a question contains multiple distinct analytical asks joined by
  * connectors like "+", "and", "as well as", "also".  Only split when each part
@@ -3161,19 +3659,27 @@ function splitCompoundScopeQuestions(questions: ScopeQuestionEntry[]): ScopeQues
 function trySplitCompoundQuestion(question: string): string[] {
   // Patterns that indicate distinct analytical asks
   const analyticalKeywords =
-    /\b(trend|compare|comparison|vs|versus|breakdown|rank|top|highest|lowest|rate|ratio|correlation|distribution)\b/i;
+    /\b(trend|compare|comparison|vs|versus|breakdown|rank|top|highest|lowest|rate|ratio|correlation|distribution|count|amount|value|ticket|issue|city|product|revenue|refund)\b/i;
+  const isAnalyticalSegment = (value: string): boolean => {
+    const trimmed = value.trim();
+    if (trimmed.length < 12) {
+      return false;
+    }
+    return analyticalKeywords.test(trimmed) || /^(?:what|which|how|for)\b/i.test(trimmed);
+  };
 
   // Try splitting on " + ", " and also ", " as well as ", "; also "
   const splitters = [
     /\s*\+\s*/,
     /\s*;\s*(?:also\s+)?/,
     /,\s*and\s+also\s+/i,
-    /,\s*as well as\s+/i
+    /,\s*as well as\s+/i,
+    /\s*,?\s+and\s+(?=what\b|which\b|how\b|for\b)/i
   ];
 
   for (const splitter of splitters) {
     const parts = question.split(splitter).map((p) => p.trim()).filter((p) => p.length > 10);
-    if (parts.length >= 2 && parts.every((p) => analyticalKeywords.test(p))) {
+    if (parts.length >= 2 && parts.every((p) => isAnalyticalSegment(p))) {
       return parts.map((p) => {
         // Ensure each part ends with ?
         const trimmed = p.replace(/[.?!]+$/, "").trim();
@@ -3182,11 +3688,34 @@ function trySplitCompoundQuestion(question: string): string[] {
     }
   }
 
-  // Try splitting on " and " but only when both halves have analytical keywords
-  // AND the question is long enough to suggest it's compound (>100 chars)
+  const explicitCompoundMatch = question.match(
+    /^(.*?)(?:,\s*|\s+)and\s+(what\s+(?:are|is|was|were)\b[\s\S]+)$/i
+  );
+  if (explicitCompoundMatch) {
+    const first = explicitCompoundMatch[1].trim();
+    const second = explicitCompoundMatch[2].trim();
+    if (isAnalyticalSegment(first) && isAnalyticalSegment(second)) {
+      return [first, second].map((p) => {
+        const trimmed = p.replace(/[.?!]+$/, "").trim();
+        return `${trimmed.charAt(0).toUpperCase()}${trimmed.slice(1)}?`;
+      });
+    }
+  }
+
+  // Try splitting on " and " but only when both halves have analytical keywords,
+  // the split occurs outside parentheses, and the RHS starts a new clause.
+  // This avoids bad splits like:
+  // "refund count and refunded revenue per month" -> two broken questions.
   if (question.length > 100) {
-    const andParts = question.split(/\band\b/i).map((p) => p.trim()).filter((p) => p.length > 15);
-    if (andParts.length === 2 && andParts.every((p) => analyticalKeywords.test(p))) {
+    const andParts = splitOnAndOutsideParentheses(question).map((p) => p.trim()).filter((p) => p.length > 15);
+    if (andParts.length === 2 && andParts.every((p) => isAnalyticalSegment(p))) {
+      const [, right] = andParts;
+      const rightStartsClause = /^(?:what|which|how|for|compare|comparison|show|list|rank|identify|find|analy[sz]e|break(?:\s+down)?|tell)\b/i.test(
+        right
+      );
+      if (!rightStartsClause) {
+        return [question];
+      }
       return andParts.map((p) => {
         const trimmed = p.replace(/[.?!]+$/, "").trim();
         return `${trimmed.charAt(0).toUpperCase()}${trimmed.slice(1)}?`;
@@ -3195,6 +3724,42 @@ function trySplitCompoundQuestion(question: string): string[] {
   }
 
   return [question];
+}
+
+function splitOnAndOutsideParentheses(value: string): string[] {
+  const lowered = value.toLowerCase();
+  let depth = 0;
+  const parts: string[] = [];
+  let lastIndex = 0;
+
+  for (let i = 0; i < value.length; i++) {
+    const char = value[i];
+    if (char === "(") {
+      depth += 1;
+      continue;
+    }
+    if (char === ")" && depth > 0) {
+      depth -= 1;
+      continue;
+    }
+
+    if (depth !== 0) {
+      continue;
+    }
+
+    if (lowered.startsWith(" and ", i)) {
+      parts.push(value.slice(lastIndex, i).trim());
+      lastIndex = i + 5;
+      i += 4;
+    }
+  }
+
+  if (parts.length === 0) {
+    return [value];
+  }
+
+  parts.push(value.slice(lastIndex).trim());
+  return parts.filter((part) => part.length > 0);
 }
 
 function renumberScopeQuestions(
@@ -3273,8 +3838,7 @@ function removeDuplicateScopeQuestions(
  * so the user can accept, modify, or ignore them.
  */
 function buildSuggestedScopeQuestions(
-  coreQuestions: ScopeQuestionEntry[],
-  state: ChatState
+  coreQuestions: ScopeQuestionEntry[]
 ): ScopeQuestionEntry[] {
   const suggestions: ScopeQuestionEntry[] = [];
   const coreText = coreQuestions.map((q) => q.question.toLowerCase()).join(" ");
@@ -3596,44 +4160,7 @@ function areScopeQuestionTextsSimilar(leftQuestion: string, rightQuestion: strin
 }
 
 function migratePendingMetricConfirmationsToScope(state: ChatState): void {
-  if (state.pending_metric_confirmations.length === 0) {
-    return;
-  }
-
-  const existingMetricKeys = new Set(
-    state.scope_questions
-      .map((entry) => entry.metric_key?.trim().toLowerCase())
-      .filter((value): value is string => Boolean(value))
-  );
-
-  const injected = state.pending_metric_confirmations
-    .filter((entry) => !existingMetricKeys.has(entry.metric_key.trim().toLowerCase()))
-    .map((entry, index) => ({
-      question_number: state.scope_questions.length + index + 1,
-      question: `${entry.display_name} calculation`,
-      clarification:
-        entry.confirmation_question?.trim() && entry.confirmation_question.trim().length > 0
-          ? `${entry.confirmation_question.trim()} Current interpretation: ${entry.definition}`
-          : `Please confirm how "${entry.display_name}" should be calculated. Current interpretation: ${entry.definition}`,
-      answer: null,
-      metric_key: entry.metric_key,
-      metric_display_name: entry.display_name,
-      metric_definition_draft: entry.definition,
-      metric_source_columns: [...entry.source_columns]
-    }));
-
-  if (injected.length > 0) {
-    state.scope_questions = renumberScopeQuestions(
-      removeDuplicateScopeQuestions([...state.scope_questions, ...injected]).map(
-        sanitizeScopeQuestionLanguage
-      )
-    );
-    state.scope_clarification_pending = true;
-    state.prep_pending = false;
-    state.scope_pending = false;
-    state.scope_finalized = false;
-  }
-
+  // Metric definitions are now saved directly — no confirmation scope injection needed.
   state.pending_metric_confirmations = [];
   state.pending_metric_resume_message = null;
   state.pending_metric_resume_mode = null;
@@ -3641,9 +4168,11 @@ function migratePendingMetricConfirmationsToScope(state: ChatState): void {
 
 function prioritizeMetricDefinitionsForWorkflow(
   definitions: ChatMetricDefinition[],
-  rawMessage: string,
-  mode: "single_query" | "deep_analysis"
+  _rawMessage: string,
+  _mode: "single_query" | "deep_analysis"
 ): ChatMetricDefinition[] {
+  void _rawMessage;
+  void _mode;
   const deduped: ChatMetricDefinition[] = [];
   const seen = new Set<string>();
 
@@ -3658,94 +4187,7 @@ function prioritizeMetricDefinitionsForWorkflow(
     deduped.push(definition);
   }
 
-  const autoConfirmed: ChatMetricDefinition[] = [];
-  const confirmationCandidates: ChatMetricDefinition[] = [];
-
-  for (const definition of deduped) {
-    if (shouldRequireMetricConfirmation(definition, rawMessage, mode)) {
-      confirmationCandidates.push({
-        ...definition,
-        requires_confirmation: true,
-        confirmed: false,
-        confirmation_question:
-          definition.confirmation_question && definition.confirmation_question.trim().length > 0
-            ? definition.confirmation_question
-            : `Please confirm how "${definition.display_name}" should be calculated.`
-      });
-      continue;
-    }
-
-    autoConfirmed.push({
-      ...definition,
-      requires_confirmation: false,
-      confirmation_question: null,
-      confirmed: true
-    });
-  }
-
-  confirmationCandidates.sort(
-    (left, right) =>
-      metricConfirmationPriority(right, rawMessage) - metricConfirmationPriority(left, rawMessage)
-  );
-
-  const pending = confirmationCandidates.slice(0, 3);
-  return [...autoConfirmed, ...pending];
-}
-
-function shouldRequireMetricConfirmation(
-  definition: ChatMetricDefinition,
-  rawMessage: string,
-  mode: "single_query" | "deep_analysis"
-): boolean {
-  if (!definition.requires_confirmation) {
-    return false;
-  }
-
-  if (definition.source_type === "column" && definition.source_columns.length > 0) {
-    return false;
-  }
-
-  const text = [
-    definition.display_name,
-    definition.metric_key,
-    definition.definition,
-    definition.confirmation_question ?? ""
-  ]
-    .join(" ")
-    .toLowerCase();
-
-  const ambiguousMetricPattern =
-    /\b(rate|ratio|percent|percentage|share|margin|conversion|churn|retention|utilization|coverage|efficiency|score|index|per\s+\w+|average|avg|arpu|ltv|cac|nps)\b/i;
-  if (!ambiguousMetricPattern.test(text)) {
-    return false;
-  }
-
-  const timeWindowTemplatePattern =
-    /\b(monthly|weekly|daily|recent|prior|previous|period|window|trend|comparison|compare|vs|delta|change)\b/i;
-  if (timeWindowTemplatePattern.test(text) && !/\b(rate|ratio|percent|percentage|margin|share)\b/i.test(text)) {
-    return false;
-  }
-
-  if (mode === "single_query" && !metricMentionedByUser(definition, rawMessage)) {
-    return false;
-  }
-
-  return true;
-}
-
-function metricConfirmationPriority(definition: ChatMetricDefinition, rawMessage: string): number {
-  let score = 0;
-  if (metricMentionedByUser(definition, rawMessage)) {
-    score += 4;
-  }
-  const text = `${definition.display_name} ${definition.definition}`.toLowerCase();
-  if (/\b(rate|ratio|percent|percentage|margin|share)\b/.test(text)) {
-    score += 3;
-  }
-  if (definition.source_columns.length === 0) {
-    score += 1;
-  }
-  return score;
+  return deduped;
 }
 
 function metricMentionedByUser(definition: ChatMetricDefinition, rawMessage: string): boolean {
@@ -3791,13 +4233,14 @@ function normalizeMetricDefinition(
     metric_key: string;
     display_name: string;
     definition: string;
-    source_type: "column" | "derived";
-    source_columns: string[];
-    requires_confirmation: boolean;
+    source_type?: string;
+    source_columns?: string[];
+    requires_confirmation?: boolean;
     confirmation_question?: string;
   },
-  context: "single_query" | "deep_analysis"
+  _context: "single_query" | "deep_analysis"
 ): ChatMetricDefinition | null {
+  void _context;
   const metricKey = sanitizeMetricKey(entry.metric_key || entry.display_name);
   const displayName = entry.display_name?.trim();
   const definition = entry.definition?.trim();
@@ -3805,24 +4248,10 @@ function normalizeMetricDefinition(
     return null;
   }
 
-  const sourceColumns = Array.from(
-    new Set(
-      (entry.source_columns ?? [])
-        .map((column) => column.trim())
-        .filter((column) => column.length > 0)
-    )
-  );
-
   return {
     metric_key: metricKey,
     display_name: displayName,
-    definition,
-    source_type: entry.source_type ?? "derived",
-    source_columns: sourceColumns,
-    requires_confirmation: Boolean(entry.requires_confirmation),
-    confirmation_question: entry.confirmation_question?.trim() || null,
-    confirmed: !entry.requires_confirmation,
-    context
+    definition
   };
 }
 
@@ -3838,15 +4267,12 @@ function sanitizeMetricKey(value: string): string {
 function hasConfirmedMetricDefinition(
   state: ChatState,
   metricKey: string,
-  definition: string
+  _definition: string
 ): boolean {
+  void _definition;
   const normalizedKey = metricKey.trim().toLowerCase();
-  const normalizedDefinition = definition.trim().toLowerCase();
   return state.metric_definitions.some(
-    (entry) =>
-      entry.confirmed &&
-      entry.metric_key.trim().toLowerCase() === normalizedKey &&
-      entry.definition.trim().toLowerCase() === normalizedDefinition
+    (entry) => entry.metric_key.trim().toLowerCase() === normalizedKey
   );
 }
 
@@ -3861,18 +4287,17 @@ function mergeConfirmedMetricDefinitions(
     );
     if (index === -1) {
       state.metric_definitions.push({
-        ...definition,
-        confirmed: true,
-        requires_confirmation: false
+        metric_key: definition.metric_key,
+        display_name: definition.display_name,
+        definition: definition.definition
       });
       continue;
     }
 
     state.metric_definitions[index] = {
-      ...state.metric_definitions[index]!,
-      ...definition,
-      confirmed: true,
-      requires_confirmation: false
+      metric_key: definition.metric_key,
+      display_name: definition.display_name,
+      definition: definition.definition
     };
   }
 }
@@ -4074,6 +4499,10 @@ function buildProposedDefaultForScopeQuestion(
   }
 ): string {
   const text = `${question.question} ${question.clarification}`.toLowerCase();
+  const matchedMetric = findSavedMetricDefinitionForText(
+    state.metric_definitions,
+    `${question.question} ${question.clarification}`
+  );
   const timezone = state.draft.timezone || "UTC";
   const todayLocal = getTodayDateStringInTimezone(timezone);
   const requestedMonths = getRequestedMonthWindowFromScope(state, text);
@@ -4097,9 +4526,13 @@ function buildProposedDefaultForScopeQuestion(
 
   if (/\b(refund|refunded|return|cancel)\b/.test(text) && /\b(rate|ratio|percentage|percent)\b/.test(text)) {
     const topN = /\btop\s+(\d{1,2})\b/.exec(text)?.[1] ?? "5";
+    const savedFormula =
+      matchedMetric && matchedMetric.definition.trim().length > 0
+        ? matchedMetric.definition.trim()
+        : "refunded_orders / total_orders";
     return [
       baseTimeline,
-      "Default refund-rate formula: refunded_orders / total_orders.",
+      `Default refund-rate formula: ${savedFormula}.`,
       `Rank top ${topN} cities/regions by refund rate unless you choose a value-based formula.`
     ].join(" ");
   }
@@ -4132,6 +4565,53 @@ function buildProposedDefaultForScopeQuestion(
   return `${baseTimeline}${contextHint}`.trim();
 }
 
+function collectMetricMatchPhrases(entry: {
+  metric_key: string;
+  display_name: string;
+  definition: string;
+}): string[] {
+  const normalize = (value: string): string =>
+    value
+      .toLowerCase()
+      .replace(/[_-]+/g, " ")
+      .replace(/[^a-z0-9\s]/g, " ")
+      .replace(/\s+/g, " ")
+      .trim();
+
+  const keyPhrase = normalize(entry.metric_key);
+  const displayPhrase = normalize(entry.display_name);
+  const phrases = new Set<string>();
+  if (keyPhrase.length > 0) {
+    phrases.add(keyPhrase);
+  }
+  if (displayPhrase.length > 0) {
+    phrases.add(displayPhrase);
+  }
+
+  if (/\brefund\b/.test(`${keyPhrase} ${displayPhrase}`) && /\brate\b/.test(`${keyPhrase} ${displayPhrase}`)) {
+    phrases.add("refund rate");
+    phrases.add("refund-rate");
+    phrases.add("refunded rate");
+  }
+
+  const definitionTokens = normalize(entry.definition)
+    .split(/\s+/)
+    .filter((token) => token.length >= 5);
+  if (definitionTokens.length > 0) {
+    phrases.add(definitionTokens.slice(0, 3).join(" "));
+  }
+
+  return Array.from(phrases).filter((phrase) => phrase.length > 0);
+}
+
+function findSavedMetricDefinitionForText(
+  metricDefinitions: Array<{ metric_key: string; display_name: string; definition: string }>,
+  text: string
+): { metric_key: string; display_name: string; definition: string } | null {
+  const matches = selectRelevantMetricDefinitionsForText(metricDefinitions, text, []);
+  return matches.length > 0 ? matches[0] : null;
+}
+
 function isCurrentMonthComplete(timezone: string): boolean {
   try {
     const now = new Date();
@@ -4141,8 +4621,6 @@ function isCurrentMonthComplete(timezone: string): boolean {
       month: "2-digit",
       day: "2-digit"
     }).formatToParts(now);
-    const year = Number(parts.find((p) => p.type === "year")?.value ?? "0");
-    const month = Number(parts.find((p) => p.type === "month")?.value ?? "0");
     const day = Number(parts.find((p) => p.type === "day")?.value ?? "0");
     // The previous month is always complete once we're in a new month (day >= 1).
     // "Current month complete" means: should we treat the trailing month as full?
@@ -4306,11 +4784,14 @@ async function applyScopeClarificationAnswersWithLlm(
     console.error("[scope-resolver] LLM call failed:", error instanceof Error ? error.message : error);
   }
 
+  // Always run semantic reconciliation pass so natural-language clarification replies
+  // still map correctly even when LLM assignments are sparse.
+  answeredCount += applySemanticScopeFallback(state, rawMessage, applyAssignment, {
+    skip_question_numbers: semanticSkipQuestionNumbers
+  });
+
   if (isTestRuntime()) {
     answeredCount += applyBestEffortScopeAssignments(state, rawMessage, applyAssignment);
-    answeredCount += applySemanticScopeFallback(state, rawMessage, applyAssignment, {
-      skip_question_numbers: semanticSkipQuestionNumbers
-    });
   }
 
   answeredCount += applySinglePendingScopeConfirmationFallback(
@@ -5022,13 +5503,7 @@ function applyMetricDefinitionAnswersFromScope(state: ChatState): void {
     definitions.push({
       metric_key: metricKey,
       display_name: displayName,
-      definition: resolvedDefinition,
-      source_type: "derived",
-      source_columns: [...entry.metric_source_columns],
-      requires_confirmation: false,
-      confirmation_question: null,
-      confirmed: true,
-      context: "deep_analysis"
+      definition: resolvedDefinition
     });
   }
 
@@ -5091,7 +5566,9 @@ async function executeLlmRoutedSingleQuery(
       compiled.note ? `${decision.reason} ${compiled.note}` : decision.reason,
       result.governed_sql || sql
     );
-    const warningLines = [...result.warnings, ...(compiled.note ? [compiled.note] : [])];
+    // Only surface critical warnings to the user — filter out informational notes
+    // like dialect compiler adaptations that are harmless implementation details.
+    const warningLines = filterUserVisibleWarnings(result.warnings);
     const warnings = warningLines.length > 0 ? `\nWarnings: ${warningLines.join("; ")}` : "";
     const naturalNarration = await maybeNarrateSingleQueryResponse({
       query_router: queryRouter,
@@ -5113,7 +5590,8 @@ async function executeLlmRoutedSingleQuery(
       governed_sql: result.governed_sql || sql,
       row_count: result.row_count,
       elapsed_ms: elapsedMs,
-      created_at: new Date().toISOString()
+      created_at: new Date().toISOString(),
+      sample_rows: (result.rows ?? []).slice(0, 10)
     };
     nextState.single_query_log = [...(nextState.single_query_log ?? []), logEntry].slice(-20);
 
@@ -5316,7 +5794,7 @@ function summarizeLlmRoutedQueryResult(
   }
 
   const preview = rows
-    .slice(0, 3)
+    .slice(0, 10)
     .map((row, index) => `${index + 1}. ${Object.entries(row)
       .slice(0, 4)
       .map(([key, value]) => `${key}=${formatUnknownValue(value)}`)
@@ -5376,22 +5854,54 @@ async function maybeNarrateSingleQueryResponse(input: {
       tables: [...sqlDetails.tables],
       joins: [...sqlDetails.joins],
       filters: [...sqlDetails.filters],
-      rows_preview: input.rows.slice(0, 3)
+      rows_preview: input.rows.slice(0, 20)
     });
 
+    // Only show critical warnings to the user — skip minor informational notes
+    const criticalWarnings = filterUserVisibleWarnings(input.warnings);
     const warningLine =
-      input.warnings.length > 0 ? `Warnings: ${input.warnings.join("; ")}` : null;
+      criticalWarnings.length > 0 ? `Warnings: ${criticalWarnings.join("; ")}` : null;
     return [
       `Query completed. Query ID: ${input.query_id}.`,
       narration.trim(),
-      warningLine,
-      `Elapsed: ${input.elapsed_ms}ms.`
+      warningLine
     ]
       .filter((line): line is string => Boolean(line && line.trim().length > 0))
       .join("\n");
   } catch {
     return null;
   }
+}
+
+/**
+ * Filter warnings to only include those relevant to the user.
+ * Suppress minor informational notes (dialect compiler adaptations, etc.)
+ * that are implementation details the user doesn't need to see.
+ */
+function looksLikeConfirmation(lower: string): boolean {
+  if (/\b(?:not|don't|do not|skip|cancel|hold|wait|no)\b/.test(lower)) {
+    return false;
+  }
+  return /\b(?:yes|yep|yeah|ok|okay|sure|go ahead|proceed|do it|run it|go for it|please|let's go)\b/.test(lower);
+}
+
+function looksLikeRejection(lower: string): boolean {
+  return /\b(?:no|nope|skip|cancel|never mind|forget it|don't|do not)\b/.test(lower);
+}
+
+function filterUserVisibleWarnings(warnings: string[]): string[] {
+  return warnings.filter((w) => {
+    const lower = w.toLowerCase();
+    // Suppress dialect compiler notes — harmless SQL compatibility tweaks
+    if (lower.includes("dialect compiler") || lower.includes("adapted sql for")) {
+      return false;
+    }
+    // Suppress compile/rewrite informational notes
+    if (lower.includes("rewritten for") || lower.includes("sql was adapted")) {
+      return false;
+    }
+    return true;
+  });
 }
 
 function summarizeSqlExecutionDetails(sql: string): {
@@ -5797,7 +6307,6 @@ async function buildPreparationConfirmation(state: ChatState, apiClient: WebApiC
   if (nextState.metric_definitions.length > 0) {
     void apiClient.saveUserSettings({
       metric_definitions: nextState.metric_definitions
-        .filter((m) => m.confirmed)
         .map((m) => ({ metric_key: m.metric_key, display_name: m.display_name, definition: m.definition })),
       business_context: nextState.scope_business_context ?? ""
     });
@@ -6097,8 +6606,13 @@ async function stageRefinementAsScopedQuestion(
   }));
   const dedupedAppended = removeDuplicateScopeQuestions(appended).map(sanitizeScopeQuestionLanguage);
   nextState.scope_questions = renumberScopeQuestions(
-    [...nextState.scope_questions, ...dedupedAppended].map(sanitizeScopeQuestionLanguage)
+    removeDuplicateScopeQuestions(
+      splitCompoundScopeQuestions(
+        [...nextState.scope_questions, ...dedupedAppended].map(sanitizeScopeQuestionLanguage)
+      )
+    )
   );
+  applySavedMetricDefinitionsToScopeQuestions(nextState);
   nextState.scope_source_prompt = [nextState.scope_source_prompt, followUpQuestion]
     .filter((entry): entry is string => Boolean(entry && entry.trim().length > 0))
     .join("\n");
@@ -6321,10 +6835,11 @@ async function executePreparation(state: ChatState, apiClient: WebApiClient): Pr
 
   return {
     assistant_message: [
-      "Data preparation completed with validation checks and correction trace.",
-      payloadLines.length > 0 ? payloadLines.join("\n\n") : "- No prepared payloads.",
+      "Data preparation is complete, and the analysis run is staged.",
       "",
-      "Analysis is staged and waiting on the current workflow decision."
+      payloadLines.length > 0 ? payloadLines.join("\n") : "- No prepared payloads.",
+      "",
+      "Ready to run analysis."
     ].join("\n"),
     state: nextState
   };
@@ -6477,68 +6992,7 @@ async function executeSchedule(
 
 function formatPreparedPayloadSummary(payload: PreparedPayloadRecord): string {
   const label = payload.question_number ? `Q${payload.question_number}` : "Question";
-  const lines: string[] = [
-    `- ${label}: ${payload.question}`
-  ];
-
-  if (payload.source_query_count && payload.source_query_count > 1) {
-    lines.push(`  Sources merged: ${payload.source_query_count} queries${payload.group_id ? ` (group: ${payload.group_id})` : ""}`);
-  }
-
-  const autoCorrections = collectAutoCorrections(payload.preparation_notes, payload.warnings);
-  if (autoCorrections.length > 0) {
-    lines.push(`  Auto-corrections: ${autoCorrections.join(" | ")}`);
-  }
-
-  const unresolvedWarnings = collectUnresolvedWarnings(payload.warnings);
-  if (unresolvedWarnings.length > 0) {
-    lines.push(`  Remaining hiccups: ${unresolvedWarnings.join(" | ")}`);
-  } else {
-    lines.push("  Remaining hiccups: none");
-  }
-
-  if (payload.validation) {
-    const expectedMonths = payload.validation.expected_months ?? null;
-    if (expectedMonths) {
-      const coveragePct = expectedMonths > 0
-        ? Math.round((payload.validation.observed_months / expectedMonths) * 100)
-        : 0;
-      const status = payload.validation.missing_months.length === 0 && payload.validation.observed_months >= expectedMonths
-        ? "PASS"
-        : "GAP";
-      const missing = payload.validation.missing_months.length > 0
-        ? ` | missing: ${payload.validation.missing_months.join(", ")}`
-        : "";
-      lines.push(
-        `  Validation timeline: ${status} (${payload.validation.observed_months}/${expectedMonths} months, ${coveragePct}%)${missing}`
-      );
-    } else if (payload.validation.observed_months > 0) {
-      lines.push(`  Validation timeline: ${payload.validation.observed_months} month(s) detected`);
-    } else {
-      lines.push("  Validation timeline: no valid month keys detected");
-    }
-
-    if (payload.validation.monthly_row_counts.length > 0) {
-      const monthlyRows = payload.validation.monthly_row_counts
-        .slice(-6)
-        .map((entry) => `${entry.month}=${entry.row_count}`)
-        .join(", ");
-      const coveredMonths = payload.validation.monthly_row_counts.filter((entry) => entry.row_count > 0).length;
-      lines.push(
-        `  Validation monthly rows: ${monthlyRows} (non-zero months: ${coveredMonths}/${payload.validation.monthly_row_counts.length})`
-      );
-    }
-
-    if (payload.validation.metric_column && payload.validation.monthly_metric_totals.length > 0) {
-      const monthly = payload.validation.monthly_metric_totals
-        .slice(-6)
-        .map((entry) => `${entry.month}=${entry.total}`)
-        .join(", ");
-      lines.push(`  MoM ${payload.validation.metric_column}: ${monthly}`);
-    }
-  }
-
-  return lines.join("\n");
+  return `- ${label}: ${payload.question}`;
 }
 
 function collectAutoCorrections(preparationNotes: string[], warnings: string[]): string[] {
@@ -6572,6 +7026,10 @@ function collectUnresolvedWarnings(warnings: string[]): string[] {
 
   return Array.from(new Set(unresolved)).slice(0, 4);
 }
+void metricMentionedByUser;
+void hasConfirmedMetricDefinition;
+void collectAutoCorrections;
+void collectUnresolvedWarnings;
 
 // ---------------------------------------------------------------------------
 // State context builder (for LLM when no action was taken)
@@ -6622,12 +7080,11 @@ function buildStateContext(state: ChatState): string {
 
   if (state.metric_definitions.length > 0) {
     const metrics = state.metric_definitions
-      .filter((entry) => entry.confirmed)
       .slice(0, 4)
       .map((entry) => `${entry.display_name}: ${entry.definition}`)
       .join(" | ");
     if (metrics.length > 0) {
-      parts.push(`Confirmed metric calculations: ${metrics}`);
+      parts.push(`Metric definitions: ${metrics}`);
     }
   }
 
@@ -7081,6 +7538,11 @@ async function buildSingleQueryClarificationPrompt(
   apiClient: WebApiClient,
   queryRouter: QueryRouterClient | undefined
 ): Promise<string | null> {
+  // For follow-ups on a previous single query, skip clarification — just execute.
+  if (state.last_single_query_snapshot && looksLikeSingleQueryFollowUp(rawMessage)) {
+    return null;
+  }
+
   const llmQuestions = await generateLlmScopeQuestions(
     rawMessage,
     state,
@@ -7097,6 +7559,11 @@ async function buildSingleQueryClarificationPrompt(
   }
 
   return buildSingleQueryClarificationPromptFallback(rawMessage, state);
+}
+
+function looksLikeSingleQueryFollowUp(rawMessage: string): boolean {
+  const lower = rawMessage.toLowerCase().trim();
+  return /^(split|break|group|filter|exclude|include|show|what about|by\s|can you split|can you break|and\s+(by|split|break|group|filter|exclude))/i.test(lower);
 }
 
 function buildSingleQueryClarificationPromptFallback(rawMessage: string, state: ChatState): string | null {
@@ -8568,15 +9035,10 @@ function buildContractPayload(state: ChatState): ReportContractRecord {
   const allowedRelations = draft.allowed_relations.length > 0 ? draft.allowed_relations : ["analytics.sales"];
   const allowedSchemas = draft.allowed_schemas.length > 0 ? draft.allowed_schemas : deriveSchemas(allowedRelations);
   const metricDefinitions = state.metric_definitions
-    .filter((entry) => entry.confirmed)
     .map((entry) => ({
       metric_key: entry.metric_key,
       display_name: entry.display_name,
-      definition: entry.definition,
-      filter_description: "",
-      filter_column: "",
-      filter_values: [] as string[],
-      status: "pending" as const
+      definition: entry.definition
     }));
 
   return ReportContractSchema.parse({

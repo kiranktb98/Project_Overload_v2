@@ -4,6 +4,7 @@ import {
   createPassthroughConversationClient,
   parseLlmResponse,
   validateDraftUpdates,
+  type ConversationOrchestratorInput,
   type ConversationTurnInput
 } from "../src/conversation";
 
@@ -44,6 +45,7 @@ const TURN_INPUT: ConversationTurnInput = {
     pending_query_sql: null,
     pending_query_limit: null,
     pending_single_query_request: null,
+    pending_followup_asks: [],
     last_single_query_snapshot: null,
     single_query_log: [],
     planner_summary: null,
@@ -142,6 +144,350 @@ describe("conversation client", () => {
         require_provider: true
       })
     ).toThrow("WEB_CHAT_REQUIRE_PROVIDER is true");
+  });
+
+  it("normalizes orchestrator JSON shape drift before strict schema parse", async () => {
+    const client = createConversationClient({
+      provider: "openrouter",
+      openrouter_api_key: "key",
+      fetch_impl: async () =>
+        new Response(
+          JSON.stringify({
+            choices: [
+              {
+                message: {
+                  content: JSON.stringify({
+                    decision: {
+                      intent_parts: [
+                        {
+                          type: "clarification",
+                          text: "Use Nov-Feb comparison",
+                          question_ref: null
+                        }
+                      ],
+                      resolved_scope_answers: [
+                        {
+                          question_number: "Q1",
+                          answer: "Nov 2025 to Feb 2026"
+                        }
+                      ],
+                      pending_inputs: [
+                        {
+                          input_key: "q2_window",
+                          prompt: "Confirm comparison periods"
+                        }
+                      ],
+                      next_owner: "WAIT_FOR_USER",
+                      state_updates: {
+                        mark_scope_complete: "false",
+                        summary: 42
+                      }
+                    }
+                  })
+                }
+              }
+            ]
+          }),
+          {
+            status: 200,
+            headers: { "content-type": "application/json" }
+          }
+        )
+    });
+
+    const input: ConversationOrchestratorInput = {
+      user_message: "Compare last 2 months vs prior 2 months",
+      state: TURN_INPUT.state,
+      history: []
+    };
+
+    const decision = await client.orchestrateTurn?.(input);
+    expect(decision).toBeDefined();
+    expect(decision?.next_owner).toBe("wait_for_user");
+    expect(decision?.intent_parts[0]?.type).toBe("other");
+    expect(decision?.intent_parts[0]?.question_ref).toBeUndefined();
+    expect(decision?.resolved_scope_answers[0]?.question_number).toBe(1);
+    expect(decision?.state_updates.summary).toBeNull();
+  });
+
+  it("includes only relevant metric definitions in orchestrator prompt", async () => {
+    const calls: Array<{ input: RequestInfo | URL; init?: RequestInit }> = [];
+    const client = createConversationClient({
+      provider: "openrouter",
+      openrouter_api_key: "key",
+      fetch_impl: async (input, init) => {
+        calls.push({ input, init });
+        return new Response(
+          JSON.stringify({
+            choices: [
+              {
+                message: {
+                  content: JSON.stringify({
+                    intent_parts: [{ type: "new_question", text: "refund trend analysis" }],
+                    resolved_scope_answers: [],
+                    new_scope_questions: [],
+                    follow_up_requests: [],
+                    pending_inputs: [],
+                    next_owner: "query_planning_agent",
+                    tool_calls: [],
+                    state_updates: {
+                      mark_scope_complete: false,
+                      append_new_questions: false,
+                      clear_pending_inputs: false,
+                      summary: "ok"
+                    }
+                  })
+                }
+              }
+            ]
+          }),
+          {
+            status: 200,
+            headers: { "content-type": "application/json" }
+          }
+        );
+      }
+    });
+
+    const stateWithMetrics = {
+      ...TURN_INPUT.state,
+      metric_definitions: [
+        {
+          metric_key: "refund_rate",
+          display_name: "Refund Rate",
+          definition: "refunded revenue / total revenue"
+        },
+        {
+          metric_key: "gross_margin",
+          display_name: "Gross Margin",
+          definition: "(revenue - cogs) / revenue"
+        }
+      ]
+    };
+
+    await client.orchestrateTurn?.({
+      user_message: "show refund rate by city for last 4 months",
+      state: stateWithMetrics,
+      history: []
+    });
+
+    const rawBody = typeof calls[0]?.init?.body === "string" ? calls[0].init.body : "{}";
+    expect(rawBody).toContain("RELEVANT_METRIC_DEFINITIONS_FROM_DB_FOR_THIS_USER");
+    expect(rawBody).toContain("refunded revenue / total revenue");
+    expect(rawBody).not.toContain("(revenue - cogs) / revenue");
+  });
+
+  it("injects retrieved context and keeps it scoped to last 20 turns", async () => {
+    const calls: Array<{ input: RequestInfo | URL; init?: RequestInit }> = [];
+    const client = createConversationClient({
+      provider: "openrouter",
+      openrouter_api_key: "key",
+      fetch_impl: async (input, init) => {
+        calls.push({ input, init });
+        return new Response(
+          JSON.stringify({
+            choices: [
+              {
+                message: {
+                  content: JSON.stringify({
+                    intent_parts: [{ type: "new_question", text: "refund city analysis" }],
+                    resolved_scope_answers: [],
+                    new_scope_questions: [],
+                    follow_up_requests: [],
+                    pending_inputs: [],
+                    next_owner: "query_planning_agent",
+                    tool_calls: [],
+                    state_updates: {
+                      mark_scope_complete: false,
+                      append_new_questions: false,
+                      clear_pending_inputs: false,
+                      summary: "ok"
+                    }
+                  })
+                }
+              }
+            ]
+          }),
+          {
+            status: 200,
+            headers: { "content-type": "application/json" }
+          }
+        );
+      }
+    });
+
+    const history = Array.from({ length: 25 }).map((_, index) => ({
+      role: (index % 2 === 0 ? "user" : "assistant") as "user" | "assistant",
+      content:
+        index === 0
+          ? "SHOULD_NOT_APPEAR_OLDEST_TURN"
+          : `turn-${index} refund city context`,
+      at: new Date(Date.UTC(2026, 1, 1, 0, index)).toISOString()
+    }));
+
+    const stateWithPrepared = {
+      ...TURN_INPUT.state,
+      scope_questions: [
+        {
+          question_number: 1,
+          question: "Which cities have the highest refund rate?",
+          clarification: "Use revenue-based refund rate.",
+          answer: "Top 5 cities",
+          metric_key: "refund_rate",
+          metric_display_name: "Refund Rate",
+          metric_definition_draft: "refunded revenue / total revenue",
+          metric_source_columns: ["total_revenue", "refunded_revenue"]
+        }
+      ],
+      prepared_payloads: [
+        {
+          question_id: "q1",
+          question_number: 1,
+          question: "Which cities have the highest refund rate?",
+          purpose: "city risk ranking",
+          group_id: "grp_q1",
+          source_query_count: 1,
+          row_count_before_reduction: 6,
+          prepared_row_count: 6,
+          validation: {
+            observed_months: 4,
+            missing_months: [],
+            monthly_row_counts: [
+              { month: "2025-11", row_count: 6 },
+              { month: "2025-12", row_count: 6 }
+            ],
+            monthly_metric_totals: [
+              { month: "2025-11", total: 10 },
+              { month: "2025-12", total: 12 }
+            ]
+          },
+          preparation_sqls: [],
+          sample_rows: [],
+          preparation_notes: ["refund rate by city prepared"],
+          warnings: []
+        }
+      ]
+    };
+
+    await client.orchestrateTurn?.({
+      user_message: "compare refund rate by city and explain top issue types",
+      state: stateWithPrepared,
+      history
+    });
+
+    const rawBody = typeof calls[0]?.init?.body === "string" ? calls[0].init.body : "{}";
+    expect(rawBody).toContain("RETRIEVED_CONTEXT_FOR_THIS_TURN");
+    expect(rawBody).toContain("Prepared payload Q1");
+    expect(rawBody).toContain("Scope Q1");
+    expect(rawBody).not.toContain("SHOULD_NOT_APPEAR_OLDEST_TURN");
+  });
+
+  it("uses OpenRouter embeddings + rerank in lv2 retrieval mode", async () => {
+    const calls: Array<{ input: RequestInfo | URL; init?: RequestInit }> = [];
+    const client = createConversationClient({
+      provider: "openrouter",
+      openrouter_api_key: "key",
+      rag_level: 2,
+      fetch_impl: async (input, init) => {
+        calls.push({ input, init });
+        const url = String(input);
+        const rawBody = typeof init?.body === "string" ? init.body : "{}";
+        if (url.endsWith("/embeddings")) {
+          const parsed = JSON.parse(rawBody) as { input?: string[] };
+          const count = Array.isArray(parsed.input) ? parsed.input.length : 0;
+          const data = Array.from({ length: count }).map((_, index) => ({
+            object: "embedding",
+            index,
+            embedding: [1, Math.max(0, 10 - index), 0.5 * index]
+          }));
+          return new Response(JSON.stringify({ data }), {
+            status: 200,
+            headers: { "content-type": "application/json" }
+          });
+        }
+        if (url.includes("/chat/completions") && rawBody.includes("retrieval reranker")) {
+          return new Response(
+            JSON.stringify({
+              choices: [
+                {
+                  message: {
+                    content: JSON.stringify({
+                      keep_labels: ["Scope Q1", "Current user request"]
+                    })
+                  }
+                }
+              ]
+            }),
+            {
+              status: 200,
+              headers: { "content-type": "application/json" }
+            }
+          );
+        }
+        return new Response(
+          JSON.stringify({
+            choices: [
+              {
+                message: {
+                  content: JSON.stringify({
+                    intent_parts: [{ type: "new_question", text: "refund trend" }],
+                    resolved_scope_answers: [],
+                    new_scope_questions: [],
+                    follow_up_requests: [],
+                    pending_inputs: [],
+                    next_owner: "query_planning_agent",
+                    tool_calls: [],
+                    state_updates: {
+                      mark_scope_complete: false,
+                      append_new_questions: false,
+                      clear_pending_inputs: false,
+                      summary: "ok"
+                    }
+                  })
+                }
+              }
+            ]
+          }),
+          {
+            status: 200,
+            headers: { "content-type": "application/json" }
+          }
+        );
+      }
+    });
+
+    await client.orchestrateTurn?.({
+      user_message: "show refund trend by city",
+      state: {
+        ...TURN_INPUT.state,
+        scope_questions: [
+          {
+            question_number: 1,
+            question: "Which cities have the highest refund rate?",
+            clarification: "Use revenue based rate",
+            answer: null,
+            metric_key: null,
+            metric_display_name: null,
+            metric_definition_draft: null,
+            metric_source_columns: []
+          }
+        ]
+      },
+      history: [
+        {
+          role: "user",
+          content: "Need city refund overview"
+        }
+      ]
+    });
+
+    expect(calls.some((entry) => String(entry.input).endsWith("/embeddings"))).toBe(true);
+    expect(
+      calls.some((entry) => {
+        const body = typeof entry.init?.body === "string" ? entry.init.body : "";
+        return String(entry.input).includes("/chat/completions") && body.includes("retrieval reranker");
+      })
+    ).toBe(true);
   });
 });
 
