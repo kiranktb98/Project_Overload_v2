@@ -874,6 +874,36 @@ function applyConversationOrchestratorDecision(
     next.scope_finalized = false;
   }
 
+  // Ensure at least one suggested question on first deep-analysis scope turn.
+  // This keeps the "smart add-on" behavior consistent even if the orchestrator
+  // skips suggestions in a particular response.
+  const hasSuggestedScopeQuestion = next.scope_questions.some((entry) =>
+    /^\s*\[suggested\]/i.test(entry.question)
+  );
+  if (
+    isDeepAnalysisRoute &&
+    !hadScopeQuestionsBefore &&
+    next.scope_questions.length > 0 &&
+    !hasSuggestedScopeQuestion
+  ) {
+    const coreQuestions = next.scope_questions.filter(
+      (entry) => !/^\s*\[suggested\]/i.test(entry.question)
+    );
+    const suggestedQuestions = buildSuggestedScopeQuestions(coreQuestions).slice(0, 2);
+    if (suggestedQuestions.length > 0) {
+      next.scope_questions = renumberScopeQuestions(
+        removeDuplicateScopeQuestions(
+          [...next.scope_questions, ...suggestedQuestions].map(sanitizeScopeQuestionLanguage)
+        )
+      );
+      applySavedMetricDefinitionsToScopeQuestions(next);
+      next.scope_clarification_pending = true;
+      next.scope_pending = false;
+      next.prep_pending = false;
+      next.scope_finalized = false;
+    }
+  }
+
   const shouldIgnoreResolvedAnswersForNewSessionQuestions =
     !hadScopeQuestionsBefore && (newQuestions.length > 0 || followUpQuestions.length > 0);
 
@@ -3481,21 +3511,9 @@ async function buildMetricScopeQuestions(input: {
     return [];
   }
 
-  // Metric definitions are now saved directly from config — no confirmation flow needed.
-  // Auto-merge any proposed metrics that don't already exist.
-  for (const entry of proposed) {
-    const key = entry.metric_key.trim().toLowerCase();
-    const exists = input.state.metric_definitions.some(
-      (m) => m.metric_key.trim().toLowerCase() === key
-    );
-    if (!exists) {
-      input.state.metric_definitions.push({
-        metric_key: entry.metric_key,
-        display_name: entry.display_name,
-        definition: entry.definition
-      });
-    }
-  }
+  // Global Config is the only source of truth for metric definitions.
+  // Chat flow must not persist or mutate metric definitions.
+  void proposed;
   return [];
 }
 void buildMetricScopeQuestions;
@@ -4276,32 +4294,6 @@ function hasConfirmedMetricDefinition(
   );
 }
 
-function mergeConfirmedMetricDefinitions(
-  state: ChatState,
-  definitions: ChatMetricDefinition[]
-): void {
-  for (const definition of definitions) {
-    const key = definition.metric_key.trim().toLowerCase();
-    const index = state.metric_definitions.findIndex(
-      (entry) => entry.metric_key.trim().toLowerCase() === key
-    );
-    if (index === -1) {
-      state.metric_definitions.push({
-        metric_key: definition.metric_key,
-        display_name: definition.display_name,
-        definition: definition.definition
-      });
-      continue;
-    }
-
-    state.metric_definitions[index] = {
-      metric_key: definition.metric_key,
-      display_name: definition.display_name,
-      definition: definition.definition
-    };
-  }
-}
-
 function formulateScopeQuestions(
   rawMessage: string
 ): Array<{ question: string; clarification: string }> {
@@ -4699,7 +4691,6 @@ async function applyScopeClarificationAnswersWithLlm(
         count++;
       }
     }
-    applyMetricDefinitionAnswersFromScope(state);
     return {
       answered_count: count,
       all_answered: state.scope_questions.every((entry) => Boolean(entry.answer && entry.answer.trim().length > 0))
@@ -4733,7 +4724,6 @@ async function applyScopeClarificationAnswersWithLlm(
     answeredCount += applySemanticScopeFallback(state, rawMessage, applyAssignment, {
       skip_question_numbers: semanticSkipQuestionNumbers
     });
-    applyMetricDefinitionAnswersFromScope(state);
     maybeAppendImpromptuScopeQuestionFromClarification(state, rawMessage);
     return {
       answered_count: answeredCount,
@@ -4801,7 +4791,6 @@ async function applyScopeClarificationAnswersWithLlm(
     explicitAssignments.length
   );
 
-  applyMetricDefinitionAnswersFromScope(state);
   maybeAppendImpromptuScopeQuestionFromClarification(state, rawMessage);
   return {
     answered_count: answeredCount,
@@ -5473,56 +5462,6 @@ function buildScopeClarificationPendingMessage(state: ChatState): string {
     pendingLines.join("\n"),
     "Just answer naturally — no need for numbered responses. You can also say 'confirm all' to accept all defaults."
   ].join("\n");
-}
-
-function applyMetricDefinitionAnswersFromScope(state: ChatState): void {
-  const metricAnswers = state.scope_questions.filter(
-    (entry) =>
-      Boolean(entry.metric_key && entry.metric_key.trim().length > 0) &&
-      Boolean(entry.answer && entry.answer.trim().length > 0)
-  );
-
-  if (metricAnswers.length === 0) {
-    return;
-  }
-
-  const definitions: ChatMetricDefinition[] = [];
-  for (const entry of metricAnswers) {
-    const metricKey = entry.metric_key?.trim();
-    const displayName = entry.metric_display_name?.trim();
-    if (!metricKey || !displayName) {
-      continue;
-    }
-    const resolvedDefinition = resolveMetricDefinitionFromScopeAnswer(
-      entry.answer ?? "",
-      entry.metric_definition_draft ?? ""
-    );
-    if (resolvedDefinition.length === 0) {
-      continue;
-    }
-    definitions.push({
-      metric_key: metricKey,
-      display_name: displayName,
-      definition: resolvedDefinition
-    });
-  }
-
-  if (definitions.length > 0) {
-    mergeConfirmedMetricDefinitions(state, definitions);
-  }
-}
-
-function resolveMetricDefinitionFromScopeAnswer(answer: string, draftDefinition: string): string {
-  const normalizedAnswer = normalizeScopeAnswer(answer);
-  if (normalizedAnswer.length === 0) {
-    return "";
-  }
-
-  if (/^(yes|y|approved|looks good|use draft|use that|go ahead|confirm)\b/i.test(normalizedAnswer)) {
-    return draftDefinition.trim();
-  }
-
-  return normalizedAnswer;
 }
 
 async function executeLlmRoutedSingleQuery(
@@ -6302,15 +6241,6 @@ async function buildPreparationConfirmation(state: ChatState, apiClient: WebApiC
   nextState.prep_pending = true;
   nextState.scope_pending = false;
   syncQuestionRegistryFromScope(nextState);
-
-  // Sync confirmed metric definitions + business context to user settings (fire-and-forget)
-  if (nextState.metric_definitions.length > 0) {
-    void apiClient.saveUserSettings({
-      metric_definitions: nextState.metric_definitions
-        .map((m) => ({ metric_key: m.metric_key, display_name: m.display_name, definition: m.definition })),
-      business_context: nextState.scope_business_context ?? ""
-    });
-  }
 
   const draft = nextState.draft;
   const tables = draft.allowed_relations.length > 0 ? draft.allowed_relations.join(", ") : "default tables";
