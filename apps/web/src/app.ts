@@ -256,6 +256,7 @@ export function buildWebApp(options: WebAppDependencies = {}) {
     const userSettings = await loadUserSettingsSafe(apiClient);
     const hydratedState = hydrateStateFromUserSettings(state, userSettings);
     const sessionId = typeof parsed.data.chat_session_id === "string" ? parsed.data.chat_session_id.trim() : "";
+    let failureStateSnapshot = hydratedState;
     const ragMemory = await loadRagMemorySafe(apiClient, {
       session_id: sessionId.length > 0 ? sessionId : null,
       query_text: parsed.data.message,
@@ -297,6 +298,7 @@ export function buildWebApp(options: WebAppDependencies = {}) {
         query_router: queryRouter,
         orchestrator_decision: orchestratorDecision
       });
+      failureStateSnapshot = normalizeWorkflowDecisionState(response.state);
 
       const catalogCtx = await fetchCatalogContext(apiClient);
       const businessContext =
@@ -315,6 +317,10 @@ export function buildWebApp(options: WebAppDependencies = {}) {
           retrieved_context: ragMemory
         });
       } catch (conversationError) {
+        if (isStrictLlmRenderedOutputEnabled()) {
+          failureStateSnapshot = normalizeWorkflowDecisionState(response.state);
+          throw new ChatStageError("conversation_response", conversationError);
+        }
         const normalizedState = normalizeWorkflowDecisionState(response.state);
         const parsedResponseState = parseChatState(normalizedState);
         const hasAuthoritativeExecutionOutcome =
@@ -338,11 +344,15 @@ export function buildWebApp(options: WebAppDependencies = {}) {
         throw new ChatStageError("conversation_response", conversationError);
       }
 
-      const aiMessage = enforceExecutionTruth(
-        conversationResponse.message,
-        response.assistant_message
-      );
-      let safeAiMessage = sanitizeCustomerFacingAssistantMessage(aiMessage);
+      const aiMessage = isStrictLlmRenderedOutputEnabled()
+        ? conversationResponse.message
+        : enforceExecutionTruth(
+            conversationResponse.message,
+            response.assistant_message
+          );
+      let safeAiMessage = isStrictLlmRenderedOutputEnabled()
+        ? conversationResponse.message
+        : sanitizeCustomerFacingAssistantMessage(aiMessage);
       let stateAfterLlm = response.state;
       if (conversationResponse.draft_updates) {
         stateAfterLlm = applyLlmDraftUpdates(response.state, conversationResponse.draft_updates, {
@@ -363,6 +373,7 @@ export function buildWebApp(options: WebAppDependencies = {}) {
       }
 
       const nextState = appendConversationTurn(stateAfterLlm, parsed.data.message, safeAiMessage);
+      failureStateSnapshot = nextState;
       void apiClient
         .indexRagTurn({
           session_id: sessionId.length > 0 ? sessionId : null,
@@ -410,7 +421,11 @@ export function buildWebApp(options: WebAppDependencies = {}) {
         },
         "Chat route failed; returning explicit stage failure."
       );
-      const nextState = appendConversationTurn(hydratedState, parsed.data.message, safeMessage);
+      const nextState = appendConversationTurn(
+        normalizeWorkflowDecisionState(failureStateSnapshot),
+        parsed.data.message,
+        safeMessage
+      );
       return reply.code(200).send({
         assistant_message: safeMessage,
         state: nextState
@@ -483,6 +498,24 @@ export function buildWebApp(options: WebAppDependencies = {}) {
     } catch (error) {
       return reply.code(400).send({
         message: error instanceof Error ? error.message : "Unable to fetch PDF"
+      });
+    }
+  });
+
+  app.get("/api/runs/:runId/html", async (request, reply) => {
+    const { runId } = request.params as { runId: string };
+
+    try {
+      const response = await apiClient.downloadRunHtml(runId);
+      const html = await response.text();
+
+      return reply
+        .code(200)
+        .header("content-type", response.headers.get("content-type") ?? "text/html; charset=utf-8")
+        .send(html);
+    } catch (error) {
+      return reply.code(400).send({
+        message: error instanceof Error ? error.message : "Unable to fetch HTML report"
       });
     }
   });
@@ -899,6 +932,8 @@ function enforceExecutionTruth(modelMessage: string, actionContext: string): str
 
 function syncDecisionStateFromAssistantMessage(state: unknown, assistantMessage: string) {
   const nextState = parseChatState(state);
+  pruneResolvedScopePendingInputs(nextState);
+  const lowerMessage = assistantMessage.toLowerCase();
 
   const hasAnsweredScope =
     nextState.scope_questions.length > 0 &&
@@ -908,13 +943,18 @@ function syncDecisionStateFromAssistantMessage(state: unknown, assistantMessage:
 
   const scopeLockSignal =
     /\ball\s+\w+\s+questions?\s+(?:are|is)\s+(?:fully\s+)?confirmed\b/.test(
-      assistantMessage.toLowerCase()
+      lowerMessage
     ) ||
-    /\bscope is locked\b/.test(assistantMessage.toLowerCase());
+    /\bscope is locked\b/.test(lowerMessage);
+
+  const hasInputRequestCue =
+    /\b(let me know|please confirm|confirm (?:the|which|whether)|should (?:we|i)|would you|do you want|reply with|still pending|need clarification|clarification needed|i still need|does that work|works for you|any tweaks)\b/.test(
+      lowerMessage
+    );
 
   const shouldAllowScopeLockSync =
     scopeLockSignal &&
-    !/\?/.test(assistantMessage);
+    !hasInputRequestCue;
 
   if (
     nextState.pending_query_sql ||
@@ -941,7 +981,7 @@ function syncDecisionStateFromAssistantMessage(state: unknown, assistantMessage:
     return nextState;
   }
 
-  const lower = assistantMessage.toLowerCase();
+  const lower = lowerMessage;
 
   // ── Prep-pending triggers (show "Run Data Preparation" button) ──
   const prepSignal =
@@ -957,10 +997,7 @@ function syncDecisionStateFromAssistantMessage(state: unknown, assistantMessage:
 
   // Guard: if the assistant is still asking for input, don't trigger prep.
   const isAskingQuestions =
-    /\?/.test(assistantMessage) ||
-    /\b(let me know|please confirm|confirm (?:the|which|whether)|should (?:we|i)|would you|do you want)\b/.test(
-      lower
-    );
+    hasInputRequestCue;
 
   const explicitScopeLockSignal =
     scopeLockSignal &&
@@ -1022,6 +1059,7 @@ function hasPendingWorkflowDecision(state: unknown): boolean {
 
 function normalizeWorkflowDecisionState(state: unknown) {
   const parsed = parseChatState(state);
+  pruneResolvedScopePendingInputs(parsed);
 
   const hasAnsweredScopeItems =
     parsed.scope_questions.length > 0 &&
@@ -1030,10 +1068,12 @@ function normalizeWorkflowDecisionState(state: unknown) {
   const hasUnansweredScopeItems = parsed.scope_questions.some(
     (entry) => !entry.answer || entry.answer.trim().length === 0
   );
+  const hasPendingScopeInputs = Array.isArray(parsed.pending_inputs) && parsed.pending_inputs.length > 0;
   const hasBlockingDecision =
     Boolean(parsed.pending_query_sql) ||
     parsed.pending_single_query_request !== null ||
     parsed.pending_metric_confirmations.length > 0 ||
+    hasPendingScopeInputs ||
     (parsed.scope_clarification_pending && hasUnansweredScopeItems) ||
     parsed.awaiting_post_run_refinement ||
     parsed.refinement_active ||
@@ -1053,12 +1093,12 @@ function normalizeWorkflowDecisionState(state: unknown) {
   const hasScopeQuestions = parsed.scope_questions.length > 0;
   const canPromoteToPrep =
     hasScopeQuestions
-      ? hasAnsweredScopeItems && !hasUnansweredScopeItems
+      ? hasAnsweredScopeItems && !hasUnansweredScopeItems && !hasPendingScopeInputs
       : hasScopeReadyContext;
 
   if (
     canPromoteToPrep &&
-    hasScopeReadyContext &&
+    (hasScopeReadyContext || parsed.scope_finalized) &&
     !hasBlockingDecision &&
     !parsed.prep_complete
   ) {
@@ -1086,6 +1126,27 @@ function normalizeWorkflowDecisionState(state: unknown) {
   }
 
   return parsed;
+}
+
+function pruneResolvedScopePendingInputs(
+  state: ReturnType<typeof parseChatState>
+): ReturnType<typeof parseChatState> {
+  if (!Array.isArray(state.pending_inputs) || state.pending_inputs.length === 0) {
+    return state;
+  }
+
+  state.pending_inputs = state.pending_inputs.filter((entry) => {
+    if (typeof entry.question_number !== "number") {
+      return true;
+    }
+    const target = state.scope_questions.find((question) => question.question_number === entry.question_number);
+    if (!target) {
+      return true;
+    }
+    return !target.answer || target.answer.trim().length === 0;
+  });
+
+  return state;
 }
 
 function hasScopeReadyContextInHistory(state: ReturnType<typeof parseChatState>): boolean {
@@ -1342,25 +1403,87 @@ function sanitizeCustomerFacingAssistantMessage(message: string): string {
 
 function ensureScopeQuestionsVisible(message: string, state: unknown): string {
   const parsed = parseChatState(state);
-  if (!parsed.scope_clarification_pending || parsed.scope_questions.length === 0) {
+  if (parsed.scope_questions.length === 0) {
     return message;
   }
 
+  const inScopeFlow = parsed.scope_clarification_pending || parsed.scope_finalized;
+  if (!inScopeFlow) {
+    return message;
+  }
+
+  const hasMergedScopeLine = /\bQ\d+\s*(?:\+|\/|&)\s*Q\d+\b/i.test(message);
+
   const hasQuestionList =
     /(^|\n)\s*[-*]\s*Q\d+\s*:/i.test(message) || /(^|\n)\s*Q\d+\s*:/i.test(message);
-  if (hasQuestionList) {
+
+  const messageQuestionNumbers = new Set<number>();
+  const qNumberPattern = /\bQ(\d+)\b/gi;
+  let qMatch: RegExpExecArray | null = qNumberPattern.exec(message);
+  while (qMatch) {
+    const parsedNumber = Number.parseInt(qMatch[1] ?? "", 10);
+    if (Number.isFinite(parsedNumber) && parsedNumber > 0) {
+      messageQuestionNumbers.add(parsedNumber);
+    }
+    qMatch = qNumberPattern.exec(message);
+  }
+
+  const hasAllScopedQuestionNumbers =
+    parsed.scope_questions.length > 0 &&
+    parsed.scope_questions.every((entry) => messageQuestionNumbers.has(entry.question_number));
+
+  if (hasQuestionList && hasAllScopedQuestionNumbers && !hasMergedScopeLine) {
     return message;
   }
 
   const questionLines = parsed.scope_questions
     .map((entry) => `- Q${entry.question_number}: ${entry.question}`)
     .join("\n");
+  const pendingClarifications = parsed.scope_questions.filter(
+    (entry) => !entry.answer || entry.answer.trim().length === 0
+  );
+  const shouldShowPendingClarifications =
+    parsed.scope_clarification_pending &&
+    pendingClarifications.length > 0 &&
+    !/clarification needed:/i.test(message);
+  const pendingClarificationLines = shouldShowPendingClarifications
+    ? pendingClarifications
+        .map((entry) => {
+          const clarificationText =
+            entry.clarification && entry.clarification.trim().length > 0
+              ? entry.clarification
+              : "Please confirm the final scope details for this question.";
+          return `- Q${entry.question_number}: ${clarificationText}`;
+        })
+        .join("\n")
+    : null;
 
   if (questionLines.trim().length === 0) {
     return message;
   }
 
-  return ["Questions in scope:", questionLines, "", message].join("\n");
+  // Keep model-authored narrative intact below the canonical scoped-question list.
+  // Merged labels like Q4+Q5 are allowed in clarification narrative, but never as the
+  // canonical planned-question list at the top (which is always one row per Qn).
+  const sanitizedMessage = sanitizeMergedScopeLabelsInNarrative(message);
+
+  const questionHeader = parsed.scope_finalized
+    ? "Questions in scope (locked):"
+    : "Questions in scope:";
+  return [
+    questionHeader,
+    questionLines,
+    pendingClarificationLines ? "\nPending clarifications:" : null,
+    pendingClarificationLines,
+    "",
+    sanitizedMessage
+  ]
+    .filter((line): line is string => typeof line === "string" && line.length > 0)
+    .join("\n");
+}
+
+function sanitizeMergedScopeLabelsInNarrative(message: string): string {
+  return message.replace(/\bQ(\d+)\s*(?:\+|\/|&)\s*Q(\d+)\b/gi, "Q$1 and Q$2");
 }
 
 function isConversationOrchestratorEnabled(): boolean {
@@ -1368,5 +1491,7 @@ function isConversationOrchestratorEnabled(): boolean {
   return raw !== "false" && raw !== "0" && raw !== "off";
 }
 
-
-
+function isStrictLlmRenderedOutputEnabled(): boolean {
+  const raw = (process.env.WEB_CHAT_STRICT_LLM_RENDER ?? "true").trim().toLowerCase();
+  return raw !== "false" && raw !== "0" && raw !== "off";
+}

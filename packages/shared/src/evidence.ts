@@ -58,7 +58,7 @@ export const PlannedQuerySchema = z.object({
 });
 
 export const QueryStrategyOutputSchema = z.object({
-  queries: z.array(PlannedQuerySchema).min(1).max(5)
+  queries: z.array(PlannedQuerySchema).min(1).max(25)
 });
 
 export const AnalystAdditionalQueryRequestSchema = z.object({
@@ -141,7 +141,7 @@ export const RecommendedApproachSchema = z.object({
 });
 
 export const PlannerOutputSchema = z.object({
-  data_discoveries: z.array(DataDiscoverySchema).min(1).max(20),
+  data_discoveries: z.array(DataDiscoverySchema).min(1).max(25),
   recommended_approaches: z.array(RecommendedApproachSchema).min(1).max(5),
   data_warnings: z.array(z.string().min(1)).default([]),
   plan_summary: z.string().min(1)

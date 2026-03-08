@@ -53,6 +53,8 @@ const ANALYST_ROW_CAP = 200; // Max rows sent to analyst per call; batch if exce
 const MERGED_QUERY_PLANNING_ENABLED = isMergedQueryPlanningEnabled();
 const DEFAULT_PREPARATION_TIMEOUT_MS = 900_000;
 const MAX_PREPARATION_TIMEOUT_MS = 3_600_000;
+const MAX_QUERY_BLOCKS_PER_QUESTION = 3;
+const MAX_TOTAL_PLANNED_QUERIES = 25;
 
 type CatalogModel = {
   table_columns: Map<string, Set<string>>;
@@ -367,12 +369,15 @@ export async function prepareReportContractData(input: {
     : toMergedQueryPlanOutputFromLegacy(await input.query_strategist.planQueries(strategyInput));
   collectClientUsage(input.query_strategist, tokenUsage);
   const strategyFromMerged = mergedQueryPlanToLegacyStrategy(mergedPlan);
-  const strategy = await ensureScopedQuestionCoverage({
+  const strategyWithCoverage = await ensureScopedQuestionCoverage({
     strategy: strategyFromMerged,
     scope_clarifications: scopeClarifications,
     strategy_input: strategyInput,
     query_strategist: input.query_strategist
   });
+  const strategy: QueryStrategyOutput = {
+    queries: compactPlannedQueries(strategyWithCoverage.queries)
+  };
   collectClientUsage(input.query_strategist, tokenUsage);
   console.log("[data-prep] strategist returned %d queries, groups: %s",
     strategy.queries.length,
@@ -682,6 +687,7 @@ export async function runReportContractPipeline(input: {
   if (kpiResults.length > 0) {
     html = injectKpiResultsIntoHtml(html, kpiResults);
   }
+  html = stabilizeReportHtmlLayout(html);
 
   const analysisPayloads: AnalysisPayload[] = scoredAnalyses.map((item) => ({
     question_id: item.question_id,
@@ -1043,7 +1049,7 @@ async function ensureScopedQuestionCoverage(input: {
         ? mergedQueryPlanToLegacyStrategy(await input.query_strategist.planMergedQueries(scopedInput))
         : await input.query_strategist.planQueries(scopedInput);
       const additions = supplement.queries
-        .slice(0, 3)
+        .slice(0, MAX_QUERY_BLOCKS_PER_QUESTION)
         .map((query) => ({
           ...query,
           group_id: query.group_id && query.group_id.trim().length > 0
@@ -1078,17 +1084,28 @@ function detectCoveredScopeQuestions(
 ): Set<number> {
   const covered = new Set<number>();
   const byNumber = new Map(scopeClarifications.map((item) => [item.question_number, item]));
+  let hasExplicitScopedGroupCoverage = false;
 
   for (const query of queries) {
     const groupMatch = query.group_id?.match(/scope[_-]?q?(\d+)/i);
     if (groupMatch) {
+      hasExplicitScopedGroupCoverage = true;
       const number = Number.parseInt(groupMatch[1] ?? "", 10);
       if (Number.isFinite(number) && byNumber.has(number)) {
         covered.add(number);
         continue;
       }
     }
+  }
 
+  // When scoped group IDs are present, trust explicit scope mapping and avoid
+  // token-based cross-coverage that can wrongly merge distinct questions
+  // (for example ticket volume vs top issue types).
+  if (hasExplicitScopedGroupCoverage) {
+    return covered;
+  }
+
+  for (const query of queries) {
     const queryTokens = new Set(tokenize(`${query.question} ${query.purpose}`));
     for (const scopeItem of scopeClarifications) {
       if (covered.has(scopeItem.question_number)) {
@@ -1112,6 +1129,28 @@ function detectCoveredScopeQuestions(
   }
 
   return covered;
+}
+
+function normalizeScopedGroupId(rawGroupId: string | undefined, questionNumber: number): string {
+  const cleaned = (rawGroupId ?? "")
+    .trim()
+    .toLowerCase()
+    .replace(/[^a-z0-9_]+/g, "_")
+    .replace(/^_+|_+$/g, "");
+
+  if (cleaned.length === 0) {
+    return `scope_q${questionNumber}`;
+  }
+
+  const scopedMatch = cleaned.match(/scope[_-]?q?(\d+)/i);
+  if (scopedMatch) {
+    const scopedNumber = Number.parseInt(scopedMatch[1] ?? "", 10);
+    if (Number.isFinite(scopedNumber) && scopedNumber === questionNumber) {
+      return cleaned;
+    }
+  }
+
+  return `scope_q${questionNumber}_${cleaned}`;
 }
 
 function toMergedQueryPlanOutputFromLegacy(strategy: QueryStrategyOutput): {
@@ -1174,12 +1213,13 @@ function mergedQueryPlanToLegacyStrategy(input: {
   );
 
   for (const question of orderedQuestions) {
-    for (const block of question.query_blocks) {
+    const normalizedGroupId = normalizeScopedGroupId(question.group_id, question.question_number);
+    for (const block of question.query_blocks.slice(0, MAX_QUERY_BLOCKS_PER_QUESTION)) {
       queries.push({
         question: question.question_text,
         purpose: block.purpose,
         sql: block.sql,
-        group_id: question.group_id
+        group_id: normalizedGroupId
       });
     }
   }
@@ -1187,6 +1227,37 @@ function mergedQueryPlanToLegacyStrategy(input: {
   return {
     queries
   };
+}
+
+function compactPlannedQueries(queries: QueryStrategyOutput["queries"]): QueryStrategyOutput["queries"] {
+  const grouped = groupPlannedQueries(queries).map((group) => ({
+    group_id: group.group_id,
+    queries: group.queries.slice(0, MAX_QUERY_BLOCKS_PER_QUESTION)
+  }));
+
+  const flattened = grouped.flatMap((group) => group.queries);
+  if (flattened.length <= MAX_TOTAL_PLANNED_QUERIES) {
+    return flattened;
+  }
+
+  const essentials: QueryStrategyOutput["queries"] = [];
+  const extras: QueryStrategyOutput["queries"] = [];
+
+  for (const group of grouped) {
+    if (group.queries.length === 0) {
+      continue;
+    }
+    essentials.push(group.queries[0]!);
+    if (group.queries.length > 1) {
+      extras.push(...group.queries.slice(1));
+    }
+  }
+
+  if (essentials.length >= MAX_TOTAL_PLANNED_QUERIES) {
+    return essentials.slice(0, MAX_TOTAL_PLANNED_QUERIES);
+  }
+
+  return [...essentials, ...extras.slice(0, MAX_TOTAL_PLANNED_QUERIES - essentials.length)];
 }
 
 function groupPlannedQueries(queries: QueryStrategyOutput["queries"]): Array<{
@@ -4000,6 +4071,38 @@ function injectKpiResultsIntoHtml(html: string, kpiResults: KpiCheckResult[]): s
     return html.replace("</body>", `${section}\n</body>`);
   }
   return section + html;
+}
+
+function stabilizeReportHtmlLayout(html: string): string {
+  if (!html || /id=["']project-overload-layout-fixes["']/i.test(html)) {
+    return html;
+  }
+
+  const css = [
+    "<style id=\"project-overload-layout-fixes\">",
+    "  * { box-sizing: border-box; }",
+    "  html, body { max-width: 100%; overflow-x: hidden; }",
+    "  main, section, article, div { max-width: 100%; }",
+    "  table { width: 100% !important; max-width: 100% !important; border-collapse: collapse; }",
+    "  .table-wrap, [class*='table'], [id*='table'] { max-width: 100%; overflow-x: auto; }",
+    "  th, td { white-space: normal !important; overflow-wrap: anywhere; word-break: break-word; vertical-align: top; }",
+    "  pre, code { white-space: pre-wrap; overflow-wrap: anywhere; word-break: break-word; }",
+    "  svg { max-width: 100% !important; height: auto !important; overflow: visible; }",
+    "  img, canvas { max-width: 100% !important; height: auto !important; }",
+    "  [class*='chart'], [id*='chart'], figure { max-width: 100% !important; overflow-x: auto; }",
+    "  text { text-overflow: clip; }",
+    "</style>"
+  ].join("\n");
+
+  if (/<\/head>/i.test(html)) {
+    return html.replace(/<\/head>/i, `${css}\n</head>`);
+  }
+
+  if (/<body[^>]*>/i.test(html)) {
+    return html.replace(/<body[^>]*>/i, (match) => `${match}\n${css}`);
+  }
+
+  return `${css}\n${html}`;
 }
 
 function normalizeSignal(value: string): string {

@@ -352,6 +352,257 @@ describe("run pipeline", () => {
     expect(analyst.calls.every((c) => c.row_count <= 200)).toBe(true);
   });
 
+  it("caps merged query planning fanout to avoid oversized discovery batches", async () => {
+    const mergedStrategist: QueryStrategistClient = {
+      provider: "stub",
+      async planQueries() {
+        return { queries: [] };
+      },
+      async planMergedQueries() {
+        const makeBlocks = (prefix: string) =>
+          Array.from({ length: 6 }, (_, idx) => ({
+            sql: `SELECT ${idx + 1} AS metric FROM public.sales`,
+            purpose: `${prefix} block ${idx + 1}`,
+            expected_rows: 120,
+            joins_used: [],
+            filters_used: []
+          }));
+
+        return {
+          questions: [
+            {
+              question_id: "q1",
+              question_number: 1,
+              question_text: "Q1",
+              clarifications_used: [],
+              group_id: "q1_group",
+              query_blocks: makeBlocks("q1"),
+              expected_output_columns: ["metric"],
+              success_criteria: ["non-empty"]
+            },
+            {
+              question_id: "q2",
+              question_number: 2,
+              question_text: "Q2",
+              clarifications_used: [],
+              group_id: "q2_group",
+              query_blocks: makeBlocks("q2"),
+              expected_output_columns: ["metric"],
+              success_criteria: ["non-empty"]
+            },
+            {
+              question_id: "q3",
+              question_number: 3,
+              question_text: "Q3",
+              clarifications_used: [],
+              group_id: "q3_group",
+              query_blocks: makeBlocks("q3"),
+              expected_output_columns: ["metric"],
+              success_criteria: ["non-empty"]
+            },
+            {
+              question_id: "q4",
+              question_number: 4,
+              question_text: "Q4",
+              clarifications_used: [],
+              group_id: "q4_group",
+              query_blocks: makeBlocks("q4"),
+              expected_output_columns: ["metric"],
+              success_criteria: ["non-empty"]
+            },
+            {
+              question_id: "q5",
+              question_number: 5,
+              question_text: "Q5",
+              clarifications_used: [],
+              group_id: "q5_group",
+              query_blocks: makeBlocks("q5"),
+              expected_output_columns: ["metric"],
+              success_criteria: ["non-empty"]
+            }
+          ]
+        };
+      }
+    };
+
+    const result = await runReportContractPipeline({
+      contract: makeContract({
+        scope_clarifications: [
+          {
+            question_number: 1,
+            question: "Q1",
+            answer: "a1"
+          },
+          {
+            question_number: 2,
+            question: "Q2",
+            answer: "a2"
+          },
+          {
+            question_number: 3,
+            question: "Q3",
+            answer: "a3"
+          },
+          {
+            question_number: 4,
+            question: "Q4",
+            answer: "a4"
+          },
+          {
+            question_number: 5,
+            question: "Q5",
+            answer: "a5"
+          }
+        ]
+      }),
+      store: new InMemoryMetadataStore(),
+      data_plane: new LocalStubDataPlane({ row_provider: () => makeRows(140) }),
+      analyst_client: createStubAnalystClient(),
+      query_strategist: mergedStrategist,
+      report_composer: createStubReportComposerClient(),
+      planner_client: createStubPlannerClient(),
+      catalog_summary: "public.sales [TABLE]: id, amount, event_time"
+    });
+
+    const strategyQueries = (result.run.query_plan as { strategy_queries: Array<{ question_number: number }> }).strategy_queries;
+
+    expect(strategyQueries.length).toBeLessThanOrEqual(25);
+    const byQuestion = new Map<number, number>();
+    for (const query of strategyQueries) {
+      const current = byQuestion.get(query.question_number) ?? 0;
+      byQuestion.set(query.question_number, current + 1);
+    }
+    expect(Array.from(byQuestion.values()).every((count) => count <= 3)).toBe(true);
+  });
+
+  it("keeps scoped questions separate even when merged planner reuses the same group_id", async () => {
+    const mergedStrategist: QueryStrategistClient = {
+      provider: "stub",
+      async planQueries() {
+        return { queries: [] };
+      },
+      async planMergedQueries() {
+        return {
+          questions: [
+            {
+              question_id: "q1",
+              question_number: 1,
+              question_text: "Q1 refund trend",
+              clarifications_used: [],
+              group_id: "trend_group",
+              query_blocks: [
+                {
+                  sql: "SELECT event_time, amount FROM public.sales LIMIT 200",
+                  purpose: "Q1 trend",
+                  expected_rows: 120,
+                  joins_used: [],
+                  filters_used: []
+                }
+              ],
+              expected_output_columns: ["event_time", "amount"],
+              success_criteria: ["non-empty"]
+            },
+            {
+              question_id: "q2",
+              question_number: 2,
+              question_text: "Q2 comparison",
+              clarifications_used: [],
+              group_id: "comparison_group",
+              query_blocks: [
+                {
+                  sql: "SELECT event_time, amount FROM public.sales LIMIT 200",
+                  purpose: "Q2 comparison",
+                  expected_rows: 120,
+                  joins_used: [],
+                  filters_used: []
+                }
+              ],
+              expected_output_columns: ["event_time", "amount"],
+              success_criteria: ["non-empty"]
+            },
+            {
+              question_id: "q3",
+              question_number: 3,
+              question_text: "Q3 city refund rate",
+              clarifications_used: [],
+              group_id: "city_group",
+              query_blocks: [
+                {
+                  sql: "SELECT region, amount FROM public.sales LIMIT 200",
+                  purpose: "Q3 city",
+                  expected_rows: 120,
+                  joins_used: [],
+                  filters_used: []
+                }
+              ],
+              expected_output_columns: ["region", "amount"],
+              success_criteria: ["non-empty"]
+            },
+            {
+              question_id: "q4",
+              question_number: 4,
+              question_text: "Q4 support ticket count",
+              clarifications_used: [],
+              group_id: "support_shared",
+              query_blocks: [
+                {
+                  sql: "SELECT id, amount FROM public.sales LIMIT 200",
+                  purpose: "Q4 support count",
+                  expected_rows: 120,
+                  joins_used: [],
+                  filters_used: []
+                }
+              ],
+              expected_output_columns: ["id", "amount"],
+              success_criteria: ["non-empty"]
+            },
+            {
+              question_id: "q5",
+              question_number: 5,
+              question_text: "Q5 top issue types",
+              clarifications_used: [],
+              group_id: "support_shared",
+              query_blocks: [
+                {
+                  sql: "SELECT id, amount FROM public.sales LIMIT 200",
+                  purpose: "Q5 top issues",
+                  expected_rows: 120,
+                  joins_used: [],
+                  filters_used: []
+                }
+              ],
+              expected_output_columns: ["id", "amount"],
+              success_criteria: ["non-empty"]
+            }
+          ]
+        };
+      }
+    };
+
+    const result = await runReportContractPipeline({
+      contract: makeContract({
+        scope_clarifications: [
+          { question_number: 1, question: "Q1 refund trend", answer: "a1" },
+          { question_number: 2, question: "Q2 comparison", answer: "a2" },
+          { question_number: 3, question: "Q3 city refund rate", answer: "a3" },
+          { question_number: 4, question: "Q4 support ticket count", answer: "a4" },
+          { question_number: 5, question: "Q5 top issue types", answer: "a5" }
+        ]
+      }),
+      store: new InMemoryMetadataStore(),
+      data_plane: new LocalStubDataPlane({ row_provider: () => makeRows(80) }),
+      analyst_client: createStubAnalystClient(),
+      query_strategist: mergedStrategist,
+      report_composer: createStubReportComposerClient(),
+      planner_client: createStubPlannerClient(),
+      catalog_summary: "public.sales [TABLE]: id, amount, event_time"
+    });
+
+    const preparedNumbers = result.prepared_payloads.map((payload) => payload.question_number).sort((a, b) => a - b);
+    expect(preparedNumbers).toContain(4);
+    expect(preparedNumbers).toContain(5);
+  });
+
   it("flags timeline gaps for requested month comparisons before analysis", async () => {
     const analyst = spyAnalyst();
     const strategist = fixedStrategist([

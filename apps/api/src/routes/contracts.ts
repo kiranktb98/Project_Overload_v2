@@ -557,7 +557,7 @@ export function registerContractRoutes(
         html,
         extractMetricDefinitionsFromQueryPlan(run.query_plan)
       );
-      const customerFacingHtml = stripConfidenceFromCustomerHtml(htmlWithMetrics);
+      const customerFacingHtml = stabilizeReportHtmlLayout(stripConfidenceFromCustomerHtml(htmlWithMetrics));
       try {
         const pdf = await renderPdfWithRetry(customerFacingHtml, 2);
 
@@ -587,6 +587,37 @@ export function registerContractRoutes(
       }
     } catch (error) {
       const message = error instanceof Error ? error.message : "PDF generation failed";
+      return reply.code(500).send({ message });
+    }
+  });
+
+  app.get("/report-runs/:runId/html", async (request, reply) => {
+    const context = resolveRequestContext(request);
+    const { runId } = request.params as { runId: string };
+    const run = await store.getReportRunById(runId, context);
+
+    if (!run) {
+      return reply.code(404).send({ message: "Report run not found" });
+    }
+
+    try {
+      const html =
+        typeof run.report_html === "string" && run.report_html.length > 0
+          ? run.report_html
+          : renderExecBriefHtml(ExecBriefSchema.parse(run.exec_brief));
+
+      const htmlWithMetrics = injectMetricDefinitionsIntoHtml(
+        html,
+        extractMetricDefinitionsFromQueryPlan(run.query_plan)
+      );
+      const customerFacingHtml = stabilizeReportHtmlLayout(stripConfidenceFromCustomerHtml(htmlWithMetrics));
+
+      return reply
+        .code(200)
+        .header("content-type", "text/html; charset=utf-8")
+        .send(customerFacingHtml);
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "HTML render failed";
       return reply.code(500).send({ message });
     }
   });
@@ -677,6 +708,38 @@ function stripConfidenceFromCustomerHtml(html: string): string {
     .replace(/<li[^>]*>\s*Confidence\s*:[^<]*<\/li>/gi, "")
     .replace(/<strong[^>]*>\s*Confidence\s*:?\s*<\/strong>/gi, "")
     .replace(/\bConfidence\s*:\s*\d+(?:\.\d+)?%?/gi, "");
+}
+
+function stabilizeReportHtmlLayout(html: string): string {
+  if (!html || /id=["']project-overload-layout-fixes["']/i.test(html)) {
+    return html;
+  }
+
+  const css = [
+    "<style id=\"project-overload-layout-fixes\">",
+    "  * { box-sizing: border-box; }",
+    "  html, body { max-width: 100%; overflow-x: hidden; }",
+    "  main, section, article, div { max-width: 100%; }",
+    "  table { width: 100% !important; max-width: 100% !important; border-collapse: collapse; }",
+    "  .table-wrap, [class*='table'], [id*='table'] { max-width: 100%; overflow-x: auto; }",
+    "  th, td { white-space: normal !important; overflow-wrap: anywhere; word-break: break-word; vertical-align: top; }",
+    "  pre, code { white-space: pre-wrap; overflow-wrap: anywhere; word-break: break-word; }",
+    "  svg { max-width: 100% !important; height: auto !important; overflow: visible; }",
+    "  img, canvas { max-width: 100% !important; height: auto !important; }",
+    "  [class*='chart'], [id*='chart'], figure { max-width: 100% !important; overflow-x: auto; }",
+    "  text { text-overflow: clip; }",
+    "</style>"
+  ].join("\n");
+
+  if (/<\/head>/i.test(html)) {
+    return html.replace(/<\/head>/i, `${css}\n</head>`);
+  }
+
+  if (/<body[^>]*>/i.test(html)) {
+    return html.replace(/<body[^>]*>/i, (match) => `${match}\n${css}`);
+  }
+
+  return `${css}\n${html}`;
 }
 
 async function renderPdfWithRetry(html: string, retries: number) {
