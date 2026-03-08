@@ -685,6 +685,31 @@ export function renderChatPage(): string {
         overflow: hidden;
       }
 
+      .exec-brief-actions {
+        margin-top: 8px;
+        display: flex;
+        flex-wrap: wrap;
+        gap: 10px;
+      }
+
+      .exec-brief-actions a {
+        display: inline-flex;
+        align-items: center;
+        padding: 5px 10px;
+        border-radius: 10px;
+        border: 1px solid rgba(93, 143, 232, 0.35);
+        background: rgba(14, 27, 63, 0.65);
+        color: #b9d2ff;
+        font-size: 0.75rem;
+        text-decoration: none;
+      }
+
+      .exec-brief-actions a:hover {
+        border-color: rgba(120, 171, 255, 0.65);
+        color: #dce9ff;
+        background: rgba(26, 51, 106, 0.7);
+      }
+
       .exec-brief-embed h1 {
         font-size: 1.05rem;
         margin: 0 0 6px;
@@ -2036,24 +2061,88 @@ export function renderChatPage(): string {
             };
           }
 
-          if (typeof state.pending_query_sql === "string" && state.pending_query_sql.trim().length > 0) {
-            return {
-              kind: "query",
-              title: "SQL decision pending.",
+	          if (typeof state.pending_query_sql === "string" && state.pending_query_sql.trim().length > 0) {
+	            return {
+	              kind: "query",
+	              title: "SQL decision pending.",
               lockPlaceholder: "Workflow locked while this decision is pending.",
               options: [
                 { label: "Run query", command: "__ui_run_query__" },
                 { label: "Other instruction", command: "__ui_query_other_instruction__" }
               ]
-            };
-          }
+	            };
+	          }
 
-          if (state.scope_clarification_pending === true && state.scope_finalized !== true) {
-            return null;
-          }
+	          const lastAssistantMessage =
+	            Array.isArray(state.conversation_history)
+	              ? [...state.conversation_history]
+	                  .reverse()
+	                  .find(function (turn) {
+	                    return turn && turn.role === "assistant" && typeof turn.content === "string";
+	                  })?.content || ""
+	              : "";
+	          const lastAssistantLower = String(lastAssistantMessage).toLowerCase();
+	          const hasScopeQuestions =
+	            Array.isArray(state.scope_questions) && state.scope_questions.length > 0;
+	          const hasUnansweredScopeItems =
+	            hasScopeQuestions &&
+	            state.scope_questions.some(function (entry) {
+	              return !entry || typeof entry.answer !== "string" || entry.answer.trim().length === 0;
+	            });
+	          const hasPendingScopeInputs =
+	            Array.isArray(state.pending_inputs) && state.pending_inputs.length > 0;
+	          const hasScopeLockSignal =
+	            lastAssistantLower.includes("scope is locked") ||
+	            /\bready to (?:move to|kick off) data prep(?:aration)?\b/.test(lastAssistantLower) ||
+	            /\bready to prepare data\b/.test(lastAssistantLower);
+	          const hasPendingScopeCue = [
+	            "pending clarifications",
+	            "still pending",
+	            "need clarification",
+	            "clarification needed",
+	            "clarification status",
+	            "reply with only the pending answers",
+	            "i still need clarification",
+	            "before data preparation, please confirm",
+	            "proposed default (not applied)",
+	            "does that work",
+	            "any tweaks"
+	          ].some(function (cue) {
+	            return lastAssistantLower.includes(cue);
+	          });
+
+	          if (
+	            hasScopeLockSignal &&
+	            hasScopeQuestions &&
+	            !hasPendingScopeCue &&
+	            !hasUnansweredScopeItems &&
+	            !hasPendingScopeInputs &&
+	            state.scope_clarification_pending !== true &&
+	            state.prep_complete !== true &&
+	            !state.pending_run_id
+	          ) {
+	            return {
+	              kind: "prep",
+	              title: "Data preparation decision pending.",
+	              lockPlaceholder: "Workflow locked while this decision is pending.",
+	              options: [
+	                { label: "Run Data Preparation", command: "__ui_run_data_preparation__" },
+	                { label: "Continue scoping", command: "__ui_continue_scoping__" }
+	              ]
+	            };
+	          }
+
+	          if (state.scope_clarification_pending === true && state.scope_finalized !== true) {
+	            return null;
+	          }
 
           if (state.prep_pending === true) {
-            if (state.scope_finalized !== true || state.scope_clarification_pending === true) {
+            if (
+              state.scope_finalized !== true ||
+              state.scope_clarification_pending === true ||
+              hasUnansweredScopeItems ||
+              hasPendingScopeInputs
+            ) {
               return null;
             }
             return {
@@ -2068,7 +2157,12 @@ export function renderChatPage(): string {
           }
 
           if (state.scope_pending === true) {
-            if (state.scope_finalized !== true || state.scope_clarification_pending === true) {
+            if (
+              state.scope_finalized !== true ||
+              state.scope_clarification_pending === true ||
+              hasUnansweredScopeItems ||
+              hasPendingScopeInputs
+            ) {
               return null;
             }
             return {
@@ -2087,7 +2181,9 @@ export function renderChatPage(): string {
             state.scope_finalized === true &&
             state.prep_complete !== true &&
             state.prep_pending !== true &&
-            state.scope_clarification_pending !== true
+            state.scope_clarification_pending !== true &&
+            !hasUnansweredScopeItems &&
+            !hasPendingScopeInputs
           ) {
             return {
               kind: "prep",
@@ -2194,20 +2290,12 @@ export function renderChatPage(): string {
           }
         }
 
-        function buildRunCompleteMessage(execBrief, runId) {
-          if (!execBrief) { return "Report executed. Run ID: " + runId + "."; }
-          const lines = ["Report executed. Run ID: " + runId + "."];
-          if (Array.isArray(execBrief.what_changed) && execBrief.what_changed.length > 0) {
-            lines.push("\\n**What changed:** " + execBrief.what_changed.slice(0, 3).join(" · "));
+                function buildRunCompleteMessage(runId, elapsedMs) {
+          const safeElapsed = Number.isFinite(elapsedMs) && elapsedMs >= 0 ? Math.round(elapsedMs) : null;
+          if (safeElapsed === null) {
+            return "HTML report is ready. Run ID: " + runId + ".";
           }
-          if (Array.isArray(execBrief.so_what) && execBrief.so_what.length > 0) {
-            lines.push("**So what:** " + execBrief.so_what.slice(0, 2).join(" · "));
-          }
-          if (Array.isArray(execBrief.what_to_do) && execBrief.what_to_do.length > 0) {
-            lines.push("**Actions:** " + execBrief.what_to_do.slice(0, 2).join(" · "));
-          }
-          lines.push("\\nBefore PDF, choose one path: ask follow-up refinement questions (max 2), generate PDF now, or start a new conversation.");
-          return lines.join("\\n");
+          return "HTML report is ready. Elapsed: " + safeElapsed + "ms.";
         }
 
         function startRunPolling(runId) {
@@ -2283,7 +2371,7 @@ export function renderChatPage(): string {
                   });
                   setActiveChatState(stateRef.value);
                   refreshDecisionFromState(stateRef.value);
-                  var msg = buildRunCompleteMessage(s.exec_brief, runId);
+                  var msg = buildRunCompleteMessage(runId, Date.now() - startedAt);
                   appendMessage("assistant", msg,
                     s.pdf_path ? "/api/runs/" + runId + "/pdf" : null,
                     s.exec_brief_html || null,
@@ -2355,17 +2443,44 @@ export function renderChatPage(): string {
             const frame = document.createElement("iframe");
             frame.setAttribute("srcdoc", entry.exec_brief_html);
             frame.setAttribute("sandbox", "allow-same-origin");
-            frame.style.cssText = "display:block;width:100%;border:none;min-height:200px;height:500px;";
+            frame.style.cssText = "display:block;width:100%;border:none;min-height:320px;height:720px;";
             frame.addEventListener("load", function () {
               try {
                 const h = frame.contentDocument?.documentElement?.scrollHeight;
                 if (h && h > 50) {
-                  frame.style.height = Math.min(h + 24, 620) + "px";
+                  frame.style.height = Math.min(h + 24, 1200) + "px";
                 }
               } catch {}
             });
             briefContainer.appendChild(frame);
             bubble.appendChild(briefContainer);
+
+            const runIdFromPdf = typeof entry.download_url === "string"
+              ? ((entry.download_url.match(/\\/api\\/runs\\/([^/]+)\\/pdf/i) || [])[1] || null)
+              : null;
+            const htmlUrl = runIdFromPdf ? ("/api/runs/" + encodeURIComponent(runIdFromPdf) + "/html") : null;
+
+            const actions = document.createElement("div");
+            actions.className = "exec-brief-actions";
+            if (htmlUrl) {
+              const openLink = document.createElement("a");
+              openLink.href = htmlUrl;
+              openLink.textContent = "Open report in new tab";
+              openLink.target = "_blank";
+              openLink.rel = "noopener noreferrer";
+              actions.appendChild(openLink);
+            }
+            if (typeof entry.download_url === "string" && entry.download_url.length > 0) {
+              const pdfLink = document.createElement("a");
+              pdfLink.href = entry.download_url;
+              pdfLink.textContent = "Download PDF";
+              pdfLink.target = "_blank";
+              pdfLink.rel = "noopener noreferrer";
+              actions.appendChild(pdfLink);
+            }
+            if (actions.childElementCount > 0) {
+              bubble.appendChild(actions);
+            }
           }
 
           if (entry.role === "assistant" && Array.isArray(entry.prepared_payloads) && entry.prepared_payloads.length > 0) {
@@ -2388,13 +2503,16 @@ export function renderChatPage(): string {
           }
 
           if (entry.role === "assistant" && typeof entry.download_url === "string" && entry.download_url.length > 0) {
-            const link = document.createElement("a");
-            link.href = entry.download_url;
-            link.textContent = "Download PDF";
-            link.target = "_blank";
-            link.rel = "noopener noreferrer";
-            bubble.appendChild(document.createElement("br"));
-            bubble.appendChild(link);
+            const hasEmbeddedHtml = typeof entry.exec_brief_html === "string" && entry.exec_brief_html.length > 0;
+            if (!hasEmbeddedHtml) {
+              const link = document.createElement("a");
+              link.href = entry.download_url;
+              link.textContent = "Download PDF";
+              link.target = "_blank";
+              link.rel = "noopener noreferrer";
+              bubble.appendChild(document.createElement("br"));
+              bubble.appendChild(link);
+            }
           }
 
           messagesEl.appendChild(bubble);
@@ -3250,4 +3368,5 @@ export function renderChatPage(): string {
   </body>
 </html>`;
 }
+
 

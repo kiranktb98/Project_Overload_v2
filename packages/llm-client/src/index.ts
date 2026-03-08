@@ -551,16 +551,26 @@ export function createQueryStrategistClientFromEnv(
     throw new Error("LLM_PROVIDER=stub is disabled in runtime for query strategist.");
   }
 
+  const preferredModel =
+    overrides.openrouterModel ??
+    process.env.QUERY_STRATEGIST_MODEL ??
+    process.env.DATA_PREPARATION_MODEL ??
+    process.env.MODEL_GPT ??
+    "anthropic/claude-opus-4.6";
+
   const options = resolveClientOptions({
     ...overrides,
-    openrouterModel:
-      overrides.openrouterModel ??
-      process.env.QUERY_STRATEGIST_MODEL ??
-      process.env.DATA_PREPARATION_MODEL ??
-      process.env.MODEL_GPT ??
-      "openai/gpt-5.2"
+    openrouterModel: resolveQueryPlannerModel(preferredModel)
   });
   return createQueryStrategistClient(options);
+}
+
+function resolveQueryPlannerModel(candidate: string | undefined): string {
+  const normalized = (candidate ?? "").trim();
+  if (normalized.length === 0) {
+    return "anthropic/claude-opus-4.6";
+  }
+  return normalized;
 }
 
 export function createQueryStrategistClient(options: CreateAnalystClientOptions): QueryStrategistClient {
@@ -967,6 +977,8 @@ function mergedQueryPlannerSystemPrompt(input: QueryStrategyInput): string {
     "Hard rules:",
     "- Every question must have its own group_id.",
     "- query_blocks must contain at least one SELECT-only SQL statement.",
+    "- Default to exactly 1 query_block per question. Use 2 only when absolutely necessary.",
+    "- Never exceed 2 query_blocks per question.",
     "- Use only allowlisted tables and schemas from input.",
     "- Do not merge multiple user questions into one question entry.",
     "- Keep SQL aggregation-first and bounded with LIMIT <= 200."
@@ -1176,7 +1188,7 @@ export function createPlannerClientFromEnv(
       process.env.DATA_PREPARATION_MODEL ??
       process.env.QUERY_STRATEGIST_MODEL ??
       process.env.MODEL_GPT ??
-      "anthropic/claude-sonnet-4-6"
+      "anthropic/claude-opus-4.6"
   });
   return createPlannerClient(options);
 }
@@ -1452,7 +1464,8 @@ export function createReportComposerClientFromEnv(
     openrouterModel:
       overrides.openrouterModel ??
       process.env.REPORT_COMPOSER_MODEL ??
-      process.env.MODEL_GPT
+      process.env.MODEL_GPT ??
+      "anthropic/claude-opus-4.6"
   });
   return createReportComposerClient(options);
 }

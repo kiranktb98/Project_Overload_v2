@@ -184,7 +184,7 @@ type CreateQueryRouterClientOptions = {
 };
 
 const DEFAULT_TIMEOUT_MS = 900_000;
-const DEFAULT_OPENROUTER_MODEL = "openai/gpt-5.2";
+const DEFAULT_OPENROUTER_MODEL = "anthropic/claude-opus-4.6";
 const DEFAULT_OPENROUTER_BASE_URL = "https://openrouter.ai/api/v1";
 
 const QueryRoutingDecisionSchema = z
@@ -287,6 +287,13 @@ export function createQueryRouterClientFromEnv(
     10
   );
 
+  const selectedModel = resolveQueryAgentModel(
+    overrides.openrouter_model ??
+      process.env.SINGLE_QUERY_MODEL ??
+      process.env.MODEL_GPT ??
+      DEFAULT_OPENROUTER_MODEL
+  );
+
   const options: CreateQueryRouterClientOptions = {
     provider,
     enabled,
@@ -294,16 +301,20 @@ export function createQueryRouterClientFromEnv(
     openrouter_base_url: overrides.openrouter_base_url ?? process.env.OPENROUTER_BASE_URL,
     openrouter_app_name: overrides.openrouter_app_name ?? process.env.OPENROUTER_APP_NAME,
     openrouter_app_url: overrides.openrouter_app_url ?? process.env.OPENROUTER_APP_URL,
-    openrouter_model:
-      overrides.openrouter_model ??
-      process.env.SINGLE_QUERY_MODEL ??
-      process.env.MODEL_GPT ??
-      DEFAULT_OPENROUTER_MODEL,
+    openrouter_model: selectedModel,
     timeout_ms: overrides.timeout_ms ?? (Number.isNaN(timeoutFromEnv) ? undefined : timeoutFromEnv),
     fetch_impl: overrides.fetch_impl
   };
 
   return createQueryRouterClient(options);
+}
+
+function resolveQueryAgentModel(candidate: string | undefined): string {
+  const normalized = (candidate ?? "").trim();
+  if (normalized.length === 0) {
+    return DEFAULT_OPENROUTER_MODEL;
+  }
+  return normalized;
 }
 
 export function createQueryRouterClient(options: CreateQueryRouterClientOptions): QueryRouterClient {
@@ -930,6 +941,7 @@ function scopeClarificationSystemPrompt(mode: ScopeClarificationInput["mode"]): 
     "- BAD: 'What are the top cities?' — too vague, no metric or timeframe.",
     "- GOOD: 'Which cities have the highest refund rate (using the saved refund-rate formula) over the past 4 months?'",
     "- NEVER generate two questions that cover the same analytical ask. If one question is a more specific version of another, keep ONLY the specific one.",
+    "- NEVER merge labels or asks into one item (for example Q4+Q5 or Q3/Q4). Emit one atomic question per item.",
     "- Each question should reference actual table names, column names, or metric names from the CATALOG_SUMMARY when available.",
     "- Use the BUSINESS_CONTEXT to inform what metrics and dimensions are relevant.",
     "- If a metric appears in CONFIRMED_METRIC_DEFINITIONS, you MUST use that exact formula and MUST NOT substitute your own.",

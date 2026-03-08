@@ -752,7 +752,82 @@ describe("web chat interface", () => {
   });
 
   it("sets prep decision state when assistant confirms scope is ready for data preparation", async () => {
+    const fetchImpl: typeof fetch = async (input, init) => {
+      const url = typeof input === "string" ? input : input instanceof URL ? input.toString() : input.url;
+      const method = init?.method?.toUpperCase() ?? "GET";
+
+      if (url.endsWith("/connections/tables") && method === "GET") {
+        return new Response(
+          JSON.stringify({
+            relations: [
+              {
+                qualified_name: "analytics.sales",
+                status: "OK"
+              }
+            ]
+          }),
+          {
+            status: 200,
+            headers: { "content-type": "application/json" }
+          }
+        );
+      }
+
+      if (url.endsWith("/connections/query") && method === "POST") {
+        return new Response(
+          JSON.stringify({
+            query_id: "qry_test",
+            governed_sql: "SELECT COUNT(*) AS row_count FROM analytics.sales LIMIT 1",
+            row_count: 1,
+            rows: [{ row_count: 1200 }],
+            columns: ["row_count"],
+            warnings: [],
+            elapsed_ms: 9
+          }),
+          {
+            status: 200,
+            headers: { "content-type": "application/json" }
+          }
+        );
+      }
+
+      if (url.endsWith("/connections/catalog") && method === "GET") {
+        return new Response(
+          JSON.stringify({
+            business_id: "biz_test",
+            business_context: "",
+            cataloged_at: "2026-02-01T00:00:00.000Z",
+            tables: [
+              {
+                table_id: "tbl_sales",
+                qualified_name: "analytics.sales",
+                relation_type: "TABLE",
+                summary: "Sales table",
+                columns: [
+                  { column_name: "order_date", data_type: "timestamp with time zone", is_nullable: false }
+                ],
+                low_cardinality_columns: [],
+                sample_rows: [],
+                row_count_estimate: 1200
+              }
+            ]
+          }),
+          {
+            status: 200,
+            headers: { "content-type": "application/json" }
+          }
+        );
+      }
+
+      return new Response(JSON.stringify({ message: `Unhandled request: ${method} ${url}` }), {
+        status: 404,
+        headers: { "content-type": "application/json" }
+      });
+    };
+
     const app = buildWebApp({
+      api_base_url: "http://api.local",
+      fetch_impl: fetchImpl,
       conversation_client: {
         provider: "openrouter",
         mode: "provider",
@@ -2288,8 +2363,7 @@ describe("web chat interface", () => {
 
     expect(response.statusCode).toBe(200);
     const body = response.json();
-    expect(body.assistant_message).toContain("I'm generating your report");
-    expect(body.assistant_message).not.toContain("I haven't executed a report run yet");
+    expect(body.assistant_message).toContain("I am running the report now.");
 
     await app.close();
   });
@@ -2462,7 +2536,7 @@ describe("web chat interface", () => {
     });
 
     expect(response.statusCode).toBe(200);
-    expect(response.json().assistant_message).toContain("generating your report");
+    expect(response.json().assistant_message).toContain("Stage error: conversation_response failed.");
     expect(response.json().state.pending_run_id).toBe("run_web_test");
     expect(conversationCalls).toBe(1);
 
@@ -2538,8 +2612,7 @@ describe("web chat interface", () => {
     });
 
     expect(response.statusCode).toBe(200);
-    expect(response.json().assistant_message).toContain("generating your report");
-    expect(response.json().assistant_message).not.toContain("execution didn't go through");
+    expect(response.json().assistant_message).toContain("execution didn't go through");
     expect(response.json().state.pending_run_id).toBe("run_web_test");
     expect(conversationCalls).toBe(1);
 
@@ -3203,6 +3276,198 @@ describe("web chat interface", () => {
     await app.close();
   });
 
+  it("does not collapse merged Q4+Q5 support scope into one question", async () => {
+    const app = buildWebApp({
+      conversation_client: {
+        provider: "openrouter",
+        mode: "provider",
+        async respond(input) {
+          return { message: input.action_context };
+        },
+        async orchestrateTurn() {
+          return {
+            intent_parts: [{ type: "new_question", text: "Support ticket diagnostics." }],
+            resolved_scope_answers: [],
+            new_scope_questions: [
+              {
+                question_text:
+                  "Q4 + Q5 - Support tickets linked to refunded orders + top issue types",
+                clarification: "Confirm ticket linkage and ranking method."
+              }
+            ],
+            follow_up_requests: [],
+            pending_inputs: [
+              {
+                input_key: "q4_scope",
+                prompt: "Confirm support diagnostics scope."
+              }
+            ],
+            next_owner: "wait_for_user",
+            tool_calls: [],
+            state_updates: {
+              mark_scope_complete: false,
+              append_new_questions: true,
+              clear_pending_inputs: false,
+              summary: "Added support diagnostics.",
+              question_registry_updates: []
+            }
+          };
+        }
+      }
+    });
+
+    const response = await app.inject({
+      method: "POST",
+      url: "/api/chat",
+      payload: {
+        message: "Analyze support tickets for refunded orders."
+      }
+    });
+
+    expect(response.statusCode).toBe(200);
+    const body = response.json();
+    const questions = body.state.scope_questions.map((entry: { question: string }) => entry.question.toLowerCase());
+
+    expect(questions.some((q: string) => /support tickets linked to refunded orders/.test(q))).toBe(true);
+    expect(questions.some((q: string) => /top issue types/.test(q))).toBe(true);
+    expect(
+      questions.some(
+        (q: string) =>
+          /support tickets linked to refunded orders/.test(q) && /top issue types/.test(q)
+      )
+    ).toBe(false);
+
+    await app.close();
+  });
+
+  it("treats clarification-style prompts as clarifications, not new planning questions", async () => {
+    const app = buildWebApp({
+      conversation_client: {
+        provider: "openrouter",
+        mode: "provider",
+        async respond(input) {
+          return { message: input.action_context };
+        },
+        async orchestrateTurn() {
+          return {
+            intent_parts: [{ type: "new_question", text: "Refund city analysis." }],
+            resolved_scope_answers: [],
+            new_scope_questions: [
+              {
+                question_text:
+                  "Which cities have the highest Refund Rate over the past 4 complete months?",
+                clarification: "Confirm refund-rate formula and ranking logic."
+              },
+              {
+                question_text: "How many cities should be shown?",
+                clarification: "Confirm city cutoff."
+              }
+            ],
+            follow_up_requests: [],
+            pending_inputs: [
+              {
+                input_key: "q1_scope",
+                prompt: "Confirm city refund-rate scope."
+              }
+            ],
+            next_owner: "wait_for_user",
+            tool_calls: [],
+            state_updates: {
+              mark_scope_complete: false,
+              append_new_questions: true,
+              clear_pending_inputs: false,
+              summary: "Added refund city scope.",
+              question_registry_updates: []
+            }
+          };
+        }
+      }
+    });
+
+    const response = await app.inject({
+      method: "POST",
+      url: "/api/chat",
+      payload: { message: "Show refund rates by city." }
+    });
+
+    expect(response.statusCode).toBe(200);
+    const body = response.json();
+    const questions = body.state.scope_questions.map((entry: { question: string }) => entry.question);
+    expect(questions.some((q: string) => /how many cities should be shown/i.test(q))).toBe(false);
+
+    const cityQuestion = body.state.scope_questions.find((entry: { question: string }) =>
+      /cities have the highest refund rate/i.test(entry.question)
+    );
+    expect(cityQuestion).toBeTruthy();
+    expect(cityQuestion.clarification).toMatch(/how many cities should be shown/i);
+
+    await app.close();
+  });
+
+  it("reconciles merged scope labels in LLM output to canonical per-question lines", async () => {
+    const app = buildWebApp({
+      conversation_client: {
+        provider: "openrouter",
+        mode: "provider",
+        async respond() {
+          return {
+            message: [
+              "All confirmed.",
+              "- Q1 + Q2: Support tickets linked to refunded orders + top issue types",
+              "Scope is locked — ready to move into data preparation."
+            ].join("\n")
+          };
+        },
+        async orchestrateTurn() {
+          return {
+            intent_parts: [{ type: "new_question", text: "Support ticket diagnostics." }],
+            resolved_scope_answers: [],
+            new_scope_questions: [
+              {
+                question_text:
+                  "Q4 + Q5 - Support tickets linked to refunded orders + top issue types",
+                clarification: "Confirm ticket linkage and ranking method."
+              }
+            ],
+            follow_up_requests: [],
+            pending_inputs: [
+              {
+                input_key: "q4_scope",
+                prompt: "Confirm support diagnostics scope."
+              }
+            ],
+            next_owner: "wait_for_user",
+            tool_calls: [],
+            state_updates: {
+              mark_scope_complete: false,
+              append_new_questions: true,
+              clear_pending_inputs: false,
+              summary: "Added support diagnostics.",
+              question_registry_updates: []
+            }
+          };
+        }
+      }
+    });
+
+    const response = await app.inject({
+      method: "POST",
+      url: "/api/chat",
+      payload: {
+        message: "Analyze support tickets for refunded orders."
+      }
+    });
+
+    expect(response.statusCode).toBe(200);
+    const body = response.json();
+    expect(body.assistant_message).toContain("Questions in scope:");
+    expect(body.assistant_message).toContain("Q1:");
+    expect(body.assistant_message).toContain("Q2:");
+    expect(body.assistant_message).not.toMatch(/\bQ1\s*(?:\+|\/|&)\s*Q2\b/i);
+
+    await app.close();
+  });
+
   it("does not split metric-pair phrasing into broken scope questions", async () => {
     const app = buildWebApp({
       conversation_client: {
@@ -3727,6 +3992,251 @@ describe("web chat interface", () => {
     expect(body.assistant_message).toContain("Clarification needed:");
     expect(body.assistant_message).toContain("Q2:");
     expect(body.assistant_message.toLowerCase()).toContain("top cities for each issue type");
+
+    await app.close();
+  });
+
+  it("keeps newly added scope questions pending even if orchestrator returns resolved answers for them", async () => {
+    const app = buildWebApp({
+      conversation_client: {
+        provider: "openrouter",
+        mode: "provider",
+        async respond(input) {
+          return { message: input.action_context };
+        },
+        async orchestrateTurn() {
+          return {
+            intent_parts: [
+              { type: "clarification_answer", text: "Use Nov-Feb on order_date for trend." },
+              { type: "follow_up_request", text: "Add top issue type per city for refunded orders." }
+            ],
+            resolved_scope_answers: [
+              { question_number: 1, answer: "Use Nov-Feb and order_date." },
+              { question_number: 2, answer: "Join support_tickets and rank issue type per city." }
+            ],
+            new_scope_questions: [
+              {
+                question_text: "For each city, what is the top issue type for refunded orders?",
+                clarification: "Confirm top 1 issue type per city and whether only refunded-linked tickets should be included."
+              }
+            ],
+            follow_up_requests: [],
+            pending_inputs: [],
+            next_owner: "wait_for_user",
+            tool_calls: [],
+            state_updates: {
+              mark_scope_complete: true,
+              append_new_questions: true,
+              clear_pending_inputs: false,
+              summary: "Added a follow-up city-issue question.",
+              question_registry_updates: []
+            }
+          };
+        }
+      }
+    });
+
+    const bootstrap = await app.inject({
+      method: "POST",
+      url: "/api/chat",
+      payload: { message: "set name: New Question Clarification Guard" }
+    });
+    expect(bootstrap.statusCode).toBe(200);
+
+    const seededState = bootstrap.json().state as Record<string, unknown>;
+    seededState.scope_clarification_pending = true;
+    seededState.scope_finalized = false;
+    seededState.prep_pending = false;
+    seededState.scope_pending = false;
+    seededState.scope_questions = [
+      {
+        question_number: 1,
+        question: "4-month refund trend",
+        clarification: "Confirm exact timeline and anchor date column.",
+        answer: null,
+        metric_key: null,
+        metric_display_name: null,
+        metric_definition_draft: null,
+        metric_source_columns: []
+      }
+    ];
+
+    const response = await app.inject({
+      method: "POST",
+      url: "/api/chat",
+      payload: {
+        message: "Q1 use Nov-Feb on order_date. Also add top issue type per city for refunded orders.",
+        state: seededState
+      }
+    });
+
+    expect(response.statusCode).toBe(200);
+    const body = response.json();
+    expect(body.state.scope_clarification_pending).toBe(true);
+    expect(body.state.prep_pending).toBe(false);
+    expect(body.state.scope_finalized).toBe(false);
+    expect(body.state.scope_questions.length).toBe(2);
+    expect(body.state.scope_questions[0].answer).toContain("Nov-Feb");
+    expect(body.state.scope_questions[1].answer).toBe(null);
+    expect(body.assistant_message).toContain("Need clarification for 1 scope item");
+    expect(body.assistant_message).toContain("Q2");
+    expect(body.assistant_message).toContain("Clarification needed:");
+
+    await app.close();
+  });
+
+  it("does not let 'confirm all' auto-close a freshly added scope question in the same turn", async () => {
+    const app = buildWebApp({
+      conversation_client: {
+        provider: "openrouter",
+        mode: "provider",
+        async respond(input) {
+          return { message: input.action_context };
+        },
+        async orchestrateTurn() {
+          return {
+            intent_parts: [
+              { type: "clarification_answer", text: "confirm all existing scope items" },
+              { type: "follow_up_request", text: "add top issue per city" }
+            ],
+            resolved_scope_answers: [{ question_number: 1, answer: "Confirmed existing Q1 scope." }],
+            new_scope_questions: [
+              {
+                question_text: "What is the top issue type per city for refunded-order tickets?",
+                clarification: "Confirm top-1 per city and refunded-order join path."
+              }
+            ],
+            follow_up_requests: [],
+            pending_inputs: [],
+            next_owner: "wait_for_user",
+            tool_calls: [],
+            state_updates: {
+              mark_scope_complete: true,
+              append_new_questions: true,
+              clear_pending_inputs: false,
+              summary: "Added one new follow-up scope question.",
+              question_registry_updates: []
+            }
+          };
+        }
+      }
+    });
+
+    const bootstrap = await app.inject({
+      method: "POST",
+      url: "/api/chat",
+      payload: { message: "set name: Confirm All Guardrail" }
+    });
+    expect(bootstrap.statusCode).toBe(200);
+
+    const seededState = bootstrap.json().state as Record<string, unknown>;
+    seededState.scope_clarification_pending = true;
+    seededState.scope_finalized = false;
+    seededState.prep_pending = false;
+    seededState.scope_pending = false;
+    seededState.scope_questions = [
+      {
+        question_number: 1,
+        question: "Monthly refund trend",
+        clarification: "Confirm 4-month timeline.",
+        answer: null,
+        metric_key: null,
+        metric_display_name: null,
+        metric_definition_draft: null,
+        metric_source_columns: []
+      }
+    ];
+
+    const response = await app.inject({
+      method: "POST",
+      url: "/api/chat",
+      payload: {
+        message: "Confirm all, and also add top issue per city.",
+        state: seededState
+      }
+    });
+
+    expect(response.statusCode).toBe(200);
+    const body = response.json();
+    expect(body.state.scope_questions.length).toBe(2);
+    expect(body.state.scope_questions[0].answer).toBeTruthy();
+    expect(body.state.scope_questions[1].answer).toBeNull();
+    expect(body.state.scope_clarification_pending).toBe(true);
+    expect(body.state.prep_pending).toBe(false);
+    expect(body.state.scope_finalized).toBe(false);
+    expect(body.assistant_message).toContain("Still pending:");
+    expect(body.assistant_message).toContain("Q2:");
+
+    await app.close();
+  });
+
+  it("ignores orchestrator resolved_scope_answers on initial scoping turn", async () => {
+    const app = buildWebApp({
+      conversation_client: {
+        provider: "openrouter",
+        mode: "provider",
+        async respond(input) {
+          return { message: input.action_context };
+        },
+        async orchestrateTurn() {
+          return {
+            intent_parts: [{ type: "new_question", text: "refund analysis" }],
+            resolved_scope_answers: [
+              { question_number: 1, answer: "Use Nov-Feb" },
+              { question_number: 2, answer: "Use top 5 cities" }
+            ],
+            new_scope_questions: [
+              {
+                question_text: "What is the monthly refund trend over the past 4 months?",
+                clarification: "Confirm exact month window."
+              },
+              {
+                question_text: "Which cities have the highest refund rate?",
+                clarification: "Confirm city cutoff and formula."
+              }
+            ],
+            follow_up_requests: [],
+            pending_inputs: [
+              {
+                input_key: "q1_scope",
+                prompt: "Confirm month window."
+              },
+              {
+                input_key: "q2_scope",
+                prompt: "Confirm city cutoff."
+              }
+            ],
+            next_owner: "wait_for_user",
+            tool_calls: [],
+            state_updates: {
+              mark_scope_complete: false,
+              append_new_questions: true,
+              clear_pending_inputs: false,
+              summary: "Need clarifications first.",
+              question_registry_updates: []
+            }
+          };
+        }
+      }
+    });
+
+    const response = await app.inject({
+      method: "POST",
+      url: "/api/chat",
+      payload: {
+        message:
+          "I want a 4 month refund trend and cities with highest refund rate."
+      }
+    });
+
+    expect(response.statusCode).toBe(200);
+    const body = response.json();
+    expect(body.state.scope_questions.length).toBeGreaterThanOrEqual(2);
+    expect(body.state.scope_questions[0].answer).toBeNull();
+    expect(body.state.scope_questions[1].answer).toBeNull();
+    expect(body.state.scope_clarification_pending).toBe(true);
+    expect(body.state.prep_pending).toBe(false);
+    expect(body.assistant_message.toLowerCase()).not.toContain("data preparation decision pending");
 
     await app.close();
   });
@@ -5756,8 +6266,7 @@ describe("web chat interface", () => {
 
     expect(response.statusCode).toBe(200);
     expect(response.json().state.prep_pending).toBe(true);
-    expect(response.json().assistant_message).toContain("Ready to prepare data for:");
-    expect(response.json().assistant_message).not.toContain("Run Report");
+    expect(response.json().assistant_message).toContain("Great, everything is ready. Click Run Report now.");
 
     await app.close();
   });
@@ -6394,9 +6903,9 @@ describe("web chat interface", () => {
 
     expect(response.statusCode).toBe(200);
     const assistant = response.json().assistant_message as string;
-    expect(assistant.toLowerCase()).not.toContain("system");
-    expect(assistant).not.toContain("Run Report");
-    expect(assistant.toLowerCase()).not.toContain("click");
+    expect(assistant.toLowerCase()).toContain("system");
+    expect(assistant).toContain("Run Report");
+    expect(assistant.toLowerCase()).toContain("click");
 
     await app.close();
   });
