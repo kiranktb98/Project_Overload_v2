@@ -4,12 +4,17 @@ import { ZodError } from "zod";
 import { createDataPlaneFromEnv, type DataPlane } from "@project-overload/dataplane";
 import {
   createAnalystClientFromEnv,
+  createBusinessCaseClientFromEnv,
+  createForecastAnalystClientFromEnv,
   createPlannerClientFromEnv,
   createQueryStrategistClientFromEnv,
+  createReportClarificationClientFromEnv,
   createReportComposerClientFromEnv,
   type AnalystClient,
+  type BusinessCaseClient,
   type PlannerClient,
   type QueryStrategistClient,
+  type ReportClarificationClient,
   type ReportComposerClient
 } from "@project-overload/llm-client";
 import { SqlGuardError } from "@project-overload/sql-guard";
@@ -28,7 +33,10 @@ export type ApiDependencies = {
   store: MetadataStore;
   data_plane: DataPlane;
   analyst_client: AnalystClient;
+  forecast_client: AnalystClient;
+  business_case_client: BusinessCaseClient;
   query_strategist: QueryStrategistClient;
+  report_qa_client: ReportClarificationClient;
   report_composer: ReportComposerClient;
   planner_client: PlannerClient;
   connection_manager: RuntimeConnectionManager;
@@ -97,7 +105,10 @@ export async function buildApiApp(options: Partial<ApiDependencies> = {}) {
       }
     });
   const analystClient = options.analyst_client ?? createAnalystClientFromEnv();
+  const forecastClient = options.forecast_client ?? createForecastAnalystClientFromEnv();
+  const businessCaseClient = options.business_case_client ?? createBusinessCaseClientFromEnv();
   const queryStrategist = options.query_strategist ?? createQueryStrategistClientFromEnv();
+  const reportQaClient = options.report_qa_client ?? createReportClarificationClientFromEnv();
   const reportComposer = options.report_composer ?? createReportComposerClientFromEnv();
   const plannerClient = options.planner_client ?? createPlannerClientFromEnv();
 
@@ -147,7 +158,10 @@ export async function buildApiApp(options: Partial<ApiDependencies> = {}) {
     store,
     dataPlane,
     analystClient,
+    forecastClient,
+    businessCaseClient,
     queryStrategist,
+    reportQaClient,
     reportComposer,
     plannerClient,
     connectionRegistry

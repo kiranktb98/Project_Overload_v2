@@ -93,10 +93,29 @@ export type ScopeClarificationOutput = {
 export type ScopeAnswerResolutionInput = {
   user_message: string;
   now_iso: string;
+  business_context?: string;
+  catalog_summary?: string;
+  relevant_metric_definitions?: Array<{
+    metric_key: string;
+    display_name: string;
+    definition: string;
+  }>;
+  pending_inputs?: Array<{
+    question_number?: number | null;
+    prompt: string;
+    reason?: string | null;
+  }>;
+  scope_suggestions?: Array<{
+    suggestion_number: number;
+    question: string;
+    reason: string;
+  }>;
   scope_questions: Array<{
     question_number: number;
     question: string;
     clarification: string;
+    proposed_default?: string | null;
+    is_suggested?: boolean;
     answer?: string | null;
   }>;
   conversation_history: Array<{
@@ -111,6 +130,7 @@ export type ScopeAnswerResolutionOutput = {
     answer: string;
   }>;
   unresolved_question_numbers: number[];
+  remove_question_numbers: number[];
 };
 
 export type MetricDefinitionInput = {
@@ -250,7 +270,8 @@ const ScopeAnswerResolutionOutputSchema = z.object({
     )
     .max(12)
     .default([]),
-  unresolved_question_numbers: z.array(z.number().int().min(1)).max(12).default([])
+  unresolved_question_numbers: z.array(z.number().int().min(1)).max(12).default([]),
+  remove_question_numbers: z.array(z.number().int().min(1)).max(12).default([])
 });
 
 function isTestRuntime(): boolean {
@@ -1000,14 +1021,31 @@ function scopeAnswerResolutionSystemPrompt(): string {
   return [
     "You are a scope-answer reconciliation assistant.",
     "Map the latest user reply to the pending scoped questions.",
-    "The user can answer one, many, or all questions in one message.",
+    "The user can answer one, many, or all questions in one message, and they can combine:",
+    "- direct answers to existing questions",
+    "- blanket confirmations (confirm all / confirm the rest / yes / looks good)",
+    "- blanket confirmations with exceptions (I like all but Q2 / everything looks good except Q4)",
+    "- removals (remove Q6 / don't include the suggested question)",
+    "- suggestion decisions (include Q6 / include the add-on question / don't add the optional question)",
+    "- newly added follow-up questions",
+    "You must understand mixed intent in one message.",
     "",
     "Matching rules:",
     "- Use explicit references (Q1, Q2, 'for question 1') AND implicit intent.",
-    "- Users answer naturally — they will NOT use numbered format. Map conversational clauses to the right questions.",
-    "- Example: 'last 4 complete months, exclude cancelled, top 10 is fine' — each clause maps to a different question.",
+    "- Users answer naturally - they will NOT use numbered format. Map conversational clauses to the right questions.",
+    "- The pending scope items may be phrased as assumptions, for example: 'I assumed Nov 2025 to Feb 2026 with monthly buckets. Is that fine, or do you want a change?' Treat acceptance of that assumption as confirmation for the matching question.",
+    "- Example: 'last 4 complete months, exclude cancelled, top 10 is fine' - each clause maps to a different question.",
     "- If the user says 'yes', 'confirm', 'correct', 'thats right' about a question's proposed approach, extract that as confirmation of the approach described in the clarification.",
-    "- BLANKET CONFIRMATIONS: If the user says 'confirm all', 'ok with everything', 'yes to all', 'defaults are fine', 'all good' — assign confirmation to ALL pending questions.",
+    "- BLANKET CONFIRMATIONS: If the user says 'confirm all', 'ok with everything', 'yes to all', 'defaults are fine', 'all good', 'confirm the rest', or clearly accepts the grouped pending defaults from the recent assistant turn, assign confirmation to ALL still-pending applicable questions.",
+    "- EXCEPTIONS TO BLANKET CONFIRMATIONS: If the user approves everything except one or more questions, treat every other pending question as confirmed with its proposed_default. Apply the explicit edit only to the exception question(s). If the user says 'all good except Q2' without giving the Q2 edit yet, keep only Q2 unresolved.",
+    "- Treat phrases like 'confirm these time periods', 'those windows work', 'use those periods', or 'yes, use those windows' as confirmation for the pending time-window / date-anchor / period-split questions currently being discussed.",
+    "- Each pending question includes PROPOSED_DEFAULT. For blanket confirmations, use that exact proposed_default for the answer, prefixed with 'Confirmed: '.",
+    "- If the user gives an explicit clause for one question and a blanket confirmation for the rest, preserve the explicit clause for that question and use proposed defaults for the remaining pending questions.",
+    "- One message can confirm some questions, edit Q2, remove Q4, include Q6, and add a new question. Resolve all of those actions together.",
+    "- If the user declines a suggested or optional scope question that is already in scope, return it in remove_question_numbers. Do not keep it unresolved.",
+    "- If the user says not to add a suggested question, optional analysis, or extra question, remove the currently scoped suggested question(s) instead of echoing them back.",
+    "- Treat 'include the add-on question' and similar phrasing as opting into an existing optional suggestion, not as inventing a brand-new question.",
+    "- Optional suggested questions are opt-in only. If the user never explicitly includes them, they should not stay unresolved and block the required scope items from moving forward.",
     "- Be precise, not aggressive: only assign when the user's message contains direct evidence for that question.",
     "- Do NOT infer answers for unaddressed questions. If unclear, keep unresolved.",
     "- If the message adds a new question/follow-up ask, do not treat that ask as an answer to existing clarification items.",
@@ -1015,7 +1053,7 @@ function scopeAnswerResolutionSystemPrompt(): string {
     "- Keep extracted answers concise and execution-ready.",
     "",
     "Return strict JSON only:",
-    '{"assignments":[{"question_number":1,"answer":"..."}],"unresolved_question_numbers":[2,3]}',
+    '{"assignments":[{"question_number":1,"answer":"..."}],"unresolved_question_numbers":[2,3],"remove_question_numbers":[6]}',
     "No markdown and no extra keys."
   ].join("\n");
 }
@@ -1030,8 +1068,25 @@ function scopeAnswerResolutionUserPrompt(input: ScopeAnswerResolutionInput): str
       question_number: entry.question_number,
       question: entry.question,
       clarification: entry.clarification,
+      proposed_default: entry.proposed_default ?? null,
+      is_suggested: entry.is_suggested ?? false,
       existing_answer: entry.answer ?? null
     }))
+    .map((entry) => JSON.stringify(entry))
+    .join("\n");
+  const pendingInputs = (input.pending_inputs ?? [])
+    .map((entry) =>
+      JSON.stringify({
+        question_number: entry.question_number ?? null,
+        prompt: entry.prompt,
+        reason: entry.reason ?? null
+      })
+    )
+    .join("\n");
+  const scopeSuggestions = (input.scope_suggestions ?? [])
+    .map((entry) => JSON.stringify(entry))
+    .join("\n");
+  const metricDefinitions = (input.relevant_metric_definitions ?? [])
     .map((entry) => JSON.stringify(entry))
     .join("\n");
 
@@ -1039,6 +1094,21 @@ function scopeAnswerResolutionUserPrompt(input: ScopeAnswerResolutionInput): str
     `CURRENT_UTC: ${input.now_iso}`,
     "PENDING_SCOPE_QUESTIONS_JSONL:",
     questions.length > 0 ? questions : "(none)",
+    "",
+    "PENDING_INPUTS_JSONL:",
+    pendingInputs.length > 0 ? pendingInputs : "(none)",
+    "",
+    "OPTIONAL_SCOPE_SUGGESTIONS_JSONL:",
+    scopeSuggestions.length > 0 ? scopeSuggestions : "(none)",
+    "",
+    "RELEVANT_METRIC_DEFINITIONS_JSONL:",
+    metricDefinitions.length > 0 ? metricDefinitions : "(none)",
+    "",
+    "BUSINESS_CONTEXT:",
+    input.business_context && input.business_context.trim().length > 0 ? input.business_context : "(none)",
+    "",
+    "CATALOG_SUMMARY:",
+    input.catalog_summary && input.catalog_summary.trim().length > 0 ? input.catalog_summary : "(none)",
     "",
     `USER_REPLY: ${input.user_message}`,
     "",

@@ -1,7 +1,10 @@
 import { randomUUID } from "node:crypto";
 import {
+  BusinessCaseCandidateSchema,
+  BusinessCaseOutputSchema,
   ConversationOrchestratorDecisionSchema,
   ExecBriefSchema,
+  ReportClarificationOutputSchema,
   ReportContractSchema,
   type ConversationOrchestratorDecision
 } from "@project-overload/shared";
@@ -80,6 +83,12 @@ const ChatPendingInputSchema = z.object({
   question_number: z.number().int().min(1).optional()
 });
 
+const ChatScopeSuggestionSchema = z.object({
+  suggestion_number: z.number().int().min(1),
+  question: z.string().min(1),
+  reason: z.string().min(1)
+});
+
 const ChatQuestionRegistrySchema = z.object({
   question_number: z.number().int().min(1),
   question_id: z.string().nullable().default(null),
@@ -109,6 +118,7 @@ export const ChatStateSchema = z.object({
   scope_clarification_pending: z.boolean().default(false),
   scope_business_context: z.string().nullable().default(null),
   scope_source_prompt: z.string().nullable().default(null),
+  scope_suggestions: z.array(ChatScopeSuggestionSchema).default([]),
   scope_questions: z
     .array(
       z.object({
@@ -193,6 +203,13 @@ export const ChatStateSchema = z.object({
       warnings: z.array(z.string()).default([])
     })
   ).default([]),
+  post_run_actions_pending: z.boolean().default(false),
+  report_clarification_active: z.boolean().default(false),
+  business_case_active: z.boolean().default(false),
+  business_case_candidates: z.array(BusinessCaseCandidateSchema).default([]),
+  business_case_selected_candidate_id: z.string().nullable().default(null),
+  business_case_assumption_notes: z.array(z.string().min(1)).max(8).default([]),
+  business_case_pending_clarification: z.string().nullable().default(null),
   awaiting_pdf_confirmation: z.boolean().default(false),
   awaiting_post_run_refinement: z.boolean().default(false),
   refinement_active: z.boolean().default(false),
@@ -301,6 +318,16 @@ export interface WebApiClient {
     grounded: boolean;
     requires_new_analysis: boolean;
   }>;
+  askReportClarification(runId: string, question: string): Promise<z.output<typeof ReportClarificationOutputSchema>>;
+  listBusinessCaseCandidates(runId: string): Promise<z.output<typeof BusinessCaseCandidateSchema>[]>;
+  buildBusinessCase(
+    runId: string,
+    payload: {
+      candidate_id: string;
+      question: string;
+      assumption_notes?: string[];
+    }
+  ): Promise<z.output<typeof BusinessCaseOutputSchema>>;
   saveRun(runId: string): Promise<{
     run_id: string;
     contract_id: string;
@@ -453,6 +480,10 @@ const ScheduleContractResponseSchema = z.object({
   schedule_cron: z.string().min(1)
 });
 
+const BusinessCaseCandidatesResponseSchema = z.object({
+  candidates: z.array(BusinessCaseCandidateSchema).default([])
+});
+
 const ConnectionContextSchema = z.object({
   connected: z.boolean(),
   provider: z.enum(["postgres", "supabase", "neon", "mysql", "snowflake", "bigquery"]).nullable().optional(),
@@ -588,6 +619,7 @@ export function createInitialChatState(): ChatState {
     scope_clarification_pending: false,
     scope_business_context: null,
     scope_source_prompt: null,
+    scope_suggestions: [],
     scope_questions: [],
     pending_query_sql: null,
     pending_query_limit: null,
@@ -598,6 +630,13 @@ export function createInitialChatState(): ChatState {
     planner_summary: null,
     preparation_summary: null,
     prepared_payloads: [],
+    post_run_actions_pending: false,
+    report_clarification_active: false,
+    business_case_active: false,
+    business_case_candidates: [],
+    business_case_selected_candidate_id: null,
+    business_case_assumption_notes: [],
+    business_case_pending_clarification: null,
     awaiting_pdf_confirmation: false,
     awaiting_post_run_refinement: false,
     refinement_active: false,
@@ -660,6 +699,11 @@ export function parseChatState(value: unknown): ChatState {
     scope_clarification_pending: parsed.data.scope_clarification_pending ?? false,
     scope_business_context: parsed.data.scope_business_context ?? null,
     scope_source_prompt: parsed.data.scope_source_prompt ?? null,
+    scope_suggestions: parsed.data.scope_suggestions.map((entry) => ({
+      suggestion_number: entry.suggestion_number,
+      question: entry.question,
+      reason: entry.reason
+    })),
     scope_questions: parsed.data.scope_questions.map((entry) => ({
       question_number: entry.question_number,
       question: entry.question,
@@ -679,6 +723,13 @@ export function parseChatState(value: unknown): ChatState {
     planner_summary: parsed.data.planner_summary ?? null,
     preparation_summary: parsed.data.preparation_summary ?? null,
     prepared_payloads: [...parsed.data.prepared_payloads],
+    post_run_actions_pending: parsed.data.post_run_actions_pending ?? false,
+    report_clarification_active: parsed.data.report_clarification_active ?? false,
+    business_case_active: parsed.data.business_case_active ?? false,
+    business_case_candidates: [...(parsed.data.business_case_candidates ?? [])],
+    business_case_selected_candidate_id: parsed.data.business_case_selected_candidate_id ?? null,
+    business_case_assumption_notes: [...(parsed.data.business_case_assumption_notes ?? [])],
+    business_case_pending_clarification: parsed.data.business_case_pending_clarification ?? null,
     awaiting_pdf_confirmation: parsed.data.awaiting_pdf_confirmation ?? false,
     awaiting_post_run_refinement: parsed.data.awaiting_post_run_refinement ?? false,
     refinement_active: parsed.data.refinement_active ?? false,
@@ -715,6 +766,7 @@ export function parseChatState(value: unknown): ChatState {
     }))
   };
 
+  normalizeSuggestedScopeEntries(next);
   syncQuestionRegistryFromScope(next);
   return next;
 }
@@ -995,6 +1047,7 @@ function applyConversationOrchestratorDecision(
       ...newQuestions,
       ...followUpQuestions
     ]);
+    normalizeSuggestedScopeEntries(next);
     for (const question of next.scope_questions) {
       if (!scopeQuestionNumbersBeforeAppend.has(question.question_number)) {
         newlyAddedQuestionNumbers.add(question.question_number);
@@ -1036,34 +1089,15 @@ function applyConversationOrchestratorDecision(
     }
   }
 
-  // Ensure at least one suggested question on first deep-analysis scope turn.
-  // This keeps the "smart add-on" behavior consistent even if the orchestrator
-  // skips suggestions in a particular response.
-  const hasSuggestedScopeQuestion = next.scope_questions.some((entry) =>
-    /^\s*\[suggested\]/i.test(entry.question)
-  );
+  // Offer optional suggestions on the first deep-analysis scope turn, but do not
+  // push them into the real scope until the user explicitly includes them.
   if (
     isDeepAnalysisRoute &&
     !hadScopeQuestionsBefore &&
     next.scope_questions.length > 0 &&
-    !hasSuggestedScopeQuestion
+    next.scope_suggestions.length === 0
   ) {
-    const coreQuestions = next.scope_questions.filter(
-      (entry) => !/^\s*\[suggested\]/i.test(entry.question)
-    );
-    const suggestedQuestions = buildSuggestedScopeQuestions(coreQuestions).slice(0, 2);
-    if (suggestedQuestions.length > 0) {
-      next.scope_questions = normalizeScopeQuestionsForPlanning([
-        ...next.scope_questions,
-        ...suggestedQuestions
-      ]);
-      applySavedMetricDefinitionsToScopeQuestions(next);
-      next.scope_clarification_pending = true;
-      next.scope_pending = false;
-      next.prep_pending = false;
-      next.scope_finalized = false;
-      scopeChanged = true;
-    }
+    next.scope_suggestions = buildSuggestedScopeQuestions(next.scope_questions).slice(0, 2);
   }
 
   const shouldIgnoreResolvedAnswersForNewSessionQuestions =
@@ -1255,10 +1289,13 @@ function applyConversationOrchestratorDecision(
 }
 
 function invalidatePreparedStateForScopeChange(state: ChatState): void {
+  state.contract_id = null;
   state.prep_complete = false;
   state.prepared_payloads = [];
   state.scope_pending = false;
   state.prep_pending = false;
+  state.pending_run_id = null;
+  resetPostRunFollowupState(state);
   state.awaiting_post_run_refinement = false;
   state.refinement_active = false;
   state.refinement_questions_remaining = 2;
@@ -1269,6 +1306,16 @@ function invalidatePreparedStateForScopeChange(state: ChatState): void {
   state.awaiting_custom_day_input = false;
   state.schedule_pending = false;
   state.pending_schedule = null;
+}
+
+function resetPostRunFollowupState(state: ChatState): void {
+  state.post_run_actions_pending = false;
+  state.report_clarification_active = false;
+  state.business_case_active = false;
+  state.business_case_candidates = [];
+  state.business_case_selected_candidate_id = null;
+  state.business_case_assumption_notes = [];
+  state.business_case_pending_clarification = null;
 }
 
 function applySavedMetricDefinitionsToScopeQuestions(state: ChatState): void {
@@ -1312,6 +1359,102 @@ function applySavedMetricDefinitionsToScopeQuestions(state: ChatState): void {
         .filter((line) => line.length > 0)
         .join(" ");
     }
+  }
+}
+
+function isSuggestedScopeQuestionText(question: string): boolean {
+  return /^\s*\[suggested\]/i.test(question);
+}
+
+function normalizeSuggestedScopeEntries(state: ChatState): void {
+  if (state.scope_questions.length === 0) {
+    return;
+  }
+
+  const unansweredNonSuggestedCount = state.scope_questions.filter(
+    (entry) =>
+      !isSuggestedScopeQuestionText(entry.question) &&
+      (!entry.answer || entry.answer.trim().length === 0)
+  ).length;
+  let changed = false;
+  const migratedSuggestions: ChatState["scope_suggestions"] = [];
+  const retainedQuestions: ScopeQuestionEntry[] = [];
+
+  for (const entry of state.scope_questions) {
+    if (!isSuggestedScopeQuestionText(entry.question)) {
+      retainedQuestions.push(entry);
+      continue;
+    }
+
+    const normalizedQuestion = entry.question.replace(/^\s*\[suggested\]\s*/i, "").trim();
+    const hasAnswer = Boolean(entry.answer && entry.answer.trim().length > 0);
+
+    if (hasAnswer) {
+      retainedQuestions.push({
+        ...entry,
+        question: normalizedQuestion
+      });
+      if (normalizedQuestion !== entry.question) {
+        changed = true;
+      }
+      continue;
+    }
+
+    if (unansweredNonSuggestedCount === 0) {
+      retainedQuestions.push(entry);
+      continue;
+    }
+
+    migratedSuggestions.push({
+      suggestion_number: 0,
+      question: normalizedQuestion,
+      reason:
+        entry.clarification && entry.clarification.trim().length > 0
+          ? entry.clarification.trim()
+          : "Optional supporting analysis."
+    });
+    changed = true;
+  }
+
+  if (!changed && migratedSuggestions.length === 0) {
+    return;
+  }
+
+  const oldToNewQuestionNumbers = new Map<number, number>();
+  retainedQuestions.forEach((entry, index) => {
+    oldToNewQuestionNumbers.set(entry.question_number, index + 1);
+  });
+
+  state.scope_questions = retainedQuestions.map((entry, index) =>
+    sanitizeScopeQuestionLanguage({
+      ...entry,
+      question_number: index + 1
+    })
+  );
+  state.pending_inputs = dedupePendingInputs(
+    state.pending_inputs.flatMap((entry) => {
+      if (typeof entry.question_number !== "number") {
+        return [entry];
+      }
+      const mappedQuestionNumber = oldToNewQuestionNumbers.get(entry.question_number);
+      if (!mappedQuestionNumber) {
+        return [];
+      }
+      return [
+        {
+          ...entry,
+          question_number: mappedQuestionNumber
+        }
+      ];
+    })
+  );
+
+  if (migratedSuggestions.length > 0) {
+    state.scope_suggestions = renumberScopeSuggestions(
+      removeDuplicateScopeSuggestions([...state.scope_suggestions, ...migratedSuggestions], state.scope_questions)
+    );
+  } else {
+    pruneScopeSuggestionsAgainstScopeQuestions(state);
   }
 }
 
@@ -1701,6 +1844,37 @@ export function createWebApiClient(options: CreateWebApiClientOptions): WebApiCl
         requires_new_analysis: z.boolean().default(false)
       }));
     },
+    async askReportClarification(runId, question) {
+      const response = await fetcher(`${baseUrl}/report-runs/${encodeURIComponent(runId)}/report-qa`, mergeHeaders({
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ question })
+      }));
+
+      return parseJsonResponse(response, ReportClarificationOutputSchema);
+    },
+    async listBusinessCaseCandidates(runId) {
+      const response = await fetcher(
+        `${baseUrl}/report-runs/${encodeURIComponent(runId)}/business-case/candidates`,
+        mergeHeaders({ method: "GET" })
+      );
+
+      const parsed = await parseJsonResponse(response, BusinessCaseCandidatesResponseSchema);
+      return parsed.candidates;
+    },
+    async buildBusinessCase(runId, payload) {
+      const response = await fetcher(`${baseUrl}/report-runs/${encodeURIComponent(runId)}/business-case`, mergeHeaders({
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({
+          candidate_id: payload.candidate_id,
+          question: payload.question,
+          assumption_notes: payload.assumption_notes ?? []
+        })
+      }));
+
+      return parseJsonResponse(response, BusinessCaseOutputSchema);
+    },
     async saveRun(runId) {
       const response = await fetcher(`${baseUrl}/report-runs/${encodeURIComponent(runId)}/save`, mergeHeaders({
         method: "POST",
@@ -2079,6 +2253,9 @@ export async function handleChatTurn(input: {
     Boolean(nextState.pending_query_sql) ||
     nextState.pending_single_query_request !== null ||
     nextState.pending_metric_confirmations.length > 0 ||
+    nextState.post_run_actions_pending ||
+    nextState.report_clarification_active ||
+    nextState.business_case_active ||
     nextState.awaiting_post_run_refinement ||
     nextState.refinement_active ||
     nextState.awaiting_pdf_confirmation ||
@@ -2112,6 +2289,9 @@ export async function handleChatTurn(input: {
     nextState.prepared_payloads.length > 0 &&
     !nextState.scope_pending &&
     !nextState.prep_pending &&
+    !nextState.post_run_actions_pending &&
+    !nextState.report_clarification_active &&
+    !nextState.business_case_active &&
     !nextState.awaiting_post_run_refinement &&
     !nextState.refinement_active &&
     !nextState.awaiting_pdf_confirmation &&
@@ -2193,6 +2373,16 @@ export async function handleChatTurn(input: {
       };
     }
 
+    if (nextState.scope_questions.length === 0) {
+      if (!isUiControlCommand(command) && rawMessage.trim().length > 0) {
+        return buildScopeClarificationStep(nextState, rawMessage, input.api_client, input.query_router);
+      }
+      return {
+        assistant_message: buildEmptyScopeClarificationMessage(),
+        state: nextState
+      };
+    }
+
     reconcilePendingInputsToScopeQuestions(nextState);
     nextState.pending_inputs = nextState.pending_inputs.filter((entry) => {
       if (typeof entry.question_number !== "number") {
@@ -2227,6 +2417,7 @@ export async function handleChatTurn(input: {
       nextState.scope_questions = [];
       nextState.scope_business_context = null;
       nextState.scope_source_prompt = null;
+      nextState.scope_suggestions = [];
       nextState.scope_finalized = false;
       nextState.question_registry = [];
       return {
@@ -2236,12 +2427,20 @@ export async function handleChatTurn(input: {
       };
     }
 
+    const shouldRouteScopeFinalizeThroughClarification =
+      (isScopeFinalizeChoice(command) && !allScopeAnswersPresent && hadScopeClarificationPendingBefore) ||
+      isConfirmAllScopeMessage(rawMessage) ||
+      shouldConfirmRemainingScopeItems(rawMessage) ||
+      shouldApplyDefaultsToRemainingScopeItems(rawMessage) ||
+      (hadScopeClarificationPendingBefore && isPlainScopeAffirmation(rawMessage)) ||
+      (hadScopeClarificationPendingBefore && looksLikeAffirmativeScopeConfirmation(rawMessage)) ||
+      parseExplicitScopeAnswerAssignments(rawMessage).length > 0 ||
+      looksLikeNewQuestionWhileClarifying(rawMessage);
+
     if (
       isRunPreparationChoice(command) ||
-      isScopeFinalizeChoice(command) ||
-      isScopeRunChoice(command) ||
-      isPdfGenerateYesChoice(command) ||
-      isPdfGenerateNoChoice(command) ||
+      (isScopeFinalizeChoice(command) && !shouldRouteScopeFinalizeThroughClarification) ||
+      isExplicitScopeRunChoice(command) ||
       isUiControlCommand(command)
     ) {
       if (allScopeAnswersPresent) {
@@ -2270,25 +2469,14 @@ export async function handleChatTurn(input: {
     const clarification = await applyScopeClarificationAnswersWithLlm(
       nextState,
       rawMessage,
+      input.api_client,
       input.query_router
     );
 
     if (clarification.all_answered) {
       nextState.scope_clarification_pending = false;
       nextState.scope_finalized = true;
-      const preparation = await buildPreparationConfirmation(nextState, input.api_client);
-      const answeredLines = nextState.scope_questions.map((entry) =>
-        `- Q${entry.question_number}: ${entry.answer ?? ""}`
-      );
-      return {
-        assistant_message: [
-          "Scope clarifications captured for all questions.",
-          answeredLines.join("\n"),
-          "",
-          preparation.assistant_message
-        ].join("\n"),
-        state: preparation.state
-      };
+      return buildPreparationConfirmation(nextState, input.api_client);
     }
 
     if (clarification.answered_count === 0) {
@@ -2300,10 +2488,7 @@ export async function handleChatTurn(input: {
 
     if (!clarification.all_answered) {
       return {
-        assistant_message: [
-          `Captured ${clarification.answered_count} clarification answer${clarification.answered_count === 1 ? "" : "s"}.`,
-          buildScopeClarificationPendingMessage(nextState)
-        ].join("\n\n"),
+        assistant_message: buildScopeClarificationPendingMessage(nextState),
         state: nextState
       };
     }
@@ -2312,6 +2497,105 @@ export async function handleChatTurn(input: {
       assistant_message: buildScopeClarificationPendingMessage(nextState),
       state: nextState
     };
+  }
+
+  // --- Post-run follow-up actions ---
+
+  if (
+    nextState.post_run_actions_pending ||
+    nextState.report_clarification_active ||
+    nextState.business_case_active
+  ) {
+    if (isPdfGenerateYesChoice(command)) {
+      return completePdfGeneration(nextState);
+    }
+
+    if (isStartNewConversationChoice(command)) {
+      resetPostRunFollowupState(nextState);
+      return {
+        assistant_message:
+          "Understood. Start a new conversation for a fresh report scope whenever you're ready.",
+        state: nextState
+      };
+    }
+
+    if (isStartReportClarificationChoice(command)) {
+      if (!nextState.last_run_id) {
+        return {
+          assistant_message: "No completed run found yet. Run analysis first.",
+          state: nextState
+        };
+      }
+
+      nextState.post_run_actions_pending = true;
+      nextState.report_clarification_active = true;
+      nextState.business_case_active = false;
+      nextState.business_case_selected_candidate_id = null;
+      nextState.business_case_assumption_notes = [];
+      nextState.business_case_pending_clarification = null;
+      return {
+        assistant_message:
+          "Report clarification mode is on. Ask any question about the generated report and I'll answer from the report, business context, and metric definitions.",
+        state: nextState
+      };
+    }
+
+    if (isStartBusinessCaseChoice(command)) {
+      if (!nextState.last_run_id) {
+        return {
+          assistant_message: "No completed run found yet. Run analysis first.",
+          state: nextState
+        };
+      }
+
+      const candidates = await input.api_client.listBusinessCaseCandidates(nextState.last_run_id);
+      nextState.post_run_actions_pending = true;
+      nextState.report_clarification_active = false;
+      nextState.business_case_active = candidates.length > 0;
+      nextState.business_case_candidates = candidates;
+      nextState.business_case_selected_candidate_id = null;
+      nextState.business_case_assumption_notes = [];
+      nextState.business_case_pending_clarification = null;
+      return {
+        assistant_message:
+          candidates.length > 0
+            ? formatBusinessCaseCandidateList(candidates)
+            : "No recommendation candidates were generated in this run, so there is nothing to turn into a business case yet.",
+        state: nextState
+      };
+    }
+
+    if (
+      nextState.report_clarification_active &&
+      nextState.last_run_id &&
+      !isUiControlCommand(command) &&
+      rawMessage.length > 0
+    ) {
+      return executeReportClarificationQa(nextState, rawMessage, input.api_client, input.query_router);
+    }
+
+    if (
+      nextState.business_case_active &&
+      nextState.last_run_id &&
+      !isUiControlCommand(command) &&
+      rawMessage.length > 0
+    ) {
+      return executeBusinessCaseQa(nextState, rawMessage, input.api_client);
+    }
+
+    if (
+      nextState.post_run_actions_pending &&
+      nextState.last_run_id &&
+      !isUiControlCommand(command) &&
+      looksLikePayloadQaQuestion(rawMessage)
+    ) {
+      nextState.report_clarification_active = true;
+      nextState.business_case_active = false;
+      nextState.business_case_selected_candidate_id = null;
+      nextState.business_case_assumption_notes = [];
+      nextState.business_case_pending_clarification = null;
+      return executeReportClarificationQa(nextState, rawMessage, input.api_client, input.query_router);
+    }
   }
 
   // --- Post-analysis refinement gate ---
@@ -3525,11 +3809,27 @@ async function buildScopeClarificationStep(
   if (scopeQuestions.length === 0 && !isTestRuntime()) {
     throw new Error("scope_clarification_generation_failed: llm returned no scope questions");
   }
-  const coreQuestions = normalizeScopeQuestionsForPlanning(scopeQuestions);
+  const extractedSuggestedQuestions = scopeQuestions
+    .filter((entry) => /^\s*\[suggested\]/i.test(entry.question))
+    .map((entry) => ({
+      suggestion_number: 0,
+      question: entry.question.replace(/^\s*\[suggested\]\s*/i, "").trim(),
+      reason:
+        entry.clarification && entry.clarification.trim().length > 0
+          ? entry.clarification.trim()
+          : "Optional supporting analysis."
+    }));
+  const coreQuestions = normalizeScopeQuestionsForPlanning(
+    scopeQuestions.filter((entry) => !/^\s*\[suggested\]/i.test(entry.question))
+  );
   const suggestedQuestions = buildSuggestedScopeQuestions(coreQuestions);
-  const allQuestions = renumberScopeQuestions([...coreQuestions, ...suggestedQuestions]);
+  const allSuggestions = removeDuplicateScopeSuggestions(
+    [...suggestedQuestions, ...extractedSuggestedQuestions],
+    coreQuestions
+  );
 
-  nextState.scope_questions = allQuestions;
+  nextState.scope_questions = coreQuestions;
+  nextState.scope_suggestions = allSuggestions;
   applySavedMetricDefinitionsToScopeQuestions(nextState);
   nextState.scope_source_prompt = rawMessage;
   nextState.scope_clarification_pending = true;
@@ -3563,41 +3863,19 @@ async function applyScopeClarificationFromPendingDecision(
   const clarification = await applyScopeClarificationAnswersWithLlm(
     nextState,
     rawMessage,
+    apiClient,
     queryRouter
   );
 
   if (clarification.all_answered) {
     nextState.scope_clarification_pending = false;
     syncQuestionRegistryFromScope(nextState);
-    const preparation = await buildPreparationConfirmation(nextState, apiClient);
-    const answeredLines = nextState.scope_questions.map((entry) =>
-      `- Q${entry.question_number}: ${entry.answer ?? ""}`
-    );
-    return {
-      assistant_message: [
-        "Scope clarifications captured for all questions.",
-        answeredLines.join("\n"),
-        "",
-        preparation.assistant_message
-      ].join("\n"),
-      state: preparation.state
-    };
-  }
-
-  if (clarification.answered_count === 0) {
-    syncQuestionRegistryFromScope(nextState);
-    return {
-      assistant_message: buildScopeClarificationPendingMessage(nextState),
-      state: nextState
-    };
+    return buildPreparationConfirmation(nextState, apiClient);
   }
 
   syncQuestionRegistryFromScope(nextState);
   return {
-    assistant_message: [
-      `Captured ${clarification.answered_count} clarification answer${clarification.answered_count === 1 ? "" : "s"}.`,
-      buildScopeClarificationPendingMessage(nextState)
-    ].join("\n\n"),
+    assistant_message: buildScopeClarificationPendingMessage(nextState),
     state: nextState
   };
 }
@@ -3901,6 +4179,15 @@ function selectRelevantMetricDefinitionsForText(
 
   return metricDefinitions.filter((entry) => {
     const phrases = collectMetricMatchPhrases(entry);
+    const identityText = `${entry.metric_key} ${entry.display_name}`.toLowerCase().replace(/[_-]+/g, " ");
+    const metricTypeRequiresExplicitCue = /\b(rate|ratio|percent|percentage)\b/.test(identityText);
+    const textHasMetricTypeCue =
+      /\b(rate|ratio|percent|percentage|formula|numerator|denominator)\b/.test(haystack) ||
+      /\bdivided by\b/.test(haystack);
+    if (metricTypeRequiresExplicitCue && !textHasMetricTypeCue) {
+      return false;
+    }
+
     if (phrases.some((phrase) => phrase.length > 0 && haystack.includes(phrase))) {
       return true;
     }
@@ -3930,7 +4217,7 @@ function resolveBusinessContextForAgents(
   return catalogBusinessContext;
 }
 
-type ScopeQuestionEntry = {
+export type ScopeQuestionEntry = {
   question_number: number;
   question: string;
   clarification: string;
@@ -3939,6 +4226,12 @@ type ScopeQuestionEntry = {
   metric_display_name: string | null;
   metric_definition_draft: string | null;
   metric_source_columns: string[];
+};
+
+type ScopeSuggestionEntry = {
+  suggestion_number: number;
+  question: string;
+  reason: string;
 };
 
 /**
@@ -3955,14 +4248,16 @@ function splitCompoundScopeQuestions(questions: ScopeQuestionEntry[]): ScopeQues
         result.push(entry);
         continue;
       }
+      const normalizedParts =
+        parts.length > 1 ? normalizeMultiClauseScopeSegments(parts) : parts;
       // Split into multiple entries, first inherits the answer/metric, rest get null
-      for (let i = 0; i < parts.length; i++) {
+      for (let i = 0; i < normalizedParts.length; i++) {
+        const normalizedQuestion = normalizedParts[i]!;
         result.push({
           ...entry,
           question_number: 0, // will be renumbered later
-          question: parts[i],
-          clarification:
-            i === 0 ? entry.clarification : deriveClarificationForQuestion(parts[i]),
+          question: normalizedQuestion,
+          clarification: deriveClarificationForQuestion(normalizedQuestion),
           answer: i === 0 ? entry.answer : null,
           metric_key: i === 0 ? entry.metric_key : null,
           metric_display_name: i === 0 ? entry.metric_display_name : null,
@@ -4103,6 +4398,609 @@ function reconcilePendingInputsToScopeQuestions(state: ChatState): void {
     deduped.set(key, entry);
   }
   state.pending_inputs = Array.from(deduped.values());
+}
+
+const SCOPE_QUESTION_ORDINALS = new Map<string, number>([
+  ["first", 1],
+  ["1st", 1],
+  ["second", 2],
+  ["2nd", 2],
+  ["third", 3],
+  ["3rd", 3],
+  ["fourth", 4],
+  ["4th", 4],
+  ["fifth", 5],
+  ["5th", 5],
+  ["sixth", 6],
+  ["6th", 6],
+  ["seventh", 7],
+  ["7th", 7],
+  ["eighth", 8],
+  ["8th", 8],
+  ["ninth", 9],
+  ["9th", 9],
+  ["tenth", 10],
+  ["10th", 10]
+]);
+
+const OPTIONAL_SCOPE_SUGGESTION_REFERENCE_PATTERN =
+  /\b(?:suggested|suggestion|optional|extra|additional|add[- ]?on|addon)\b/i;
+const OPTIONAL_SCOPE_SUGGESTION_NUMBER_PATTERN = /\b(?:suggestion\s*|s)(\d{1,2})\b/i;
+
+function getScopeSuggestionDisplayQuestionNumber(
+  state: Pick<ChatState, "scope_questions">,
+  suggestionNumber: number
+): number {
+  return state.scope_questions.length + suggestionNumber;
+}
+
+function getScopeSuggestionDisplayLabel(
+  state: Pick<ChatState, "scope_questions">,
+  suggestionNumber: number
+): string {
+  return `Q${getScopeSuggestionDisplayQuestionNumber(state, suggestionNumber)} (suggested)`;
+}
+
+function getScopeSuggestionReferenceLabel(
+  state: Pick<ChatState, "scope_questions">,
+  suggestionNumber: number
+): string {
+  return `Q${getScopeSuggestionDisplayQuestionNumber(state, suggestionNumber)}`;
+}
+
+function buildScopeSuggestionIncludeInstruction(state: Pick<ChatState, "scope_questions" | "scope_suggestions">): string {
+  if (state.scope_suggestions.length === 0) {
+    return "";
+  }
+
+  const labels = state.scope_suggestions.map((entry) =>
+    getScopeSuggestionReferenceLabel(state, entry.suggestion_number)
+  );
+  const joinedLabels =
+    labels.length === 1
+      ? labels[0]!
+      : `${labels.slice(0, -1).join(", ")} or ${labels[labels.length - 1]}`;
+  return `Say include ${joinedLabels} (or restate the suggestion) if you want one added to scope.`;
+}
+
+function findScopeSuggestionNumberByDisplayQuestionNumber(
+  state: Pick<ChatState, "scope_questions" | "scope_suggestions">,
+  displayQuestionNumber: number
+): number | null {
+  for (const entry of state.scope_suggestions) {
+    if (getScopeSuggestionDisplayQuestionNumber(state, entry.suggestion_number) === displayQuestionNumber) {
+      return entry.suggestion_number;
+    }
+  }
+
+  return null;
+}
+
+function mentionsOptionalScopeSuggestion(rawMessage: string): boolean {
+  return (
+    OPTIONAL_SCOPE_SUGGESTION_REFERENCE_PATTERN.test(rawMessage) ||
+    OPTIONAL_SCOPE_SUGGESTION_NUMBER_PATTERN.test(rawMessage)
+  );
+}
+
+function stripScopeSuggestionDecisionClauses(
+  rawMessage: string,
+  state?: Pick<ChatState, "scope_questions" | "scope_suggestions">
+): string {
+  let stripped = rawMessage
+    .replace(
+      /(?:^|[\n\r]|[;,.]|\band\b)\s*(?:please\s+)?(?:(?:and\s+)?also\s+)?(?:include|add|keep|use|take)\s+(?:the\s+)?(?:(?:suggestion|suggested|optional|extra|additional|add[- ]?on|addon)\s*(?:question|questions|analysis|analyses|ask|asks|item|items)?|s\d{1,2}|suggestion\s*\d{1,2})\b[\s.!?]*/gi,
+      " "
+    )
+    .replace(
+      /(?:^|[\n\r]|[;,.]|\band\b)\s*(?:please\s+)?(?:(?:and\s+)?also\s+)?(?:don't|do not|not)\s+(?:add|include|keep|use|want|need)\s+(?:the\s+)?(?:(?:suggestion|suggested|optional|extra|additional|add[- ]?on|addon)\s*(?:question|questions|analysis|analyses|ask|asks|item|items)?|s\d{1,2}|suggestion\s*\d{1,2})\b[\s.!?]*/gi,
+      " "
+    )
+    .replace(
+      /(?:^|[\n\r]|[;,.]|\band\b)\s*(?:please\s+)?(?:(?:and\s+)?also\s+)?(?:exclude|remove|drop|delete|skip|omit|cancel|decline|reject|ignore)\s+(?:the\s+)?(?:(?:suggestion|suggested|optional|extra|additional|add[- ]?on|addon)\s*(?:question|questions|analysis|analyses|ask|asks|item|items)?|s\d{1,2}|suggestion\s*\d{1,2})\b[\s.!?]*/gi,
+      " "
+    );
+
+  if (state && state.scope_suggestions.length > 0) {
+    for (const entry of state.scope_suggestions) {
+      const displayQuestionNumber = getScopeSuggestionDisplayQuestionNumber(
+        state,
+        entry.suggestion_number
+      );
+      const displayToken = `q\\s*${displayQuestionNumber}(?:\\s*\\(\\s*suggested\\s*\\))?`;
+      const qPatterns = [
+        new RegExp(
+          `(?:^|[\\n\\r]|[;,.]|\\band\\b)\\s*(?:please\\s+)?(?:(?:and\\s+)?also\\s+)?(?:include|add|keep|use|take)\\s+${displayToken}\\b[\\s.!?]*`,
+          "gi"
+        ),
+        new RegExp(
+          `(?:^|[\\n\\r]|[;,.]|\\band\\b)\\s*(?:please\\s+)?(?:(?:and\\s+)?also\\s+)?(?:don't|do not|not)\\s+(?:add|include|keep|use|want|need)\\s+${displayToken}\\b[\\s.!?]*`,
+          "gi"
+        ),
+        new RegExp(
+          `(?:^|[\\n\\r]|[;,.]|\\band\\b)\\s*(?:please\\s+)?(?:(?:and\\s+)?also\\s+)?(?:exclude|remove|drop|delete|skip|omit|cancel|decline|reject|ignore)\\s+${displayToken}\\b[\\s.!?]*`,
+          "gi"
+        )
+      ];
+      for (const pattern of qPatterns) {
+        stripped = stripped.replace(pattern, " ");
+      }
+    }
+  }
+
+  return stripped
+    .replace(/\s+/g, " ")
+    .replace(/\s+([,.;!?])/g, "$1")
+    .trim();
+}
+
+function dedupePendingInputs(
+  entries: ChatState["pending_inputs"]
+): ChatState["pending_inputs"] {
+  const deduped = new Map<string, ChatState["pending_inputs"][number]>();
+  for (const entry of entries) {
+    const key = `${entry.input_key}|${entry.question_number ?? "none"}|${entry.prompt}`;
+    deduped.set(key, entry);
+  }
+  return Array.from(deduped.values());
+}
+
+function findScopeSuggestionNumberByDescriptor(
+  state: ChatState,
+  descriptor: string
+): number | null {
+  const descriptorTokens = tokenizeForSimilarity(descriptor).filter(
+    (token) =>
+      !SCOPE_DEDUP_STOP_WORDS.has(token) &&
+      ![
+        "include",
+        "included",
+        "add",
+        "added",
+        "keep",
+        "kept",
+        "use",
+        "using",
+        "suggested",
+        "suggestion",
+        "optional",
+        "extra",
+        "analysis",
+        "question"
+      ].includes(token)
+  );
+  if (descriptorTokens.length === 0) {
+    return null;
+  }
+
+  let bestSuggestionNumber: number | null = null;
+  let bestScore = 0;
+  for (const entry of state.scope_suggestions) {
+    const candidateTokens = new Set(
+      tokenizeForSimilarity(`${entry.question} ${entry.reason}`)
+    );
+    let score = 0;
+    for (const token of descriptorTokens) {
+      if (candidateTokens.has(token)) {
+        score += 1;
+      }
+    }
+    if (score > bestScore) {
+      bestScore = score;
+      bestSuggestionNumber = entry.suggestion_number;
+    }
+  }
+
+  if (bestSuggestionNumber === null) {
+    return null;
+  }
+
+  if (bestScore >= Math.min(2, descriptorTokens.length)) {
+    return bestSuggestionNumber;
+  }
+
+  if (descriptorTokens.length === 1 && bestScore === 1 && descriptorTokens[0]!.length >= 5) {
+    return bestSuggestionNumber;
+  }
+
+  return null;
+}
+
+function parseScopeSuggestionNumbersToInclude(
+  state: ChatState,
+  rawMessage: string
+): number[] {
+  if (state.scope_suggestions.length === 0) {
+    return [];
+  }
+  if (declinesSuggestedScopeItems(rawMessage)) {
+    return [];
+  }
+
+  const lower = rawMessage.toLowerCase();
+  const hasIncludeVerb = /\b(include|add|keep|use|take)\b/.test(lower);
+  const matches = new Set<number>();
+
+  const explicitIdPatterns = [
+    /\b(?:include|add|keep|use|take)\b[\s:,-]*(?:the\s+)?(?:suggestion|suggested|optional|extra)\s*(\d{1,2})\b/gi,
+    /\b(?:include|add|keep|use|take)\b[\s:,-]*(?:the\s+)?(?:add[- ]?on|addon)\s*(\d{1,2})\b/gi,
+    /\b(?:include|add|keep|use|take)\b[\s:,-]*s\s*(\d{1,2})\b/gi
+  ];
+  for (const pattern of explicitIdPatterns) {
+    pattern.lastIndex = 0;
+    let match = pattern.exec(rawMessage);
+    while (match !== null) {
+      const suggestionNumber = Number.parseInt(match[1] ?? "", 10);
+      if (Number.isInteger(suggestionNumber) && suggestionNumber > 0) {
+        matches.add(suggestionNumber);
+      }
+      match = pattern.exec(rawMessage);
+    }
+  }
+
+  const explicitQuestionPatterns = [
+    /\b(?:include|add|keep|use|take)\b[\s:,-]*q\s*(\d{1,2})(?:\s*\(\s*suggested\s*\))?\b/gi
+  ];
+  for (const pattern of explicitQuestionPatterns) {
+    pattern.lastIndex = 0;
+    let match = pattern.exec(rawMessage);
+    while (match !== null) {
+      const displayQuestionNumber = Number.parseInt(match[1] ?? "", 10);
+      if (Number.isInteger(displayQuestionNumber) && displayQuestionNumber > 0) {
+        const suggestionNumber = findScopeSuggestionNumberByDisplayQuestionNumber(
+          state,
+          displayQuestionNumber
+        );
+        if (suggestionNumber !== null) {
+          matches.add(suggestionNumber);
+        }
+      }
+      match = pattern.exec(rawMessage);
+    }
+  }
+
+  const hasIncludeIntent =
+    hasIncludeVerb &&
+    (mentionsOptionalScopeSuggestion(rawMessage) || matches.size > 0);
+
+  if (hasIncludeIntent) {
+    const descriptorPatterns = [
+      /\b(?:include|add|keep|use|take)\b[\s:,-]*(?:the\s+)?(?:suggested|suggestion|optional|extra|additional|add[- ]?on|addon)\s+(?:analysis|question|cut|breakdown)?\s*(?:about|for|on)?\s+([^.;\n]+)/i,
+      /\b(?:include|add|keep|use|take)\b[\s:,-]*(?:the\s+)?([^.;\n]+?)\s+(?:suggested|suggestion|optional|extra|additional|add[- ]?on|addon)\b/i
+    ];
+    for (const pattern of descriptorPatterns) {
+      const match = rawMessage.match(pattern);
+      if (!match) {
+        continue;
+      }
+      const suggestionNumber = findScopeSuggestionNumberByDescriptor(state, match[1] ?? "");
+      if (suggestionNumber !== null) {
+        matches.add(suggestionNumber);
+      }
+    }
+
+    if (matches.size === 0 && state.scope_suggestions.length === 1) {
+      matches.add(state.scope_suggestions[0]!.suggestion_number);
+    }
+  }
+
+  const existingSuggestionNumbers = new Set(
+    state.scope_suggestions.map((entry) => entry.suggestion_number)
+  );
+  return Array.from(matches.values())
+    .filter((suggestionNumber) => existingSuggestionNumbers.has(suggestionNumber))
+    .sort((left, right) => left - right);
+}
+
+function parseScopeSuggestionNumbersToDecline(
+  state: ChatState,
+  rawMessage: string
+): number[] {
+  if (state.scope_suggestions.length === 0) {
+    return [];
+  }
+
+  const lower = rawMessage.toLowerCase();
+  const hasDeclineVerb =
+    /\b(?:don't|do not|not)\s+(?:add|include|keep|use|want|need)\b/.test(lower) ||
+    /\b(?:exclude|remove|drop|delete|skip|omit|cancel|decline|reject|ignore)\b/.test(lower);
+  if (!hasDeclineVerb) {
+    return [];
+  }
+
+  const matches = new Set<number>();
+  const explicitQuestionPatterns = [
+    /\b(?:don't|do not|not)\s+(?:add|include|keep|use|want|need)\s+q\s*(\d{1,2})(?:\s*\(\s*suggested\s*\))?\b/gi,
+    /\b(?:exclude|remove|drop|delete|skip|omit|cancel|decline|reject|ignore)\s+q\s*(\d{1,2})(?:\s*\(\s*suggested\s*\))?\b/gi
+  ];
+  for (const pattern of explicitQuestionPatterns) {
+    pattern.lastIndex = 0;
+    let match = pattern.exec(rawMessage);
+    while (match !== null) {
+      const displayQuestionNumber = Number.parseInt(match[1] ?? "", 10);
+      if (Number.isInteger(displayQuestionNumber) && displayQuestionNumber > 0) {
+        const suggestionNumber = findScopeSuggestionNumberByDisplayQuestionNumber(
+          state,
+          displayQuestionNumber
+        );
+        if (suggestionNumber !== null) {
+          matches.add(suggestionNumber);
+        }
+      }
+      match = pattern.exec(rawMessage);
+    }
+  }
+
+  return Array.from(matches.values()).sort((left, right) => left - right);
+}
+
+function appendIncludedScopeSuggestionsToState(
+  state: ChatState,
+  suggestionNumbers: number[]
+): number {
+  if (suggestionNumbers.length === 0 || state.scope_suggestions.length === 0) {
+    return 0;
+  }
+
+  const suggestionSet = new Set(suggestionNumbers);
+  const suggestionsToInclude = state.scope_suggestions.filter((entry) =>
+    suggestionSet.has(entry.suggestion_number)
+  );
+  if (suggestionsToInclude.length === 0) {
+    return 0;
+  }
+
+  const appendedQuestions = suggestionsToInclude.map((entry, index) =>
+    sanitizeScopeQuestionLanguage({
+      question_number: state.scope_questions.length + index + 1,
+      question: entry.question,
+      clarification: buildClarificationForScopeQuestion(entry.question),
+      answer: null,
+      metric_key: null,
+      metric_display_name: null,
+      metric_definition_draft: null,
+      metric_source_columns: []
+    })
+  );
+
+  const normalizedQuestions = renumberScopeQuestions(
+    removeDuplicateScopeQuestions([...state.scope_questions, ...appendedQuestions]).map(
+      sanitizeScopeQuestionLanguage
+    )
+  );
+  const appendedCount = normalizedQuestions.length - state.scope_questions.length;
+  state.scope_questions = normalizedQuestions;
+  state.scope_suggestions = renumberScopeSuggestions(
+    state.scope_suggestions.filter((entry) => !suggestionSet.has(entry.suggestion_number))
+  );
+  state.scope_finalized = false;
+  pruneScopeSuggestionsAgainstScopeQuestions(state);
+  syncQuestionRegistryFromScope(state);
+  return Math.max(0, appendedCount);
+}
+
+function findScopeQuestionNumberByDescriptor(
+  state: ChatState,
+  descriptor: string
+): number | null {
+  const descriptorTokens = tokenizeForSimilarity(descriptor).filter(
+    (token) =>
+      !SCOPE_DEDUP_STOP_WORDS.has(token) &&
+      ![
+        "remove",
+        "removed",
+        "exclude",
+        "excluded",
+        "drop",
+        "dropped",
+        "delete",
+        "deleted",
+        "skip",
+        "skipped",
+        "omit",
+        "omitted",
+        "cancel",
+        "cancelled",
+        "canceled",
+        "scope",
+        "question",
+        "questions",
+        "ask",
+        "analysis",
+        "item"
+      ].includes(token)
+  );
+  if (descriptorTokens.length === 0) {
+    return null;
+  }
+
+  let bestQuestionNumber: number | null = null;
+  let bestScore = 0;
+  for (const entry of state.scope_questions) {
+    const candidateTokens = new Set(
+      tokenizeForSimilarity(`${entry.question} ${entry.clarification}`)
+    );
+    let score = 0;
+    for (const token of descriptorTokens) {
+      if (candidateTokens.has(token)) {
+        score += 1;
+      }
+    }
+    if (score > bestScore) {
+      bestScore = score;
+      bestQuestionNumber = entry.question_number;
+    }
+  }
+
+  if (bestQuestionNumber === null) {
+    return null;
+  }
+
+  if (bestScore >= Math.min(2, descriptorTokens.length)) {
+    return bestQuestionNumber;
+  }
+
+  if (descriptorTokens.length === 1 && bestScore === 1 && descriptorTokens[0]!.length >= 5) {
+    return bestQuestionNumber;
+  }
+
+  return null;
+}
+
+function parseScopeQuestionNumbersToRemove(
+  state: ChatState,
+  rawMessage: string
+): number[] {
+  if (state.scope_questions.length === 0) {
+    return [];
+  }
+
+  if (!hasExplicitScopeRemovalIntent(rawMessage)) {
+    return [];
+  }
+
+  const matches = new Set<number>();
+  const explicitIdPatterns = [
+    /\b(?:exclude|remove|drop|delete|skip|omit|cancel|(?:do not|don't)\s+include)\b[\s:,-]*(?:the\s+)?(?:(?:questions?|qs?)\s*|q\s*)\s*((?:q?\s*\d{1,2}\s*(?:,|\band\b)?\s*){1,6})/gi,
+    /\b(?:i\s+)?(?:do not|don't)\s+(?:want|need)\b[\s:,-]*(?:the\s+)?(?:(?:questions?|qs?)\s*|q\s*)\s*((?:q?\s*\d{1,2}\s*(?:,|\band\b)?\s*){1,6})/gi,
+    /\b(?:no need for|not interested in)\b[\s:,-]*(?:the\s+)?(?:(?:questions?|qs?)\s*|q\s*)\s*((?:q?\s*\d{1,2}\s*(?:,|\band\b)?\s*){1,6})/gi,
+    /\b(?:q(?:uestion)?\s*(\d{1,2}))\b[\s\S]{0,32}\b(?:excluded|removed|dropped|deleted|skipped|omitted|cancelled|canceled)\b/gi
+  ];
+
+  for (const pattern of explicitIdPatterns) {
+    pattern.lastIndex = 0;
+    let match = pattern.exec(rawMessage);
+    while (match !== null) {
+      const candidateText = match[1] ?? "";
+      const numbers = candidateText.match(/\d{1,2}/g) ?? [];
+      for (const rawNumber of numbers) {
+        const questionNumber = Number.parseInt(rawNumber, 10);
+        if (Number.isInteger(questionNumber) && questionNumber > 0) {
+          matches.add(questionNumber);
+        }
+      }
+      match = pattern.exec(rawMessage);
+    }
+  }
+
+  for (const [ordinal, questionNumber] of SCOPE_QUESTION_ORDINALS.entries()) {
+    const ordinalPattern = new RegExp(
+      `\\b(?:exclude|remove|drop|delete|skip|omit|cancel|(?:do not|don't)\\s+include|(?:do not|don't)\\s+(?:want|need)|no need for|not interested in)\\b[\\s:,-]*(?:the\\s+)?${ordinal}\\s+question\\b`,
+      "i"
+    );
+    if (ordinalPattern.test(rawMessage)) {
+      matches.add(questionNumber);
+    }
+  }
+
+  const descriptorPatterns = [
+    /\b(?:exclude|remove|drop|delete|skip|omit|cancel|(?:do not|don't)\s+include)\b[\s:,-]*(?:the\s+)?(?:question|ask|analysis|scope item)\s+(?:about|on|for)?\s+([^.;\n]+)/i,
+    /\b(?:the\s+)?(?:question|ask|analysis|scope item)\s+(?:about|on|for)\s+([^.;\n]+?)\s+(?:should be|to be)?\s*(?:excluded|removed|dropped|deleted|skipped|omitted|cancelled|canceled)\b/i
+  ];
+  for (const pattern of descriptorPatterns) {
+    const match = rawMessage.match(pattern);
+    if (!match) {
+      continue;
+    }
+    const questionNumber = findScopeQuestionNumberByDescriptor(state, match[1] ?? "");
+    if (questionNumber !== null) {
+      matches.add(questionNumber);
+    }
+  }
+
+  const existingQuestionNumbers = new Set(state.scope_questions.map((entry) => entry.question_number));
+  return Array.from(matches.values())
+    .filter((questionNumber) => existingQuestionNumbers.has(questionNumber))
+    .sort((left, right) => left - right);
+}
+
+function hasExplicitScopeRemovalIntent(rawMessage: string): boolean {
+  const lower = rawMessage.toLowerCase();
+  return (
+    /\b(exclude|remove|drop|delete|skip|omit|cancel)\b/.test(lower) ||
+    /\b(?:do not|don't)\s+include\b/.test(lower) ||
+    /\b(?:do not|don't)\s+(?:want|need)\b/.test(lower) ||
+    /\b(?:no need for|not interested in)\b/.test(lower)
+  );
+}
+
+function declinesSuggestedScopeItems(rawMessage: string): boolean {
+  const lower = rawMessage.toLowerCase();
+  const mentionsSuggested =
+    mentionsOptionalScopeSuggestion(rawMessage) &&
+    (
+      /\b(question|questions|analysis|analyses|ask|asks|item|items)\b/.test(lower) ||
+      OPTIONAL_SCOPE_SUGGESTION_NUMBER_PATTERN.test(rawMessage)
+    );
+  if (!mentionsSuggested) {
+    return false;
+  }
+
+  return (
+    /\b(?:don't|do not|not)\s+(?:add|include|keep|use|want|need)\b/.test(lower) ||
+    /\b(?:exclude|remove|drop|delete|skip|omit|cancel|decline|reject|ignore)\b/.test(lower)
+  );
+}
+
+function parseSuggestedScopeQuestionNumbersToRemove(
+  state: ChatState,
+  rawMessage: string
+): number[] {
+  if (!declinesSuggestedScopeItems(rawMessage)) {
+    return [];
+  }
+
+  return state.scope_questions
+    .filter((entry) => /^\s*\[suggested\]/i.test(entry.question))
+    .map((entry) => entry.question_number)
+    .sort((left, right) => left - right);
+}
+
+function removeScopeQuestionsFromState(
+  state: ChatState,
+  questionNumbers: number[]
+): number {
+  if (questionNumbers.length === 0 || state.scope_questions.length === 0) {
+    return 0;
+  }
+
+  const removalSet = new Set(questionNumbers);
+  const retained = state.scope_questions.filter(
+    (entry) => !removalSet.has(entry.question_number)
+  );
+  if (retained.length === state.scope_questions.length) {
+    return 0;
+  }
+
+  const oldToNewQuestionNumbers = new Map<number, number>();
+  retained.forEach((entry, index) => {
+    oldToNewQuestionNumbers.set(entry.question_number, index + 1);
+  });
+
+  state.scope_questions = retained.map((entry, index) => ({
+    ...entry,
+    question_number: index + 1
+  }));
+  state.pending_inputs = dedupePendingInputs(
+    state.pending_inputs.flatMap((entry) => {
+      if (typeof entry.question_number !== "number") {
+        return [entry];
+      }
+      const mappedQuestionNumber = oldToNewQuestionNumbers.get(entry.question_number);
+      if (!mappedQuestionNumber) {
+        return [];
+      }
+      return [
+        {
+          ...entry,
+          question_number: mappedQuestionNumber
+        }
+      ];
+    })
+  );
+  state.question_registry = [];
+  syncQuestionRegistryFromScope(state);
+  return removalSet.size;
 }
 
 function isClarificationStyleScopeQuestion(question: string): boolean {
@@ -4307,11 +5205,11 @@ function trySplitCompoundQuestion(question: string): string[] {
   // the split occurs outside parentheses, and the RHS starts a new clause.
   // This avoids bad splits like:
   // "refund count and refunded revenue per month" -> two broken questions.
-  if (normalizedQuestion.length > 80) {
+  if (normalizedQuestion.length > 40) {
     const andParts = splitOnAndOutsideParentheses(normalizedQuestion).map((p) => p.trim()).filter((p) => p.length > 15);
     if (andParts.length === 2 && andParts.every((p) => isAnalyticalSegment(p))) {
       const [, right] = andParts;
-      const rightStartsClause = /^(?:what|which|how|for|compare|comparison|show|list|rank|identify|find|analy[sz]e|break(?:\s+down)?|tell)\b/i.test(
+      const rightStartsClause = /^(?:what|which|how|for|compare|comparison|show|list|rank|identify|find|analy[sz]e|break(?:\s+down)?|tell|top|highest|lowest|city|cities|support|ticket|tickets|issue|issues|reason|reasons|product|products|category|categories|trend)\b/i.test(
         right
       );
       if (!rightStartsClause) {
@@ -4433,15 +5331,60 @@ function removeDuplicateScopeQuestions(
   return kept;
 }
 
+function renumberScopeSuggestions(
+  suggestions: ScopeSuggestionEntry[]
+): ScopeSuggestionEntry[] {
+  return suggestions.map((entry, index) => ({
+    ...entry,
+    suggestion_number: index + 1
+  }));
+}
+
+function removeDuplicateScopeSuggestions(
+  suggestions: ScopeSuggestionEntry[],
+  scopeQuestions: ScopeQuestionEntry[]
+): ScopeSuggestionEntry[] {
+  const kept: ScopeSuggestionEntry[] = [];
+  for (const suggestion of suggestions) {
+    const duplicateInScope = scopeQuestions.some(
+      (entry) =>
+        areScopeQuestionTextsSimilar(entry.question, suggestion.question) &&
+        !suggestionAddsDistinctAnalyticalFocus(entry.question, suggestion.question)
+    );
+    if (duplicateInScope) {
+      continue;
+    }
+    const duplicateSuggestion = kept.some(
+      (entry) =>
+        areScopeQuestionTextsSimilar(entry.question, suggestion.question) &&
+        !suggestionAddsDistinctAnalyticalFocus(entry.question, suggestion.question)
+    );
+    if (duplicateSuggestion) {
+      continue;
+    }
+    kept.push(suggestion);
+  }
+  return renumberScopeSuggestions(kept);
+}
+
+function pruneScopeSuggestionsAgainstScopeQuestions(state: ChatState): void {
+  if (state.scope_suggestions.length === 0) {
+    return;
+  }
+  state.scope_suggestions = removeDuplicateScopeSuggestions(
+    state.scope_suggestions,
+    state.scope_questions
+  );
+}
+
 /**
- * Build 1-2 suggested additional scope questions based on the core questions,
- * business context, and catalog data. These are marked with [Suggested] prefix
- * so the user can accept, modify, or ignore them.
+ * Build up to 2 optional suggested analyses based on the confirmed core scope.
+ * Suggestions are advisory only and must not enter the real scope until the user includes them.
  */
 function buildSuggestedScopeQuestions(
   coreQuestions: ScopeQuestionEntry[]
-): ScopeQuestionEntry[] {
-  const suggestions: ScopeQuestionEntry[] = [];
+): ScopeSuggestionEntry[] {
+  const suggestions: ScopeSuggestionEntry[] = [];
   const coreText = coreQuestions.map((q) => q.question.toLowerCase()).join(" ");
 
   const hasTrend = /\b(trend|monthly|weekly|over time|timeline)\b/.test(coreText);
@@ -4452,18 +5395,14 @@ function buildSuggestedScopeQuestions(
   const hasGeo = /\b(city|cities|region|state|country|location)\b/.test(coreText);
   const hasProduct = /\b(product|category|sku|item)\b/.test(coreText);
   const hasSupport = /\b(support|ticket|issue|complaint)\b/.test(coreText);
+  const hasResolutionTime = /\b(resolution|resolve|resolved|turnaround|sla|hours)\b/.test(coreText);
 
   // Suggest a comparison if they only asked for a trend
   if (hasTrend && !hasComparison) {
     suggestions.push({
-      question_number: 0, // will be renumbered
-      question: "[Suggested] How does the most recent period compare to the prior equivalent period (percentage and absolute change)?",
-      clarification: "Adding a period-over-period comparison gives context to the trend direction.",
-      answer: null,
-      metric_key: null,
-      metric_display_name: null,
-      metric_definition_draft: null,
-      metric_source_columns: []
+      suggestion_number: 0,
+      question: "How does the most recent period compare to the prior equivalent period (percentage and absolute change)?",
+      reason: "A period-over-period view gives context to the trend direction instead of leaving it as a raw time series."
     });
   }
 
@@ -4475,33 +5414,34 @@ function buildSuggestedScopeQuestions(
         ? "product category or region"
         : "key dimension (e.g., category, region, or channel)";
     suggestions.push({
-      question_number: 0,
-      question: `[Suggested] What is the breakdown by ${dimension} for the analyzed metric?`,
-      clarification: "A dimensional breakdown helps identify which segments drive the overall numbers.",
-      answer: null,
-      metric_key: null,
-      metric_display_name: null,
-      metric_definition_draft: null,
-      metric_source_columns: []
+      suggestion_number: 0,
+      question: `What is the breakdown by ${dimension} for the analyzed metric?`,
+      reason: "A dimensional breakdown usually shows which segments are driving the overall movement."
     });
   }
 
   // Suggest support ticket correlation for refund analyses
   if (hasRefund && !hasSupport) {
     suggestions.push({
-      question_number: 0,
-      question: "[Suggested] What are the top support ticket reasons linked to refunded orders?",
-      clarification: "Correlating support reasons with refunds can reveal root causes.",
-      answer: null,
-      metric_key: null,
-      metric_display_name: null,
-      metric_definition_draft: null,
-      metric_source_columns: []
+      suggestion_number: 0,
+      question: "What are the top support ticket reasons linked to refunded orders?",
+      reason: "Support-ticket linkage often reveals root causes behind the refund pattern."
     });
   }
 
-  // Limit to 2 suggestions max
-  return suggestions.slice(0, 2);
+  // Suggest operational-effort analysis when the scope already includes refund-linked
+  // support activity but does not yet cover how hard those issues are to resolve.
+  if (hasRefund && hasSupport && !hasResolutionTime) {
+    suggestions.push({
+      suggestion_number: 0,
+      question:
+        "What is the average support ticket resolution time for tickets linked to refunded orders, broken down by issue type?",
+      reason:
+        "Resolution-time analysis shows whether refund-linked issues are operationally expensive or getting harder to close."
+    });
+  }
+
+  return removeDuplicateScopeSuggestions(suggestions.slice(0, 2), coreQuestions);
 }
 
 function areScopeQuestionsEquivalent(
@@ -4734,6 +5674,36 @@ function normalizeSimilarityText(value: string): string {
     .trim();
 }
 
+function normalizeSimilarityToken(token: string): string {
+  if (token.endsWith("ies") && token.length > 4) {
+    return `${token.slice(0, -3)}y`;
+  }
+  if (token.endsWith("s") && !token.endsWith("ss") && token.length > 3) {
+    return token.slice(0, -1);
+  }
+  return token;
+}
+
+function suggestionAddsDistinctAnalyticalFocus(
+  existingQuestion: string,
+  suggestedQuestion: string
+): boolean {
+  const existing = normalizeSimilarityText(existingQuestion);
+  const suggested = normalizeSimilarityText(suggestedQuestion);
+  const analyticalTokenGroups = [
+    ["average", "avg", "median", "mean"],
+    ["resolution", "resolve", "resolved", "turnaround", "duration", "latency", "sla"],
+    ["hour", "hours", "day", "days", "time"],
+    ["delta", "change", "growth"]
+  ];
+
+  return analyticalTokenGroups.some((group) => {
+    const suggestedHasGroup = group.some((token) => suggested.includes(token));
+    const existingHasGroup = group.some((token) => existing.includes(token));
+    return suggestedHasGroup && !existingHasGroup;
+  });
+}
+
 function looksLikeInternalScopeReasoning(question: string, clarification: string): boolean {
   const text = `${question} ${clarification}`.toLowerCase();
   return (
@@ -4787,7 +5757,7 @@ function tokenizeForSimilarity(value: string): string[] {
     new Set(
       normalizeSimilarityText(value)
         .split(" ")
-        .map((token) => token.trim())
+        .map((token) => normalizeSimilarityToken(token.trim()))
         .filter((token) => token.length >= 3 && !stopWords.has(token))
     )
   );
@@ -5005,53 +5975,34 @@ function formulateScopeQuestions(
     segments = [cleanScopeQuestionText(normalized)];
   }
 
+  if (segments.length > 1) {
+    segments = normalizeMultiClauseScopeSegments(segments);
+  }
+
   const baseQuestions = segments.slice(0, 5).map((question) => ({
     question,
     clarification: buildClarificationForScopeQuestion(question)
   }));
 
-  if (!looksLikeComplexMultiQuestionPrompt(normalized.toLowerCase()) || baseQuestions.length >= 3) {
-    return baseQuestions;
-  }
-
-  const suggestions = suggestAdditionalScopeQuestionsFromMessage(normalized)
-    .map((question) => ({
-      question,
-      clarification: buildClarificationForScopeQuestion(question)
-    }))
-    .filter(
-      (candidate) =>
-        !baseQuestions.some((existing) => areScopeQuestionTextsSimilar(existing.question, candidate.question))
-    );
-
-  return [...baseQuestions, ...suggestions].slice(0, 5);
+  return baseQuestions;
 }
 
-function suggestAdditionalScopeQuestionsFromMessage(rawMessage: string): string[] {
-  const lower = rawMessage.toLowerCase();
-  const suggestions: string[] = [];
+function normalizeMultiClauseScopeSegments(segments: string[]): string[] {
+  return segments.map((segment, index) => {
+    if (index !== 0) {
+      return segment;
+    }
 
-  if (/\b(refund|return|cancel)\b/.test(lower) && !/\b(issue|reason|driver|root cause)\b/.test(lower)) {
-    suggestions.push("[Suggested] What are the top reasons driving refunded orders in the same period?");
-  }
+    if (/\b(vs|versus|prior|previous|comparison)\b/i.test(segment)) {
+      return segment;
+    }
 
-  if (/\b(city|region|country|location)\b/.test(lower) && !/\btrend|month|months|week|weeks\b/.test(lower)) {
-    suggestions.push("[Suggested] How has this metric trended over time for the top locations?");
-  }
-
-  if (/\b(compare|comparison|vs|versus|prior|previous)\b/.test(lower) && !/\b(delta|change|percentage|percent)\b/.test(lower)) {
-    suggestions.push("[Suggested] What is the absolute and percentage delta between the compared periods?");
-  }
-
-  if (/\b(support|ticket|issue)\b/.test(lower) && !/\bresolution|sla|time to resolve|backlog\b/.test(lower)) {
-    suggestions.push("[Suggested] Which support themes have the longest resolution time in this window?");
-  }
-
-  if (suggestions.length === 0) {
-    suggestions.push("[Suggested] Which segment shows the biggest risk or opportunity in this period?");
-  }
-
-  return suggestions.slice(0, 2);
+    const stripped = segment.replace(
+      /^(?:compare|show|analy[sz]e|review|list|find|give me|tell me|help me understand|break down)\s+/i,
+      ""
+    ).trim();
+    return stripped.length >= 10 ? stripped : segment;
+  });
 }
 
 function looksLikeStandaloneScopeClause(value: string): boolean {
@@ -5090,34 +6041,213 @@ function buildClarificationForScopeQuestion(question: string): string {
   const isProduct = /\b(product|category|sku|item)\b/.test(lower);
 
   if (isSupport) {
-    return "Confirm join key for ticket-to-order linkage (for example order_id), whether only refunded-order-linked tickets are in scope, and how to rank top issue themes.";
+    return "Confirm how support tickets should be linked to refunded orders and what ticket set to include.";
   }
 
   if (isRefund && isRate && isGeo) {
-    return "Confirm refund-rate formula (count-based vs value-based), city/region ranking cutoff, and the timeframe/date column for this breakdown.";
+    return "Confirm the refund-rate formula and how many cities to rank.";
+  }
+
+  if (isRefund && isRate && isProduct && isTrend) {
+    return "Confirm the refund-rate formula, the product/category cutoff, and the time grain.";
+  }
+
+  if (isRefund && isRate && isProduct) {
+    return "Confirm the refund-rate formula and the product/category cutoff.";
   }
 
   if (isComparison && isTrend) {
-    return "Confirm exact Period A vs Period B definitions, whether the window should include data from the current in-progress month or only completed months, and the primary date column/granularity.";
+    return "Confirm the two periods being compared and whether to use completed months only.";
   }
 
   if (isComparison) {
-    return "Confirm exact comparison windows and the core metric to compare (absolute, percentage, or both).";
+    return "Confirm the comparison windows.";
   }
 
   if (isTrend) {
-    return "Confirm timeframe boundary, primary date column, and reporting granularity (for example monthly).";
+    return "Confirm the date range and time grain.";
   }
 
   if (isRefund) {
-    return "Confirm which statuses define a refunded order and which date column should anchor the requested window.";
+    return "Confirm how refunded orders should be identified.";
   }
 
   if (isTopN && (isProduct || isGeo)) {
-    return "Confirm ranking metric and top-N cutoff for this breakdown.";
+    return "Confirm the ranking metric and cutoff.";
   }
 
-  return "Confirm final filters, timeframe, and primary date column before execution.";
+  return "Confirm the key filters and time range.";
+}
+
+function getCurrentYearMonthInTimezone(
+  timezone: string
+): { year: number; month: number } | null {
+  try {
+    const parts = new Intl.DateTimeFormat("en-CA", {
+      timeZone: timezone || "UTC",
+      year: "numeric",
+      month: "2-digit"
+    }).formatToParts(new Date());
+    const year = Number(parts.find((part) => part.type === "year")?.value ?? "0");
+    const month = Number(parts.find((part) => part.type === "month")?.value ?? "0");
+    if (!Number.isInteger(year) || !Number.isInteger(month) || year <= 0 || month < 1 || month > 12) {
+      return null;
+    }
+    return { year, month };
+  } catch {
+    return null;
+  }
+}
+
+function shiftUtcMonth(date: Date, monthDelta: number): Date {
+  return new Date(Date.UTC(date.getUTCFullYear(), date.getUTCMonth() + monthDelta, 1));
+}
+
+function formatMonthYearLabel(date: Date, timezone: string): string {
+  try {
+    return new Intl.DateTimeFormat("en-US", {
+      timeZone: timezone || "UTC",
+      month: "short",
+      year: "numeric"
+    }).format(date);
+  } catch {
+    return date.toISOString().slice(0, 7);
+  }
+}
+
+function buildCompleteMonthWindowLabel(months: number, timezone: string): string | null {
+  if (!Number.isInteger(months) || months <= 0) {
+    return null;
+  }
+
+  const currentYearMonth = getCurrentYearMonthInTimezone(timezone);
+  if (!currentYearMonth) {
+    return null;
+  }
+
+  const currentMonthStart = new Date(
+    Date.UTC(currentYearMonth.year, currentYearMonth.month - 1, 1)
+  );
+  const lastCompleteMonthStart = shiftUtcMonth(currentMonthStart, -1);
+  const firstMonthStart = shiftUtcMonth(lastCompleteMonthStart, -(months - 1));
+  return `${formatMonthYearLabel(firstMonthStart, timezone)} to ${formatMonthYearLabel(lastCompleteMonthStart, timezone)}`;
+}
+
+function buildComparisonMonthWindowLabel(months: number, timezone: string): string | null {
+  if (!Number.isInteger(months) || months <= 0) {
+    return null;
+  }
+
+  const currentYearMonth = getCurrentYearMonthInTimezone(timezone);
+  if (!currentYearMonth) {
+    return null;
+  }
+
+  const currentMonthStart = new Date(
+    Date.UTC(currentYearMonth.year, currentYearMonth.month - 1, 1)
+  );
+  const currentWindowEnd = shiftUtcMonth(currentMonthStart, -1);
+  const currentWindowStart = shiftUtcMonth(currentWindowEnd, -(months - 1));
+  const priorWindowEnd = shiftUtcMonth(currentWindowStart, -1);
+  const priorWindowStart = shiftUtcMonth(priorWindowEnd, -(months - 1));
+  return `${formatMonthYearLabel(currentWindowStart, timezone)} to ${formatMonthYearLabel(currentWindowEnd, timezone)} vs ${formatMonthYearLabel(priorWindowStart, timezone)} to ${formatMonthYearLabel(priorWindowEnd, timezone)}`;
+}
+
+function describeRefundRateFormulaForAssumption(
+  state: ChatState,
+  question: ScopeQuestionEntry
+): string {
+  const matchedMetric = findSavedMetricDefinitionForText(
+    state.metric_definitions,
+    `${question.question} ${question.clarification}`
+  );
+  const rawFormula =
+    matchedMetric?.definition?.trim() ||
+    (/\b(revenue|value|gmv|sales)\b/i.test(`${question.question} ${question.clarification}`)
+      ? "refunded revenue / total revenue"
+      : "refunded orders / total orders");
+  const cleaned = rawFormula.replace(/\s+/g, " ").trim();
+  return cleaned.length > 80 ? matchedMetric?.display_name?.trim() || "the saved refund-rate formula" : cleaned;
+}
+
+function buildAssumptionPromptForScopeQuestion(
+  state: ChatState,
+  question: ScopeQuestionEntry
+): string {
+  const lower = `${question.question} ${question.clarification}`.toLowerCase();
+  const questionText = question.question.toLowerCase();
+  const timezone = state.draft.timezone || "UTC";
+  const requestedMonths = getRequestedMonthWindowFromScope(state, lower);
+  const monthWindowLabel =
+    requestedMonths !== null ? buildCompleteMonthWindowLabel(requestedMonths, timezone) : null;
+  const compareMonths =
+    Number.parseInt(
+      /\b(?:past|last|previous|recent|most recent)\s+(\d{1,2})(?:\s+complete|\s+full|\s+calendar)?\s+months?\b/.exec(questionText)?.[1] ?? "",
+      10
+    ) || 2;
+  const comparisonWindowLabel = buildComparisonMonthWindowLabel(compareMonths, timezone);
+  const topN = /\btop\s+(\d{1,2})\b/i.exec(question.question)?.[1] ?? "5";
+
+  if (/\bresolution\b/.test(lower) && /\bissue\b/.test(lower)) {
+    const timeline = monthWindowLabel ? ` for ${monthWindowLabel}` : "";
+    return `I assumed we should use only support tickets directly linked to refunded orders${timeline} and look at average resolution time by issue type. Is that fine, or do you want a change?`;
+  }
+
+  if (/\b(?:support|ticket|tickets)\b/.test(lower) && /\b(?:issue|reason)\b/.test(lower)) {
+    const timeline = monthWindowLabel ? ` for ${monthWindowLabel}` : "";
+    return `I assumed we should use only support tickets directly linked to refunded orders${timeline} and rank issue types by ticket count. Is that fine, or do you want a change?`;
+  }
+
+  if (/\b(?:support|ticket|tickets)\b/.test(lower)) {
+    const timeline = monthWindowLabel ? ` for ${monthWindowLabel}` : "";
+    return `I assumed we should count only support tickets directly linked to refunded orders${timeline}. Is that fine, or do you want a change?`;
+  }
+
+  if (
+    /\b(refund|refunded|return|cancel)\b/.test(lower) &&
+    /\b(rate|ratio|percentage|percent)\b/.test(lower) &&
+    /\b(product|category|sku|item)\b/.test(lower)
+  ) {
+    const formula = describeRefundRateFormulaForAssumption(state, question);
+    const timeline = monthWindowLabel ? ` over ${monthWindowLabel}` : "";
+    return `I assumed refund rate should mean ${formula} and we should rank the top ${topN} product categories${timeline}. Is that fine, or do you want a change?`;
+  }
+
+  if (
+    /\b(refund|refunded|return|cancel)\b/.test(lower) &&
+    /\b(rate|ratio|percentage|percent)\b/.test(lower) &&
+    /\b(city|cities|region|regions|state|states|country|countries|location)\b/.test(lower)
+  ) {
+    const formula = describeRefundRateFormulaForAssumption(state, question);
+    const timeline = monthWindowLabel ? ` over ${monthWindowLabel}` : "";
+    return `I assumed refund rate should mean ${formula} and we should rank the top ${topN} cities${timeline}. Is that fine, or do you want a change?`;
+  }
+
+  if (/\b(vs|versus|compare|comparison|prior|previous)\b/.test(lower)) {
+    const comparisonWindow =
+      comparisonWindowLabel ??
+      `the latest ${compareMonths}-month period vs the prior ${compareMonths}-month period`;
+    return `I assumed this should compare ${comparisonWindow} and show both absolute and percentage change. Is that fine, or do you want a change?`;
+  }
+
+  if (/\b(trend|month|months|week|weeks|quarter|quarters)\b/.test(lower)) {
+    const windowText =
+      monthWindowLabel ??
+      (requestedMonths !== null ? `the last ${requestedMonths} complete months` : "the recent complete period");
+    const grain = /\bweek|weeks|weekly\b/.test(lower) ? "weekly" : "monthly";
+    return `I assumed this should use ${windowText} with ${grain} buckets. Is that fine, or do you want a change?`;
+  }
+
+  if (/\b(refund|refunded|return|cancel)\b/.test(lower)) {
+    const timeline = monthWindowLabel ? ` for ${monthWindowLabel}` : "";
+    return `I assumed refunded orders should be identified using the standard refunded status${timeline}. Is that fine, or do you want a change?`;
+  }
+
+  if (/\b(top|highest|lowest|rank|ranking)\b/.test(lower)) {
+    return `I assumed we should use a top ${topN} cutoff by the requested metric. Is that fine, or do you want a change?`;
+  }
+
+  return "I assumed the standard interpretation of the remaining filters and time range from your request. Is that fine, or do you want a change?";
 }
 
 function getRequestedMonthWindowFromScope(state: ChatState, questionText: string): number | null {
@@ -5168,6 +6298,23 @@ function buildProposedDefaultForScopeQuestion(
       baseTimeline,
       "Join support tickets to refunded orders via order_id when available.",
       "Use only linked refunded-order tickets and rank top issue types by ticket count."
+    ].join(" ");
+  }
+
+  if (
+    /\b(refund|refunded|return|cancel)\b/.test(questionText) &&
+    /\b(product|category|sku|item)\b/.test(questionText) &&
+    /\b(rate|ratio|percentage|percent)\b/.test(questionText)
+  ) {
+    const topN = /\btop\s+(\d{1,2})\b/.exec(questionText)?.[1] ?? "5";
+    const savedFormula =
+      matchedMetric && matchedMetric.definition.trim().length > 0
+        ? matchedMetric.definition.trim()
+        : "refunded_orders / total_orders";
+    return [
+      baseTimeline,
+      `Default refund-rate formula: ${savedFormula}.`,
+      `Rank top ${topN} product categories by refund rate and show the trend at the requested grain unless you want a different cutoff or formula.`
     ].join(" ");
   }
 
@@ -5245,13 +6392,6 @@ function collectMetricMatchPhrases(entry: {
     phrases.add("refunded rate");
   }
 
-  const definitionTokens = normalize(entry.definition)
-    .split(/\s+/)
-    .filter((token) => token.length >= 5);
-  if (definitionTokens.length > 0) {
-    phrases.add(definitionTokens.slice(0, 3).join(" "));
-  }
-
   return Array.from(phrases).filter((phrase) => phrase.length > 0);
 }
 
@@ -5315,12 +6455,24 @@ function getTodayDateStringInTimezone(timezone: string): string {
 async function applyScopeClarificationAnswersWithLlm(
   state: ChatState,
   rawMessage: string,
+  apiClient: WebApiClient,
   queryRouter: QueryRouterClient | undefined
 ): Promise<{ answered_count: number; all_answered: boolean }> {
   if (state.scope_questions.length === 0) {
     return { answered_count: 0, all_answered: true };
   }
-  const explicitAssignments = parseExplicitScopeAnswerAssignments(rawMessage);
+
+  const uniqueSortedQuestionNumbers = (values: number[]): number[] =>
+    Array.from(new Set(values.filter((value) => Number.isInteger(value) && value > 0))).sort(
+      (left, right) => left - right
+    );
+
+  const suggestionNumbersToDecline = parseScopeSuggestionNumbersToDecline(state, rawMessage);
+  const declineSuggestedScopeQuestions =
+    suggestionNumbersToDecline.length > 0 || declinesSuggestedScopeItems(rawMessage);
+  const suggestionNumbersToInclude = parseScopeSuggestionNumbersToInclude(state, rawMessage);
+  const answerResolutionMessage = stripScopeSuggestionDecisionClauses(rawMessage, state);
+  const explicitAssignments = parseExplicitScopeAnswerAssignments(answerResolutionMessage);
   const explicitAssignmentNumbers = new Set(explicitAssignments.map((entry) => entry.question_number));
   const pendingInputQuestionNumbers = new Set(
     state.pending_inputs
@@ -5328,10 +6480,21 @@ async function applyScopeClarificationAnswersWithLlm(
       .filter((value): value is number => typeof value === "number" && Number.isInteger(value) && value > 0)
   );
   const messageHasNewQuestionIntent =
-    looksLikeNewQuestionWhileClarifying(rawMessage) ||
-    /\b(add|also|another|one more|new question|follow[- ]?up)\b/i.test(rawMessage);
+    !declineSuggestedScopeQuestions &&
+    suggestionNumbersToInclude.length === 0 &&
+    (
+      hasExplicitNewQuestionDirectiveWhileClarifying(answerResolutionMessage) ||
+      /\b(add|also add|another|one more|new question|add question|follow[- ]?up|what about)\b/i.test(
+        answerResolutionMessage
+      )
+    );
   const semanticSkipQuestionNumbers = new Set<number>();
   if (explicitAssignments.length > 0) {
+    for (const question of state.scope_questions) {
+      if (!explicitAssignmentNumbers.has(question.question_number)) {
+        semanticSkipQuestionNumbers.add(question.question_number);
+      }
+    }
     for (const questionNumber of pendingInputQuestionNumbers) {
       if (!explicitAssignmentNumbers.has(questionNumber)) {
         semanticSkipQuestionNumbers.add(questionNumber);
@@ -5352,6 +6515,15 @@ async function applyScopeClarificationAnswersWithLlm(
     /\b(same for all|all questions|for all questions|apply to all|across all questions|for each question)\b/i.test(
       rawMessage
     );
+  const questionNumbersExcludedFromBlanketConfirmation =
+    parseScopeQuestionNumbersExcludedFromBlanketConfirmation(state, rawMessage);
+  let questionNumbersToRemove = uniqueSortedQuestionNumbers([
+    ...parseScopeQuestionNumbersToRemove(state, rawMessage),
+    ...parseSuggestedScopeQuestionNumbersToRemove(state, rawMessage)
+  ]);
+  for (const questionNumber of questionNumbersToRemove) {
+    semanticSkipQuestionNumbers.add(questionNumber);
+  }
 
   const questionNumbersBeforeAppend = new Set(state.scope_questions.map((entry) => entry.question_number));
   // Capture unanswered questions before potential appends so "confirm all"
@@ -5361,7 +6533,28 @@ async function applyScopeClarificationAnswersWithLlm(
       .filter((entry) => !entry.answer || entry.answer.trim().length === 0)
       .map((entry) => entry.question_number)
   );
-  const appendedImpromptuQuestion = maybeAppendImpromptuScopeQuestionFromClarification(state, rawMessage);
+  const appendedSuggestedQuestionsCount = appendIncludedScopeSuggestionsToState(
+    state,
+    suggestionNumbersToInclude
+  );
+  if (suggestionNumbersToDecline.length > 0) {
+    const suggestionSet = new Set(suggestionNumbersToDecline);
+    state.scope_suggestions = renumberScopeSuggestions(
+      state.scope_suggestions.filter((entry) => !suggestionSet.has(entry.suggestion_number))
+    );
+  }
+  const questionNumbersAfterSuggestionAppend = new Set(
+    state.scope_questions.map((entry) => entry.question_number)
+  );
+  const appendedSuggestedQuestionNumbers = new Set(
+    Array.from(questionNumbersAfterSuggestionAppend).filter(
+      (questionNumber) => !questionNumbersBeforeAppend.has(questionNumber)
+    )
+  );
+  const appendedImpromptuQuestion = maybeAppendImpromptuScopeQuestionFromClarification(
+    state,
+    answerResolutionMessage
+  );
   const appendedQuestionNumbers = new Set(
     state.scope_questions
       .map((entry) => entry.question_number)
@@ -5369,85 +6562,6 @@ async function applyScopeClarificationAnswersWithLlm(
   );
   for (const questionNumber of appendedQuestionNumbers) {
     semanticSkipQuestionNumbers.add(questionNumber);
-  }
-
-  const pruneResolvedPendingInputs = () => {
-    if (state.pending_inputs.length === 0) {
-      return;
-    }
-    reconcilePendingInputsToScopeQuestions(state);
-    state.pending_inputs = state.pending_inputs.filter((entry) => {
-      if (typeof entry.question_number !== "number") {
-        return true;
-      }
-      const target = state.scope_questions.find((question) => question.question_number === entry.question_number);
-      if (!target) {
-        return true;
-      }
-      return !target.answer || target.answer.trim().length === 0;
-    });
-  };
-
-  const hasOutstandingPendingInputs = () =>
-    state.pending_inputs.some((entry) => {
-      if (typeof entry.question_number !== "number") {
-        return true;
-      }
-      const target = state.scope_questions.find((question) => question.question_number === entry.question_number);
-      if (!target) {
-        return true;
-      }
-      return !target.answer || target.answer.trim().length === 0;
-    });
-
-  pruneResolvedPendingInputs();
-
-  // --- Confirm-all shortcut: apply proposed defaults to all unanswered questions ---
-  if (isConfirmAllScopeMessage(rawMessage)) {
-    const hasNewQuestionIntentInMessage = messageHasNewQuestionIntent;
-    const unansweredNow = state.scope_questions
-      .filter((entry) => !entry.answer || entry.answer.trim().length === 0)
-      .map((entry) => entry.question_number);
-    const newestUnansweredQuestionNumber =
-      unansweredNow.length > 0 ? Math.max(...unansweredNow) : null;
-    let count = 0;
-    for (const entry of state.scope_questions) {
-      if (!entry.answer || entry.answer.trim().length === 0) {
-        const isFreshlyAddedPending =
-          state.pending_inputs.some(
-            (pending) =>
-              pending.question_number === entry.question_number &&
-              typeof pending.reason === "string" &&
-              /newly added scope question/i.test(pending.reason)
-          );
-        if (isFreshlyAddedPending) {
-          continue;
-        }
-        // If this turn introduced a new follow-up scope question, keep it pending.
-        if (appendedImpromptuQuestion && !unansweredBeforeAppend.has(entry.question_number)) {
-          continue;
-        }
-        // If this same turn includes a "new question" intent, keep the newest unresolved
-        // question pending so the user can explicitly confirm its clarification.
-        if (
-          hasNewQuestionIntentInMessage &&
-          newestUnansweredQuestionNumber !== null &&
-          entry.question_number === newestUnansweredQuestionNumber
-        ) {
-          continue;
-        }
-        const proposedDefault = buildProposedDefaultForScopeQuestion(state, entry);
-        entry.answer = `Confirmed: ${proposedDefault}`;
-        count++;
-      }
-    }
-    pruneResolvedPendingInputs();
-    return {
-      answered_count: count,
-      all_answered:
-        state.scope_questions.every((entry) => Boolean(entry.answer && entry.answer.trim().length > 0)) &&
-        !hasOutstandingPendingInputs()
-    };
   }
 
   const applyAssignment = (questionNumber: number, answer: string): number => {
@@ -5467,9 +6581,56 @@ async function applyScopeClarificationAnswersWithLlm(
     return wasEmpty ? 1 : 0;
   };
 
+  const pruneResolvedPendingInputs = () => {
+    if (state.pending_inputs.length > 0) {
+      reconcilePendingInputsToScopeQuestions(state);
+      state.pending_inputs = state.pending_inputs.filter((entry) => {
+        if (typeof entry.question_number !== "number") {
+          return true;
+        }
+        const target = state.scope_questions.find((question) => question.question_number === entry.question_number);
+        if (!target) {
+          return true;
+        }
+        return !target.answer || target.answer.trim().length === 0;
+      });
+    }
+    pruneScopeSuggestionsAgainstScopeQuestions(state);
+  };
+
+  const hasOutstandingPendingInputs = () =>
+    state.pending_inputs.some((entry) => {
+      if (typeof entry.question_number !== "number") {
+        return true;
+      }
+      const target = state.scope_questions.find((question) => question.question_number === entry.question_number);
+      if (!target) {
+        return true;
+      }
+      return !target.answer || target.answer.trim().length === 0;
+    });
+
+  pruneResolvedPendingInputs();
+
+  const shouldBulkConfirmScopeItems =
+    (isScopeFinalizeChoice(rawMessage) &&
+      state.scope_questions.some(
+        (entry) => (!entry.answer || entry.answer.trim().length === 0) && !/^\s*\[suggested\]/i.test(entry.question)
+      )) ||
+    isConfirmAllScopeMessage(rawMessage) ||
+    shouldConfirmScopeItemsExceptSpecificQuestions(
+      rawMessage,
+      questionNumbersExcludedFromBlanketConfirmation
+    ) ||
+    shouldConfirmRemainingScopeItems(rawMessage) ||
+    isPlainScopeAffirmation(rawMessage) ||
+    looksLikeAffirmativeScopeConfirmation(rawMessage) ||
+    shouldTreatAffirmativeAsBulkScopeConfirmation(state, rawMessage);
+  const shouldAutoConfirmSuggestedScopeItems = shouldAffirmSuggestedScopeItems(rawMessage);
+
   let answeredCount = 0;
-  if (isTestRuntime()) {
-    answeredCount += applyBestEffortScopeAssignments(state, rawMessage, applyAssignment);
+  for (const assignment of explicitAssignments) {
+    answeredCount += applyAssignment(assignment.question_number, assignment.answer);
   }
 
   if (!queryRouter?.resolve_scope_answers) {
@@ -5477,81 +6638,235 @@ async function applyScopeClarificationAnswersWithLlm(
       throw new Error("scope_answer_resolver_unavailable: LLM resolver is required in provider mode");
     }
     console.warn("[scope-resolver] No LLM resolver available - using best-effort assignment only");
-    answeredCount += applySemanticScopeFallback(state, rawMessage, applyAssignment, {
-      skip_question_numbers: semanticSkipQuestionNumbers
-    });
-    pruneResolvedPendingInputs();
-    return {
-      answered_count: answeredCount,
-      all_answered:
-        state.scope_questions.every((entry) => Boolean(entry.answer && entry.answer.trim().length > 0)) &&
-        !hasOutstandingPendingInputs()
-    };
+  } else {
+    const catalogContext = await fetchCatalogContext(apiClient).catch(() => ({
+      catalog_summary: "",
+      business_context: ""
+    }));
+    const relevantMetricDefinitions = selectRelevantMetricDefinitionsForText(
+      state.metric_definitions,
+      rawMessage,
+      state.conversation_history
+    );
+
+    try {
+      const response = await queryRouter.resolve_scope_answers({
+        user_message: answerResolutionMessage,
+        now_iso: new Date().toISOString(),
+        business_context: resolveBusinessContextForAgents(state, catalogContext.business_context),
+        catalog_summary: catalogContext.catalog_summary,
+        relevant_metric_definitions: relevantMetricDefinitions,
+        pending_inputs: state.pending_inputs.map((entry) => ({
+          question_number: entry.question_number ?? null,
+          prompt: entry.prompt,
+          reason: entry.reason ?? null
+        })),
+        scope_suggestions: state.scope_suggestions.map((entry) => ({
+          suggestion_number: entry.suggestion_number,
+          question: entry.question,
+          reason: entry.reason
+        })),
+        scope_questions: state.scope_questions.map((entry) => ({
+          question_number: entry.question_number,
+          question: entry.question,
+          clarification: entry.clarification,
+          proposed_default: buildProposedDefaultForScopeQuestion(state, entry),
+          is_suggested: /^\s*\[suggested\]/i.test(entry.question),
+          answer: entry.answer
+        })),
+        conversation_history: state.conversation_history
+          .slice(-20)
+          .map((turn) => ({ role: turn.role, content: turn.content }))
+      });
+
+      const shouldTrustResolverQuestionRemovals =
+        questionNumbersToRemove.length === 0 &&
+        (hasExplicitScopeRemovalIntent(rawMessage) || declinesSuggestedScopeItems(rawMessage));
+      const resolverQuestionNumbersToRemove = shouldTrustResolverQuestionRemovals
+        ? (response.remove_question_numbers ?? [])
+        : [];
+      questionNumbersToRemove = uniqueSortedQuestionNumbers([
+        ...questionNumbersToRemove,
+        ...resolverQuestionNumbersToRemove
+      ]);
+      for (const questionNumber of resolverQuestionNumbersToRemove) {
+        semanticSkipQuestionNumbers.add(questionNumber);
+      }
+
+      for (const assignment of response.assignments) {
+        const target = state.scope_questions.find(
+          (entry) => entry.question_number === assignment.question_number
+        );
+        if (
+          target &&
+          !shouldAcceptResolvedScopeAssignment({
+            raw_message: rawMessage,
+            target_question: target,
+            explicit_assignment_numbers: explicitAssignmentNumbers,
+            explicit_apply_to_all: explicitApplyToAll
+          })
+        ) {
+          continue;
+        }
+        answeredCount += applyAssignment(assignment.question_number, assignment.answer ?? "");
+      }
+    } catch (error) {
+      if (!isTestRuntime()) {
+        throw new Error(
+          `scope_answer_resolver_failed: ${
+            error instanceof Error ? error.message : "unknown LLM resolver error"
+          }`
+        );
+      }
+      console.error("[scope-resolver] LLM call failed:", error instanceof Error ? error.message : error);
+    }
   }
 
-  try {
-    const response = await queryRouter.resolve_scope_answers({
-      user_message: rawMessage,
-      now_iso: new Date().toISOString(),
-      scope_questions: state.scope_questions.map((entry) => ({
-        question_number: entry.question_number,
-        question: entry.question,
-        clarification: entry.clarification,
-        answer: entry.answer
-      })),
-      conversation_history: state.conversation_history
-        .slice(-20)
-        .map((turn) => ({ role: turn.role, content: turn.content }))
+  let handledSinglePendingWholeMessage = false;
+  const singlePendingQuestionBeforeFallback = state.scope_questions.filter(
+    (entry) => !entry.answer || entry.answer.trim().length === 0
+  );
+  if (singlePendingQuestionBeforeFallback.length === 1 && explicitAssignments.length === 0) {
+    const pendingQuestion = singlePendingQuestionBeforeFallback[0]!;
+    const normalizedSinglePendingAnswer = normalizeScopeAnswer(answerResolutionMessage);
+    const pendingIsSuggested = /^\s*\[suggested\]/i.test(pendingQuestion.question);
+    const canApplyWholeMessageToSinglePending =
+      normalizedSinglePendingAnswer.length > 0 &&
+      !hasExplicitNewQuestionDirectiveWhileClarifying(normalizedSinglePendingAnswer) &&
+      (
+        !pendingIsSuggested ||
+        shouldAffirmSuggestedScopeItems(normalizedSinglePendingAnswer) ||
+        looksLikePureAffirmativeScopeMessage(normalizedSinglePendingAnswer)
+      );
+    if (canApplyWholeMessageToSinglePending) {
+      const singlePendingFallbackAnswer = looksLikePureAffirmativeScopeMessage(
+        normalizedSinglePendingAnswer
+      )
+        ? "Confirmed: use the proposed clarification/default for this pending question."
+        : normalizedSinglePendingAnswer;
+      answeredCount += applyAssignment(pendingQuestion.question_number, singlePendingFallbackAnswer);
+      handledSinglePendingWholeMessage = true;
+    }
+  }
+
+  if (!handledSinglePendingWholeMessage) {
+    // Always run semantic reconciliation pass so natural-language clarification replies
+    // still map correctly even when LLM assignments are sparse.
+    answeredCount += applySemanticScopeFallback(state, answerResolutionMessage, applyAssignment, {
+      skip_question_numbers: semanticSkipQuestionNumbers
     });
 
-    for (const assignment of response.assignments) {
-      const target = state.scope_questions.find(
-        (entry) => entry.question_number === assignment.question_number
-      );
+    if (isTestRuntime()) {
+      answeredCount += applyBestEffortScopeAssignments(state, answerResolutionMessage, applyAssignment);
+    }
+  }
+
+  if (!handledSinglePendingWholeMessage) {
+    answeredCount += applySinglePendingScopeConfirmationFallback(
+      state,
+      answerResolutionMessage,
+      applyAssignment,
+      explicitAssignments.length
+    );
+  }
+
+  if (shouldBulkConfirmScopeItems) {
+    const newestUnansweredQuestionNumber = (() => {
+      const unansweredNow = state.scope_questions
+        .filter((entry) => !entry.answer || entry.answer.trim().length === 0)
+        .map((entry) => entry.question_number);
+      return unansweredNow.length > 0 ? Math.max(...unansweredNow) : null;
+    })();
+
+    for (const entry of state.scope_questions) {
+      if (entry.answer && entry.answer.trim().length > 0) {
+        continue;
+      }
+      if (questionNumbersToRemove.includes(entry.question_number)) {
+        continue;
+      }
+      if (questionNumbersExcludedFromBlanketConfirmation.includes(entry.question_number)) {
+        continue;
+      }
+      if (/^\s*\[suggested\]/i.test(entry.question) && !shouldAutoConfirmSuggestedScopeItems) {
+        continue;
+      }
+      const isFreshlyAddedPending =
+        state.pending_inputs.some(
+          (pending) =>
+            pending.question_number === entry.question_number &&
+            typeof pending.reason === "string" &&
+            /newly added scope question/i.test(pending.reason)
+        );
+      if (isFreshlyAddedPending) {
+        continue;
+      }
+      if (appendedImpromptuQuestion && !unansweredBeforeAppend.has(entry.question_number)) {
+        continue;
+      }
       if (
-        target &&
-        !shouldAcceptResolvedScopeAssignment({
-          raw_message: rawMessage,
-          target_question: target,
-          explicit_assignment_numbers: explicitAssignmentNumbers,
-          explicit_apply_to_all: explicitApplyToAll
-        })
+        messageHasNewQuestionIntent &&
+        newestUnansweredQuestionNumber !== null &&
+        entry.question_number === newestUnansweredQuestionNumber
       ) {
         continue;
       }
-      answeredCount += applyAssignment(assignment.question_number, assignment.answer ?? "");
+      const proposedDefault = buildProposedDefaultForScopeQuestion(state, entry);
+      entry.answer = `Confirmed: ${proposedDefault}`;
+      answeredCount += 1;
     }
-  } catch (error) {
-    if (!isTestRuntime()) {
-      throw new Error(
-        `scope_answer_resolver_failed: ${
-          error instanceof Error ? error.message : "unknown LLM resolver error"
-        }`
-      );
-    }
-    console.error("[scope-resolver] LLM call failed:", error instanceof Error ? error.message : error);
   }
 
-  // Always run semantic reconciliation pass so natural-language clarification replies
-  // still map correctly even when LLM assignments are sparse.
-  answeredCount += applySemanticScopeFallback(state, rawMessage, applyAssignment, {
-    skip_question_numbers: semanticSkipQuestionNumbers
-  });
-
-  if (isTestRuntime()) {
-    answeredCount += applyBestEffortScopeAssignments(state, rawMessage, applyAssignment);
+  const shouldConfirmIncludedSuggestionsWithDefaults =
+    suggestionNumbersToInclude.length > 0 &&
+    shouldAffirmSuggestedScopeItems(rawMessage) &&
+    answerResolutionMessage.trim().length > 0;
+  if (shouldConfirmIncludedSuggestionsWithDefaults) {
+    for (const entry of state.scope_questions) {
+      if (!appendedSuggestedQuestionNumbers.has(entry.question_number)) {
+        continue;
+      }
+      if (entry.answer && entry.answer.trim().length > 0) {
+        continue;
+      }
+      if (questionNumbersToRemove.includes(entry.question_number)) {
+        continue;
+      }
+      entry.answer = `Confirmed: ${buildProposedDefaultForScopeQuestion(state, entry)}`;
+      answeredCount += 1;
+    }
   }
 
-  answeredCount += applySinglePendingScopeConfirmationFallback(
-    state,
-    rawMessage,
-    applyAssignment,
-    explicitAssignments.length
-  );
+  if (
+    declineSuggestedScopeQuestions &&
+    suggestionNumbersToInclude.length === 0 &&
+    suggestionNumbersToDecline.length === 0
+  ) {
+    state.scope_suggestions = [];
+  }
+
+  const scopeOrClarificationChanged =
+    answeredCount > 0 ||
+    appendedSuggestedQuestionsCount > 0 ||
+    appendedImpromptuQuestion ||
+    questionNumbersToRemove.length > 0;
+
+  if (questionNumbersToRemove.length > 0) {
+    removeScopeQuestionsFromState(state, questionNumbersToRemove);
+  }
+  if (scopeOrClarificationChanged) {
+    invalidatePreparedStateForScopeChange(state);
+  }
   pruneResolvedPendingInputs();
+  if (state.scope_questions.length === 0) {
+    return {
+      answered_count: answeredCount + appendedSuggestedQuestionsCount,
+      all_answered: false
+    };
+  }
 
   return {
-    answered_count: answeredCount,
+    answered_count: answeredCount + appendedSuggestedQuestionsCount,
     all_answered:
       state.scope_questions.every((entry) => Boolean(entry.answer && entry.answer.trim().length > 0)) &&
       !hasOutstandingPendingInputs()
@@ -5669,7 +6984,17 @@ function maybeAppendImpromptuScopeQuestionFromClarification(
   if (!candidate) {
     return false;
   }
-  if (state.scope_questions.some((entry) => areScopeQuestionTextsSimilar(entry.question, candidate))) {
+  if (
+    state.scope_questions.some((entry) => {
+      if (!areScopeQuestionTextsSimilar(entry.question, candidate)) {
+        return false;
+      }
+      return !hasDistinctQuestionFocus(
+        tokenizeForSimilarity(entry.question),
+        tokenizeForSimilarity(candidate)
+      );
+    })
+  ) {
     return false;
   }
 
@@ -5695,6 +7020,7 @@ function maybeAppendImpromptuScopeQuestionFromClarification(
 
   state.scope_questions = normalized;
   state.scope_finalized = false;
+  pruneScopeSuggestionsAgainstScopeQuestions(state);
   syncQuestionRegistryFromScope(state);
   return true;
 }
@@ -5744,11 +7070,18 @@ function applyBestEffortScopeAssignments(
 
   if (unanswered.length === 1 && explicitAssignments.length === 0) {
     const normalized = normalizeScopeAnswer(trimmed);
+    const onlyPendingQuestion = unanswered[0]!;
+    const onlyPendingIsSuggested = /^\s*\[suggested\]/i.test(onlyPendingQuestion.question);
     if (
       normalized.length > 0 &&
-      !looksLikeNewQuestionWhileClarifying(normalized)
+      !hasExplicitNewQuestionDirectiveWhileClarifying(normalized) &&
+      (
+        !onlyPendingIsSuggested ||
+        shouldAffirmSuggestedScopeItems(normalized) ||
+        looksLikePureAffirmativeScopeMessage(normalized)
+      )
     ) {
-      assigned += applyAssignment(unanswered[0]!.question_number, normalized);
+      assigned += applyAssignment(onlyPendingQuestion.question_number, normalized);
     }
     return assigned;
   }
@@ -5768,7 +7101,16 @@ function applySinglePendingScopeConfirmationFallback(
   }
 
   const normalized = normalizeScopeAnswer(rawMessage);
-  if (normalized.length === 0 || looksLikeNewQuestionWhileClarifying(normalized)) {
+  if (normalized.length === 0 || hasExplicitNewQuestionDirectiveWhileClarifying(normalized)) {
+    return 0;
+  }
+  const pendingQuestion = pending[0]!;
+  const pendingIsSuggested = /^\s*\[suggested\]/i.test(pendingQuestion.question);
+  if (
+    pendingIsSuggested &&
+    !shouldAffirmSuggestedScopeItems(normalized) &&
+    !looksLikePureAffirmativeScopeMessage(normalized)
+  ) {
     return 0;
   }
 
@@ -5776,7 +7118,7 @@ function applySinglePendingScopeConfirmationFallback(
     ? "Confirmed: use the proposed clarification/default for this pending question."
     : normalized;
 
-  return applyAssignment(pending[0]!.question_number, fallbackAnswer);
+  return applyAssignment(pendingQuestion.question_number, fallbackAnswer);
 }
 
 function looksLikeAffirmativeScopeConfirmation(message: string): boolean {
@@ -5784,8 +7126,29 @@ function looksLikeAffirmativeScopeConfirmation(message: string): boolean {
   if (/\b(?:not|don't|do not|skip|cancel|hold|wait)\b/.test(lower)) {
     return false;
   }
-  return /\b(?:yes|yep|yeah|ok|okay|looks good|sounds good|go ahead|proceed|works|that works|approved|confirm(?:ed)?|use it|use that|do it|all set|all good|all fine|i like (?:the|this|your) (?:flow|plan|proposal|approach|scope|clarification|defaults?))\b/.test(
+  return /\b(?:yes|yep|yeah|ok|okay|looks good|sounds good|go ahead(?: with (?:it|this|that|these|them))?|proceed|works|that works|approved|confirm(?:ed)?|use it|use that|use these|do it|all set|all good|all fine|i like (?:the|this|your) (?:flow|plan|proposal|approach|scope|clarification|defaults?|assumptions?)|i like (?:these|them)|happy with (?:these|them)|these (?:look|sound) (?:good|fine))\b/.test(
     lower
+  );
+}
+
+function isPlainScopeAffirmation(message: string): boolean {
+  const lower = normalizeScopeAnswer(message).toLowerCase();
+  if (/\b(?:not|don't|do not|skip|cancel|hold|wait)\b/.test(lower)) {
+    return false;
+  }
+  return /^(?:yes|yep|yeah|ok|okay|looks good|sounds good|go ahead|go ahead with (?:it|this|that|these|them)|proceed|works|that works|approved|confirm(?:ed)?|use it|use that|use these|do it|all set|all good|all fine|i like (?:the|this|your) (?:flow|plan|proposal|approach|scope|clarification|defaults?|assumptions?)|i like (?:these|them)|happy with (?:these|them)|these (?:look|sound) (?:good|fine))\s*[.!?]*$/.test(
+    lower
+  );
+}
+
+function looksLikePureAffirmativeScopeMessage(message: string): boolean {
+  const normalized = normalizeScopeAnswer(message).toLowerCase();
+  if (!isPlainScopeAffirmation(normalized) && !looksLikeAffirmativeScopeConfirmation(normalized)) {
+    return false;
+  }
+
+  return !/\b(order|date|window|period|month|months|granularity|refund|refunded|rate|revenue|count|delta|compare|comparison|city|cities|support|ticket|tickets|issue|issues|category|categories|product|products)\b/.test(
+    normalized
   );
 }
 
@@ -5802,31 +7165,170 @@ function looksLikeScopeRefinementIntent(message: string): boolean {
   );
 }
 
+function getLastAssistantConversationMessage(state: ChatState): string {
+  const lastAssistant = [...state.conversation_history]
+    .reverse()
+    .find((turn) => turn.role === "assistant");
+  return lastAssistant?.content ?? "";
+}
+
+function shouldTreatAffirmativeAsBulkScopeConfirmation(
+  state: ChatState,
+  rawMessage: string
+): boolean {
+  if (!looksLikeAffirmativeScopeConfirmation(rawMessage)) {
+    return false;
+  }
+
+  const pendingQuestions = state.scope_questions.filter(
+    (entry) => !entry.answer || entry.answer.trim().length === 0
+  );
+  if (pendingQuestions.length === 0) {
+    return false;
+  }
+
+  const normalized = normalizeScopeAnswer(rawMessage).toLowerCase();
+  if (
+    /\bq(?:uestion)?\s*\d+\b/.test(normalized) ||
+    looksLikeNewQuestionWhileClarifying(normalized)
+  ) {
+    return false;
+  }
+
+  const nonSuggestedPending = pendingQuestions.filter(
+    (entry) => !/^\s*\[suggested\]/i.test(entry.question)
+  );
+  if (nonSuggestedPending.length === 0) {
+    return false;
+  }
+
+  const lastAssistant = getLastAssistantConversationMessage(state).toLowerCase();
+  const hasGroupedPendingPrompt = (
+    /\bneed clarification for \d+ item(?:s)? before data preparation\b/.test(lastAssistant) ||
+    /\bplease confirm or edit the pending items\b/.test(lastAssistant) ||
+    /\bbefore data preparation, please confirm\b/.test(lastAssistant) ||
+    /\bare you okay with these (?:defaults|assumptions)\b/.test(lastAssistant) ||
+    /\bdoes that work\b/.test(lastAssistant) ||
+    /\bboth are derived from the same\b/.test(lastAssistant) ||
+    /\bapplies uniformly across all questions\b/.test(lastAssistant)
+  );
+  if (hasGroupedPendingPrompt) {
+    return true;
+  }
+
+  return nonSuggestedPending.length > 1;
+}
+
 /**
  * Detect "confirm all" / "ok with everything" style blanket confirmations.
  * These should apply the proposed default to every unanswered scope question.
  */
 function isConfirmAllScopeMessage(rawMessage: string): boolean {
   const lower = rawMessage.toLowerCase().trim();
-  // Reject if there's a negation
-  if (/\b(?:not|don't|do not|skip|cancel|hold|wait|except|but)\b/.test(lower)) {
+  if (
+    /\b(?:don't|do not|not)\s+(?:confirm(?:ed)?|approve|accept)\s+all\b/.test(lower) ||
+    /\b(?:don't|do not|not)\s+(?:go\s+ahead|use|apply)\s+with\s+everything\b/.test(lower)
+  ) {
     return false;
   }
   const naturalGlobalApproval =
-    /\b(i\s+like\s+(?:the|this|your)\s+(?:flow|plan|proposal|approach|scope|clarification|defaults?)|looks?\s+(?:good|great|fine)|sounds?\s+(?:good|great|fine)|go\s+ahead\s+with\s+(?:it|this|that)|works?\s+for\s+me|all\s+set)\b/.test(
+    /\b(i\s+like\s+(?:the|this|your)\s+(?:flow|plan|proposal|approach|scope|clarification|defaults?|assumptions?)|i\s+like\s+(?:these|them)|looks?\s+(?:good|great|fine)|sounds?\s+(?:good|great|fine)|go\s+ahead\s+with\s+(?:it|this|that|these|them)|happy\s+with\s+(?:these|them)|works?\s+for\s+me|all\s+set)\b/.test(
       lower
     );
   return (
-    /\b(confirm\s*all|ok\s*with\s*everything|okay\s*with\s*everything|yes\s*to\s*all|accept\s*all|approve\s*all|defaults?\s*(?:are|is|look|looks)?\s*fine|all\s*(?:good|fine|ok|okay|looks?\s*good|sounds?\s*good))\b/.test(lower) ||
-    /^(confirm all|yes to all|accept all|approve all|all good|all fine|defaults are fine|ok with everything|okay with everything)\s*[.!]?$/.test(lower) ||
+    /\b(confirm(?:ed)?\s*all|all\s+confirmed|confirmed\s+all(?:\s+questions?)?|all\s+questions?\s+(?:are|is)\s+confirmed|ok\s*with\s*everything|okay\s*with\s*everything|yes\s*to\s*all|accept\s*all|approve\s*all|defaults?\s*(?:are|is|look|looks)?\s*fine|assumptions?\s*(?:are|is|look|looks)?\s*fine|all\s*(?:good|fine|ok|okay|looks?\s*good|sounds?\s*good))\b/.test(lower) ||
+    /^(confirm(?:ed)? all|all confirmed|confirmed all(?: questions?)?|all questions (?:are|is) confirmed|yes to all|accept all|approve all|all good|all fine|defaults are fine|assumptions are fine|ok with everything|okay with everything)\s*[.!]?$/.test(lower) ||
     naturalGlobalApproval
+  );
+}
+
+function parseScopeQuestionNumbersExcludedFromBlanketConfirmation(
+  state: ChatState,
+  rawMessage: string
+): number[] {
+  if (state.scope_questions.length === 0) {
+    return [];
+  }
+
+  const matches = new Set<number>();
+  const explicitIdPatterns = [
+    /\b(?:all|everything|the rest|rest|remaining(?:\s+questions?)?|others|these|them)\b[\s\S]{0,40}\b(?:except|but(?:\s+not)?|other than)\b[\s:,-]*(?:the\s+)?(?:(?:questions?|qs?)\s*|q\s*)\s*((?:q?\s*\d{1,2}\s*(?:,|\band\b)?\s*){1,6})/gi,
+    /\b(?:except|but(?:\s+not)?|other than)\b[\s:,-]*(?:the\s+)?(?:(?:questions?|qs?)\s*|q\s*)\s*((?:q?\s*\d{1,2}\s*(?:,|\band\b)?\s*){1,6})/gi
+  ];
+
+  for (const pattern of explicitIdPatterns) {
+    pattern.lastIndex = 0;
+    let match = pattern.exec(rawMessage);
+    while (match !== null) {
+      const candidateText = match[1] ?? "";
+      const numbers = candidateText.match(/\d{1,2}/g) ?? [];
+      for (const rawNumber of numbers) {
+        const questionNumber = Number.parseInt(rawNumber, 10);
+        if (Number.isInteger(questionNumber) && questionNumber > 0) {
+          matches.add(questionNumber);
+        }
+      }
+      match = pattern.exec(rawMessage);
+    }
+  }
+
+  const descriptorPattern =
+    /\b(?:all|everything|the rest|rest|remaining(?:\s+questions?)?|others|these|them)\b[\s\S]{0,40}\b(?:except|but(?:\s+not)?|other than)\b[\s:,-]*(?:the\s+)?(?:question|ask|analysis|scope item)\s+(?:about|on|for)?\s+([^.;\n]+)/i;
+  const descriptorMatch = rawMessage.match(descriptorPattern);
+  if (descriptorMatch) {
+    const questionNumber = findScopeQuestionNumberByDescriptor(state, descriptorMatch[1] ?? "");
+    if (questionNumber !== null) {
+      matches.add(questionNumber);
+    }
+  }
+
+  const existingQuestionNumbers = new Set(state.scope_questions.map((entry) => entry.question_number));
+  return Array.from(matches.values())
+    .filter((questionNumber) => existingQuestionNumbers.has(questionNumber))
+    .sort((left, right) => left - right);
+}
+
+function shouldConfirmScopeItemsExceptSpecificQuestions(
+  rawMessage: string,
+  excludedQuestionNumbers: number[]
+): boolean {
+  if (excludedQuestionNumbers.length === 0) {
+    return false;
+  }
+  if (hasExplicitScopeRemovalIntent(rawMessage)) {
+    return false;
+  }
+
+  const lower = rawMessage.toLowerCase();
+  const hasAffirmativeIntent =
+    /\b(?:confirm|confirmed|approve|accept|yes|ok|okay|looks good|sounds good|go ahead|proceed|works|all good|all fine|i like|happy with)\b/.test(
+      lower
+    );
+  const hasExceptionIntent =
+    /\b(?:except|but(?:\s+not)?|other than)\b/.test(lower) &&
+    /\b(?:all|everything|the rest|rest|remaining(?:\s+questions?)?|others|these|them)\b/.test(lower);
+  return hasAffirmativeIntent && hasExceptionIntent;
+}
+
+function shouldConfirmRemainingScopeItems(rawMessage: string): boolean {
+  const lower = rawMessage.toLowerCase().trim();
+  if (
+    /\b(?:don't|do not|not)\s+(?:confirm(?:ed)?|approve|accept|use\s+defaults?\s+for)\s+(?:the\s+)?(?:rest|remaining(?:\s+questions?)?|others|everything\s+else)\b/.test(
+      lower
+    )
+  ) {
+    return false;
+  }
+
+  return /\b(?:confirm(?:ed)?|approve|accept|yes(?:\s+to)?|ok(?:ay)?(?:\s+with)?|go\s+ahead\s+with|use\s+defaults?\s+for)\s+(?:the\s+)?(?:rest|remaining(?:\s+questions?)?|others|everything\s+else)\b/.test(
+    lower
   );
 }
 
 function shouldApplyDefaultsToRemainingScopeItems(rawMessage: string): boolean {
   const lower = rawMessage.toLowerCase();
   const asksForDefaults =
-    /\b(default|defaults|default assumptions|standard assumptions|safe assumptions)\b/.test(lower) &&
+    /\b(default|defaults|default assumptions|standard assumptions|safe assumptions|assumption|assumptions)\b/.test(lower) &&
     /\b(remaining|pending|rest|left)\b/.test(lower);
   const proceedIntent = /\b(proceed|go ahead|continue|apply|use|yes|ok|okay|works|do it)\b/.test(lower);
   return asksForDefaults && proceedIntent;
@@ -5834,7 +7336,7 @@ function shouldApplyDefaultsToRemainingScopeItems(rawMessage: string): boolean {
 
 function shouldAffirmSuggestedScopeItems(rawMessage: string): boolean {
   const lower = rawMessage.toLowerCase();
-  const mentionsSuggested = /\b(suggested|suggestions|optional|additional|extra)\b/.test(lower);
+  const mentionsSuggested = mentionsOptionalScopeSuggestion(rawMessage);
   const affirmative = /\b(include|keep|add|yes|yep|yeah|ok|okay|go ahead|proceed|works|fine)\b/.test(lower);
   return mentionsSuggested && affirmative;
 }
@@ -5849,7 +7351,6 @@ function applySemanticScopeFallback(
   if (unanswered.length === 0) {
     return 0;
   }
-
   const clauses = extractScopeAnswerClauses(rawMessage);
   if (clauses.length === 0) {
     return 0;
@@ -5859,7 +7360,20 @@ function applySemanticScopeFallback(
   const usedQuestionNumbers = new Set<number>();
   for (const clause of clauses) {
     const normalized = normalizeScopeAnswer(clause);
-    if (normalized.length < 8 || looksLikePureNewQuestionClause(normalized)) {
+    const clauseEditsExistingQuestion = looksLikeExistingScopeQuestionEditClause(clause);
+    const clauseLooksLikeOpenQuestion =
+      /\?/.test(clause) ||
+      /^(?:can you|could you|would you|will you|show me|tell me)\b/i.test(normalized) ||
+      (/^give me\b/i.test(normalized) && /\?/.test(clause));
+    const looksLikeFollowUpQuestion =
+      !clauseEditsExistingQuestion &&
+      looksLikePureNewQuestionClause(normalized) &&
+      (
+        !looksLikeScopeAnswerDirective(normalized) ||
+        clauseLooksLikeOpenQuestion ||
+        /\b(?:also|and also|another|one more|new question|follow[- ]?up|what about)\b/i.test(normalized)
+      );
+    if (normalized.length < 8 || looksLikeFollowUpQuestion) {
       continue;
     }
 
@@ -5949,6 +7463,22 @@ function isClauseCompatibleWithScopeQuestion(
     return false;
   }
 
+  const clauseLooksLikeTimeOnlyApproval =
+    /\b(time|window|period|month|months|date|dates|granularity|timeframe|anchor)\b/.test(
+      normalizedClause
+    ) &&
+    !/\b(city|cities|region|state|country|support|ticket|tickets|issue|issues|reason|reasons|resolution|rate|ratio|formula|top\s+\d+|count|value|revenue)\b/.test(
+      normalizedClause
+    );
+  if (clauseLooksLikeTimeOnlyApproval) {
+    const clarificationNeedsTimeDecision = /\b(date|window|period|month|months|granularity|timeframe|anchor)\b/.test(
+      clarification.toLowerCase()
+    );
+    if (!clarificationNeedsTimeDecision) {
+      return false;
+    }
+  }
+
   const isSuggested = /^\s*\[suggested\]/i.test(question);
   if (!isSuggested) {
     return true;
@@ -5980,14 +7510,109 @@ function extractScopeAnswerClauses(rawMessage: string): string[] {
     .replace(/\r\n/g, "\n")
     .replace(/(?:^|[\n\r;,])\s*(?:[-*]\s*)?q(?:uestion)?\s*\d{1,2}\s*/gim, "\n")
     .replace(/[.;]\s+/g, "\n")
-    .replace(/\s+(?:and also|also|plus)\s+/gi, "\n");
+    .replace(
+      /,\s+(?=(?:top\s+\d+\b|use\s+only\b|include\s+only\b|same\s+as\b|for\s+q(?:uestion)?\s*\d+\b|q(?:uestion)?\s*\d+\b|only\s+\w+\b))/gi,
+      "\n"
+    )
+    .replace(/\s+(?:and also|plus)\s+/gi, "\n")
+    .replace(
+      /\s+also\s+(?=(?:include\b|add\b|keep\b|use\b|take\b|for\b|q(?:uestion)?\s*\d+\b|top\s+\d+\b|same\s+as\b|only\b|show\b|give\b|tell\b|what\b|which\b|how\b|can\s+you\b|could\s+you\b|would\s+you\b))/gi,
+      "\n"
+    );
 
   return normalized
     .split(/\n+/g)
     .map((line) => line.replace(/^\s*[-*]\s*/, "").trim())
     .map((line) => line.replace(/^(?:q(?:uestion)?\s*\d{1,2}\s*[:\-)\]]\s*)/i, ""))
+    .map((line) => stripScopeManagementPhrasesFromClause(line).trim())
+    .flatMap((line) => splitCompoundScopeClause(line))
     .map((line) => line.trim())
     .filter((line) => line.length >= 8);
+}
+
+function stripScopeManagementPhrasesFromClause(value: string): string {
+  return value
+    .replace(
+      /^(?:confirm(?:ed)?|approve|accept|yes(?:\s+to)?|ok(?:ay)?(?:\s+with)?|go\s+ahead(?:\s+with)?|use\s+(?:defaults?|assumptions?)\s+for|i\s+like|happy\s+with)\s+(?:the\s+)?(?:all|rest|remaining(?:\s+questions?)?|others|everything(?:\s+else)?|these|them|your\s+assumptions?)\s*[,;:-]*/i,
+      ""
+    )
+    .replace(/^(?:all\s+(?:good|fine|set)|defaults?\s+(?:are|look|looks)\s+fine|assumptions?\s+(?:are|look|looks)\s+fine)\s*[,;:-]*/i, "")
+    .replace(
+      /(?:,|;)?\s*(?:(?:and\s+)?also\s+|and\s+)?(?:don't|do not|not)\s+(?:add|include|keep|use|want|need)\s+(?:the\s+)?(?:suggested|optional|extra|additional)\s+(?:question|questions|analysis|analyses|ask|asks|item|items)\b.*$/i,
+      ""
+    )
+    .replace(
+      /(?:,|;)?\s*(?:(?:and\s+)?also\s+|and\s+)?(?:exclude|remove|drop|delete|skip|omit|cancel|decline|reject|ignore)\s+(?:the\s+)?(?:suggested|optional|extra|additional)\s+(?:question|questions|analysis|analyses|ask|asks|item|items)\b.*$/i,
+      ""
+    )
+    .replace(
+      /(?:,|;)?\s*(?:(?:and\s+)?also\s+|and\s+)?(?:include|add|keep|use|take)\s+(?:the\s+)?(?:suggested|suggestion|optional|extra|additional|add[- ]?on|addon)\s+(?:question|questions|analysis|analyses|ask|asks|item|items)?\b.*$/i,
+      ""
+    )
+    .trim();
+}
+
+function detectScopeClauseDomains(value: string): Set<string> {
+  const lower = value.toLowerCase();
+  const domains = new Set<string>();
+  if (/\b(top|rank|ranking)\s+\d+\b/.test(lower)) {
+    domains.add("ranking");
+  }
+  if (/\b(city|cities|region|state|country|location)\b/.test(lower)) {
+    domains.add("geo");
+  }
+  if (/\b(issue|issues|reason|reasons|ticket|tickets|support|resolution)\b/.test(lower)) {
+    domains.add("support");
+  }
+  if (/\b(category|categories|product|products|sku|skus)\b/.test(lower)) {
+    domains.add("product");
+  }
+  if (/\b(date|window|period|month|months|weekly|monthly|daily|quarter|year|granularity|jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec)\b/.test(lower)) {
+    domains.add("time");
+  }
+  if (/\b(rate|ratio|formula|delta|compare|comparison|trend|revenue|value|count|refund|refunded)\b/.test(lower)) {
+    domains.add("metric");
+  }
+  return domains;
+}
+
+function splitCompoundScopeClause(value: string): string[] {
+  const trimmed = value.trim();
+  if (trimmed.length < 8 || !/\band\b/i.test(trimmed)) {
+    return [trimmed];
+  }
+
+  const parts = trimmed
+    .split(/\s+\band\b\s+/i)
+    .map((part) => part.trim())
+    .filter((part) => part.length >= 8);
+  if (parts.length < 2) {
+    return [trimmed];
+  }
+
+  const repeatedRankingParts = parts.filter((part) => /\b(top|rank|ranking)\s+\d+\b/i.test(part)).length;
+  const domainSignatures = parts.map((part) =>
+    Array.from(detectScopeClauseDomains(part))
+      .filter((domain) => domain !== "ranking" && domain !== "metric" && domain !== "time")
+      .sort()
+      .join("|")
+  );
+  const hasDistinctSubstantiveDomains =
+    domainSignatures.filter((signature) => signature.length > 0).length >= 2 &&
+    new Set(domainSignatures.filter((signature) => signature.length > 0)).size >= 2;
+
+  if (repeatedRankingParts >= 2 || hasDistinctSubstantiveDomains) {
+    return parts;
+  }
+
+  return [trimmed];
+}
+
+function looksLikeScopeAnswerDirective(clause: string): boolean {
+  const lower = clause.toLowerCase();
+  return /\b(?:top\s+\d+|same as|only|just|use|window|windows|period|periods|month|months|weekly|monthly|daily|granularity|delta|count|value|revenue|rate|formula|cities|city|issue|issues|support|ticket|tickets|category|categories|product|products|refunded|refund)\b/.test(
+    lower
+  );
 }
 
 function looksLikePureNewQuestionClause(clause: string): boolean {
@@ -5998,16 +7623,118 @@ function looksLikePureNewQuestionClause(clause: string): boolean {
   if (lower.includes("?")) {
     return true;
   }
-  if (/^(?:can you|could you|would you|will you|show me|give me|tell me|what|which|who|why|how|add)\b/.test(lower)) {
+  if (/^(?:can you|could you|would you|will you|show me|give me|tell me|what|which|who|why|how|add|new question|follow[- ]?up|what about)\b/.test(lower)) {
     return true;
   }
-  if (/^(?:also|and also|plus|another|one more)\b/.test(lower) && /\b(add|show|give|tell|include|analysis|breakdown|question)\b/.test(lower)) {
+  if (/^(?:also|and also|plus|another|one more|new question|follow[- ]?up|what about)\b/.test(lower) && /\b(add|show|give|tell|include|analysis|breakdown|question)\b/.test(lower)) {
     return true;
   }
-  if (/\b(can you|could you|would you|show me|give me|tell me|add another|one more)\b/.test(lower)) {
+  if (/\b(can you|could you|would you|show me|give me|tell me|add another|one more|new question|follow[- ]?up|what about)\b/.test(lower)) {
     return true;
   }
   return false;
+}
+
+function extractReferencedScopeQuestionNumbers(clause: string): number[] {
+  const matches = clause.matchAll(/\bq(?:uestion)?\s*(\d{1,2})\b/gi);
+  const numbers = new Set<number>();
+  for (const match of matches) {
+    const questionNumber = Number.parseInt(match[1] ?? "", 10);
+    if (Number.isInteger(questionNumber) && questionNumber > 0) {
+      numbers.add(questionNumber);
+    }
+  }
+  return Array.from(numbers.values()).sort((left, right) => left - right);
+}
+
+function stripReferencedScopeQuestionFromClause(clause: string, questionNumber: number): string {
+  return clause
+    .replace(new RegExp(`\\b(?:for|on|in|about)\\s+q(?:uestion)?\\s*${questionNumber}\\b`, "gi"), " ")
+    .replace(new RegExp(`^\\s*q(?:uestion)?\\s*${questionNumber}\\b\\s*[:\\-)\\]]?\\s*`, "i"), "")
+    .replace(new RegExp(`\\bq(?:uestion)?\\s*${questionNumber}\\b`, "gi"), " ")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+function normalizeExplicitScopeClauseAnswer(clause: string, questionNumber: number): string {
+  return normalizeScopeAnswer(
+    stripTrailingScopeManagementFromAnswer(
+      stripReferencedScopeQuestionFromClause(clause, questionNumber)
+        .replace(/^(?:please\s+)?(?:show|give|tell)\s+me\s+/i, "")
+        .replace(/^(?:please\s+)?(?:make it|keep it|set it to)\s+/i, "")
+    )
+  );
+}
+
+function looksLikeExistingScopeQuestionEditClause(clause: string): boolean {
+  const questionNumbers = extractReferencedScopeQuestionNumbers(clause);
+  if (questionNumbers.length !== 1) {
+    return false;
+  }
+
+  const normalized = normalizeExplicitScopeClauseAnswer(clause, questionNumbers[0]!);
+  if (normalized.length === 0) {
+    return false;
+  }
+
+  return (
+    looksLikeScopeAnswerDirective(normalized) ||
+    /^(?:show|give|tell)\b/i.test(normalized) ||
+    /\b(?:change|adjust|edit|update|use|keep|set|only|just|same as|top\s+\d+|rank|cutoff)\b/i.test(
+      normalized
+    )
+  );
+}
+
+function hasExplicitNewQuestionDirectiveWhileClarifying(message: string): boolean {
+  const trimmed = message.trim();
+  if (trimmed.length === 0) {
+    return false;
+  }
+
+  const lower = trimmed.toLowerCase();
+  const declinesSuggestedAdd =
+    /\b(?:don't|do not|not)\s+add\b/.test(lower) &&
+    mentionsOptionalScopeSuggestion(message);
+  const isScopeSuggestionDecision =
+    mentionsOptionalScopeSuggestion(message) &&
+    (
+      /\b(?:include|add|keep|use|take|exclude|remove|drop|delete|skip|omit|cancel|decline|reject|ignore)\b/.test(
+        lower
+      ) ||
+      /\b(?:don't|do not|not)\s+(?:add|include|keep|use|want|need)\b/.test(lower)
+    );
+  const clauses = extractScopeAnswerClauses(trimmed);
+  const hasStandaloneNewQuestionClause = clauses.some(
+    (clause) =>
+      !looksLikeExistingScopeQuestionEditClause(clause) &&
+      !mentionsOptionalScopeSuggestion(clause) &&
+      looksLikePureNewQuestionClause(clause)
+  );
+
+  if (trimmed.includes("?") && hasStandaloneNewQuestionClause) {
+    return true;
+  }
+
+  if (
+    /\b(can you|could you|would you|show me|give me|tell me)\b/.test(lower) &&
+    hasStandaloneNewQuestionClause
+  ) {
+    return true;
+  }
+
+  if (
+    !declinesSuggestedAdd &&
+    !isScopeSuggestionDecision &&
+    (
+      /\b(add|also add|another|one more|new question|add question|follow[- ]?up|what about)\b/.test(lower) ||
+      hasStandaloneNewQuestionClause
+    )
+  ) {
+    return true;
+  }
+
+  return /^(what|which|how|who|why)\b/.test(lower) && !/\bq(?:uestion)?\s*\d+\b/.test(lower);
 }
 
 function scoreScopeAnswerClauseAgainstQuestion(
@@ -6066,22 +7793,8 @@ function scoreScopeAnswerClauseAgainstQuestion(
 }
 
 function looksLikeNewQuestionWhileClarifying(message: string): boolean {
-  const trimmed = message.trim();
-  const lower = trimmed.toLowerCase();
-
-  if (trimmed.includes("?")) {
-    return true;
-  }
-
-  if (/\b(can you|could you|would you|show me|give me|tell me)\b/.test(lower)) {
-    return true;
-  }
-
-  if (/\b(add|also add|another|one more|new question|follow[- ]?up)\b/.test(lower)) {
-    return true;
-  }
-
-  if (/^(what|which|how|who|why)\b/.test(lower) && !/\bq(?:uestion)?\s*\d+\b/.test(lower)) {
+  const lower = message.trim().toLowerCase();
+  if (hasExplicitNewQuestionDirectiveWhileClarifying(message)) {
     return true;
   }
 
@@ -6098,7 +7811,7 @@ function parseExplicitScopeAnswerAssignments(
   const patterns = [
     /(?:^|[\n\r]|[,;])\s*(?:[-*]\s*)?q(?:uestion)?\s*(\d{1,2})\s*(?:[:\-)\]]\s*|\s+)([\s\S]*?)(?=(?:^|[\n\r]|[,;])\s*(?:[-*]\s*)?q(?:uestion)?\s*\d{1,2}\s*(?:[:\-)\]]\s*|\s+)|$)/gim,
     /(?:^|[\n\r]|\b)\s*q(?:uestion)?\s*(\d{1,2})\s*[:\-)\]]\s*([\s\S]*?)(?=(?:\s*q(?:uestion)?\s*\d{1,2}\s*[:\-)\]])|$)/gi,
-    /(?:^|[\n\r;,]|\b)\s*q(?:uestion)?\s*(\d{1,2})\s*(?:[:\-)\]]\s*)?([\s\S]*?)(?=(?:^|[\n\r;,]|\b)\s*q(?:uestion)?\s*\d{1,2}\b|$)/gim
+    /(?:^|[\n\r;,])\s*q(?:uestion)?\s*(\d{1,2})\s*(?:[:\-)\]]\s*)?([\s\S]*?)(?=(?:^|[\n\r;,])\s*q(?:uestion)?\s*\d{1,2}\b|$)/gim
   ];
 
   const assignments = new Map<number, string>();
@@ -6108,21 +7821,71 @@ function parseExplicitScopeAnswerAssignments(
     match = pattern.exec(rawMessage);
     while (match !== null) {
       const questionNumber = Number.parseInt(match[1] ?? "", 10);
+      const matchedInstruction = match[0] ?? "";
+      const rawAnswer = (match[2] ?? "").replace(/^(?:and|also|plus|then)\b[:\s-]*/i, "");
+      const looksLikeGroupedQuestionReferenceTail =
+        /^(?:and|&|\/|\+)\s*(?:q(?:uestion)?\s*)?\d+\b/i.test((match[2] ?? "").trim()) ||
+        /^and\s+\d+\b/i.test((match[2] ?? "").trim());
+      const splitAnswer = splitScopeAnswerAndImpromptuQuestion(rawAnswer);
       const answer = normalizeScopeAnswer(
-        (match[2] ?? "").replace(/^(?:and|also|plus|then)\b[:\s-]*/i, "")
+        stripTrailingScopeManagementFromAnswer(splitAnswer.primary_answer)
       );
       const looksLikeConnectorOnly =
         /^(?:and|or|plus|also|&|,|\.)+\s*(?:\d{1,2}|q(?:uestion)?\s*\d{1,2})?$/i.test(answer);
+      const looksLikeRemovalInstruction =
+        /\b(?:exclude|remove|drop|delete|skip|omit|cancel|(?:do not|don't)\s+include)\b/i.test(
+          matchedInstruction
+        ) &&
+        (/^from\s+(?:the\s+)?scope\b/i.test(answer) ||
+          /\b(?:should be|to be)\s*(?:excluded|removed|dropped|deleted|skipped|omitted|cancelled|canceled)\b/i.test(
+            answer
+          ));
       if (
         Number.isFinite(questionNumber) &&
         questionNumber > 0 &&
         answer.length > 0 &&
-        !looksLikeConnectorOnly
+        !looksLikeGroupedQuestionReferenceTail &&
+        !looksLikeConnectorOnly &&
+        !looksLikeRemovalInstruction
       ) {
         assignments.set(questionNumber, answer);
       }
       match = pattern.exec(rawMessage);
     }
+  }
+
+  const clauses = extractScopeAnswerClauses(rawMessage);
+  for (const clause of clauses) {
+    const referencedQuestionNumbers = extractReferencedScopeQuestionNumbers(clause);
+    if (referencedQuestionNumbers.length !== 1) {
+      continue;
+    }
+
+    const questionNumber = referencedQuestionNumbers[0]!;
+    if (assignments.has(questionNumber)) {
+      continue;
+    }
+
+    if (
+      /\b(?:exclude|remove|drop|delete|skip|omit|cancel|decline|reject|ignore)\b/i.test(clause) ||
+      mentionsOptionalScopeSuggestion(clause)
+    ) {
+      continue;
+    }
+
+    const splitAnswer = splitScopeAnswerAndImpromptuQuestion(
+      normalizeExplicitScopeClauseAnswer(clause, questionNumber)
+    );
+    const answer = normalizeScopeAnswer(
+      stripTrailingScopeManagementFromAnswer(splitAnswer.primary_answer)
+    );
+    const looksLikeConnectorOnly =
+      /^(?:and|or|plus|also|&|,|\.)+\s*(?:\d{1,2}|q(?:uestion)?\s*\d{1,2})?$/i.test(answer);
+    if (answer.length === 0 || looksLikeConnectorOnly) {
+      continue;
+    }
+
+    assignments.set(questionNumber, answer);
   }
 
   return Array.from(assignments.entries())
@@ -6149,12 +7912,17 @@ function extractImpromptuScopeQuestionFromClarification(
   }
 
   if (!/\b(also|and also|plus|additionally|one more|another)\b/i.test(rawMessage)) {
-    return null;
+    return extractPrefixedImpromptuQuestion(rawMessage);
   }
 
   const extractedClause = extractImpromptuQuestionClause(rawMessage);
   if (extractedClause) {
     return extractedClause;
+  }
+
+  const directPrefixedQuestion = extractPrefixedImpromptuQuestion(rawMessage);
+  if (directPrefixedQuestion) {
+    return directPrefixedQuestion;
   }
 
   const remainder = rawMessage
@@ -6174,14 +7942,38 @@ function extractImpromptuScopeQuestionFromClarification(
   if (normalized.length < 16) {
     return null;
   }
+  if (looksLikeExistingScopeQuestionEditClause(normalized)) {
+    return null;
+  }
   if (!looksLikePureNewQuestionClause(normalized)) {
     return null;
   }
   return normalized;
 }
 
+function extractPrefixedImpromptuQuestion(rawMessage: string): string | null {
+  const match = /(?:^|[.;]\s+)(?:new question|follow[- ]?up(?: question)?|add (?:another |one more )?(?:question|analysis|ask)|what about)\s*[:-]?\s*([\s\S]+)$/i.exec(
+    rawMessage
+  );
+  if (!match) {
+    return null;
+  }
+
+  const candidate = cleanScopeQuestionText(match[1] ?? "");
+  if (candidate.length < 16) {
+    return null;
+  }
+  if (looksLikeExistingScopeQuestionEditClause(candidate)) {
+    return null;
+  }
+  if (!looksLikePureNewQuestionClause(candidate) && !looksLikeStandaloneScopeClause(candidate)) {
+    return null;
+  }
+  return candidate;
+}
+
 function extractImpromptuQuestionClause(rawMessage: string): string | null {
-  const markerPattern = /\b(?:also|and also|plus|additionally|one more|another)\b/gi;
+  const markerPattern = /\b(?:also|and also|plus|additionally|one more|another|new question|follow[- ]?up(?: question)?|what about)\b/gi;
   const clauses = rawMessage
     .replace(/\r\n/g, "\n")
     .split(markerPattern)
@@ -6195,9 +7987,14 @@ function extractImpromptuQuestionClause(rawMessage: string): string | null {
   for (let index = 1; index < clauses.length; index += 1) {
     const clause = clauses[index]!;
     const normalized = cleanScopeQuestionText(
-      clause.replace(/^(?:can you|could you|would you|please|show me|give me|tell me)\s+/i, "")
+      clause
+        .replace(/^(?:can you|could you|would you|please|show me|give me|tell me)\s+/i, "")
+        .replace(/^(?:add (?:another |one more )?(?:question|analysis|ask)|new question|follow[- ]?up(?: question)?)\s*[:-]?\s*/i, "")
     );
     if (normalized.length < 16) {
+      continue;
+    }
+    if (looksLikeExistingScopeQuestionEditClause(clause) || looksLikeExistingScopeQuestionEditClause(normalized)) {
       continue;
     }
     if (!looksLikePureNewQuestionClause(clause)) {
@@ -6213,27 +8010,35 @@ function splitScopeAnswerAndImpromptuQuestion(answer: string): {
   primary_answer: string;
   impromptu_question: string | null;
 } {
-  const match = /(?:^|[.;]\s+|\n+)(?:also|and also|plus|additionally|one more|another)\s+([\s\S]+)$/i.exec(
+  const match = /(?:^|[.;]\s+|,\s+|\n+)(?:and also add (?:another |one more )?(?:question|analysis|ask)|also add (?:another |one more )?(?:question|analysis|ask)|add (?:another |one more )?(?:question|analysis|ask)|also|and also|plus|additionally|one more|another|new question|follow[- ]?up(?: question)?|what about)\s*[:-]?\s*([\s\S]+)$/i.exec(
     answer
   );
   if (!match || typeof match.index !== "number") {
     return {
-      primary_answer: answer,
+      primary_answer: stripTrailingScopeManagementFromAnswer(answer),
       impromptu_question: null
     };
   }
 
-  const primary = cleanScopeQuestionText(answer.slice(0, match.index));
+  const primary = cleanScopeQuestionText(
+    stripTrailingScopeManagementFromAnswer(answer.slice(0, match.index))
+  );
   const candidate = cleanScopeQuestionText(match[1] ?? "");
   if (primary.length === 0 || candidate.length < 16) {
     return {
-      primary_answer: answer,
+      primary_answer: stripTrailingScopeManagementFromAnswer(answer),
+      impromptu_question: null
+    };
+  }
+  if (looksLikeExistingScopeQuestionEditClause(candidate)) {
+    return {
+      primary_answer: stripTrailingScopeManagementFromAnswer(answer),
       impromptu_question: null
     };
   }
   if (!looksLikeStandaloneScopeClause(candidate) && !looksLikeAnalysisIntent(candidate.toLowerCase())) {
     return {
-      primary_answer: answer,
+      primary_answer: stripTrailingScopeManagementFromAnswer(answer),
       impromptu_question: null
     };
   }
@@ -6244,6 +8049,15 @@ function splitScopeAnswerAndImpromptuQuestion(answer: string): {
   };
 }
 
+function stripTrailingScopeManagementFromAnswer(value: string): string {
+  return value
+    .replace(
+      /(?:,|;|\band\b)?\s*(?:confirm(?:ed)?|approve|accept|yes(?:\s+to)?|ok(?:ay)?(?:\s+with)?|go\s+ahead(?:\s+with)?|use\s+(?:defaults?|assumptions?)\s+for|i\s+like|happy\s+with)\s+(?:the\s+)?(?:all|rest|remaining(?:\s+questions?)?|others|everything\s+else|these|them|your\s+assumptions?)[.!?]*\s*$/i,
+      ""
+    )
+    .trim();
+}
+
 function normalizeScopeAnswer(value: string): string {
   return value
     .replace(/^\s*q(?:uestion)?\s*\d+\s*(?:\+|\/|&|and)\s*q(?:uestion)?\s*\d+\s*[:\-)\]]?\s*/i, "")
@@ -6252,92 +8066,274 @@ function normalizeScopeAnswer(value: string): string {
     .trim();
 }
 
-function buildScopeClarificationIntroMessage(state: ChatState): string {
-  const pending = state.scope_questions.filter((entry) => !entry.answer || entry.answer.trim().length === 0);
-  if (pending.length === 0) {
-    return "All scope clarifications are captured.";
+function getStandalonePendingClarificationPrompts(state: ChatState): string[] {
+  const questionNumbers = new Set(state.scope_questions.map((entry) => entry.question_number));
+  const prompts = state.pending_inputs
+    .filter(
+      (entry) =>
+        typeof entry.question_number !== "number" ||
+        !questionNumbers.has(entry.question_number)
+    )
+    .map((entry) => entry.prompt.trim())
+    .filter((entry) => entry.length > 0);
+  return Array.from(new Set(prompts));
+}
+
+function buildScopeSuggestionLines(state: ChatState): string[] {
+  if (state.scope_suggestions.length === 0) {
+    return [];
   }
-  const timezone = state.draft.timezone || "UTC";
-  const todayLocal = getTodayDateStringInTimezone(timezone);
 
-  const pendingLines = pending.map((entry) => {
-    const clarification =
-      entry.clarification && entry.clarification.trim().length > 0
-        ? entry.clarification
-        : buildClarificationForScopeQuestion(entry.question);
-    const proposedDefault = buildProposedDefaultForScopeQuestion(state, entry);
-    return [
-      `- Q${entry.question_number}: ${entry.question}`,
-      `  Clarification needed: ${clarification}`,
-      `  Proposed default (not applied): ${proposedDefault}`
-    ].join("\n");
-  });
+  return state.scope_suggestions.map((entry) =>
+    `- ${getScopeSuggestionDisplayLabel(state, entry.suggestion_number)}: ${entry.question}`
+  );
+}
 
-  const businessContextLine =
-    state.scope_business_context && state.scope_business_context.trim().length > 0
-      ? `Business context available and used for defaults: ${state.scope_business_context.trim()}`
-      : null;
+function buildVisibleScopeQuestionLines(
+  state: ChatState,
+  options: { include_suggestions: boolean }
+): string[] {
+  const scopedLines = state.scope_questions.map(
+    (entry) => `- Q${entry.question_number}: ${entry.question}`
+  );
+  if (!options.include_suggestions || state.scope_suggestions.length === 0) {
+    return scopedLines;
+  }
 
   return [
-    "Before data preparation, please confirm the scope details below.",
-    `Today is ${todayLocal} in ${timezone}. Relative windows will anchor to this date unless you override.`,
-    "I prepared defaults for each question, but none are applied until you explicitly confirm or edit.",
-    businessContextLine,
+    ...scopedLines,
+    ...buildScopeSuggestionLines(state)
+  ];
+}
+
+export function buildDisplayClarificationPromptForScopeQuestion(
+  state: ChatState,
+  question: ScopeQuestionEntry
+): string {
+  return buildAssumptionPromptForScopeQuestion(state, question);
+}
+
+function sentenceCase(value: string): string {
+  const trimmed = value.trim();
+  if (trimmed.length === 0) {
+    return trimmed;
+  }
+  return trimmed[0]!.toUpperCase() + trimmed.slice(1);
+}
+
+function buildFallbackScopeResolutionSummary(
+  state: ChatState,
+  entry: ScopeQuestionEntry
+): string {
+  const lower = `${entry.question} ${entry.clarification}`.toLowerCase();
+  const requestedMonths = getRequestedMonthWindowFromScope(state, lower);
+  const explicitTopN = /\btop\s+(\d{1,2})\b/i.exec(entry.question)?.[1] ?? null;
+  const matchedMetric = findSavedMetricDefinitionForText(
+    state.metric_definitions,
+    `${entry.question} ${entry.clarification}`
+  );
+
+  if (/\bresolution\b/.test(lower) && /\bissue\b/.test(lower)) {
+    return "Tickets linked to refunded orders, broken down by issue type.";
+  }
+
+  if (/\b(?:support|ticket|tickets)\b/.test(lower) && /\b(?:issue|reason)\b/.test(lower)) {
+    return "Tickets linked to refunded orders, ranked by issue type.";
+  }
+
+  if (/\b(?:support|ticket|tickets)\b/.test(lower)) {
+    return "Tickets linked to refunded orders only.";
+  }
+
+  if (/\brefund\b/.test(lower) && /\b(?:rate|ratio|percent|percentage)\b/.test(lower) && /\b(?:city|cities|region|regions)\b/.test(lower)) {
+    const metricLabel = matchedMetric?.display_name?.trim() || "Refund rate";
+    return `${metricLabel} by city${explicitTopN ? `, top ${explicitTopN}` : ""}.`;
+  }
+
+  if (/\b(?:compare|comparison|vs|versus|prior|previous)\b/.test(lower)) {
+    if (requestedMonths !== null) {
+      return `Latest ${requestedMonths} months vs the prior ${requestedMonths} months.`;
+    }
+    return "Use the agreed comparison windows.";
+  }
+
+  if (/\b(?:trend|month|months|week|weeks|quarter|quarters|timeline|period|window)\b/.test(lower)) {
+    if (requestedMonths !== null) {
+      return `Last ${requestedMonths} complete months with monthly buckets.`;
+    }
+    return "Use the agreed trend window.";
+  }
+
+  if (/\b(?:top|highest|lowest|rank|ranking)\b/.test(lower)) {
+    return `Use the agreed ranking cutoff${explicitTopN ? ` (top ${explicitTopN})` : ""}.`;
+  }
+
+  return "Use the agreed filters and time range.";
+}
+
+function buildDisplayScopeResolutionSummary(
+  state: ChatState,
+  entry: ScopeQuestionEntry
+): string {
+  const raw =
+    entry.answer && entry.answer.trim().length > 0
+      ? entry.answer.trim()
+      : buildProposedDefaultForScopeQuestion(state, entry);
+
+  let cleaned = raw
+    .replace(/^Confirmed:\s*/i, "")
+    .replace(/\bUsing saved metric:\s*.+$/i, "")
+    .replace(/Anchor relative windows to [^.]+?\.\s*/gi, "")
+    .replace(/Use a \d+-month window anchored to today [^.]+?\.\s*/gi, "")
+    .replace(/[A-Z][a-z]+ \d{4} is in progress[^.]*\.\s*/g, "")
+    .replace(/Use monthly granularity by default for trend readability\.?/gi, "Monthly buckets.")
+    .replace(/Return both absolute and percentage delta by default\.?/gi, "")
+    .replace(/Return [^.]+ by default\.?/gi, "")
+    .replace(/Will compute [^.]+\.?/gi, "")
+    .replace(/show the trend at the requested grain unless you want a different cutoff or formula\.?/gi, "")
+    .replace(/unless you (?:want|choose|specify) [^.]+\.?/gi, "")
+    .replace(/\s+/g, " ")
+    .replace(/\s+\./g, ".")
+    .trim();
+
+  cleaned = cleaned
+    .split(/(?<=[.])\s+/)
+    .map((part) => part.trim())
+    .filter((part) => part.length > 0)
+    .slice(0, 2)
+    .join(" ");
+
+  if (cleaned.length === 0) {
+    cleaned = buildFallbackScopeResolutionSummary(state, entry);
+  }
+
+  return sentenceCase(cleaned);
+}
+
+function buildPendingScopeClarificationLines(state: ChatState): {
+  with_defaults: string[];
+  without_defaults: string[];
+} {
+  const pendingQuestions = state.scope_questions.filter(
+    (entry) => !entry.answer || entry.answer.trim().length === 0
+  );
+  const withDefaults = pendingQuestions.map((entry) => {
+    const clarification = buildDisplayClarificationPromptForScopeQuestion(state, entry);
+    return `- Q${entry.question_number}: ${clarification}`;
+  });
+
+  const standalonePrompts = getStandalonePendingClarificationPrompts(state).map(
+    (prompt) => `- ${prompt}`
+  );
+
+  return {
+    with_defaults: withDefaults,
+    without_defaults: standalonePrompts
+  };
+}
+
+function buildConfirmedScopeAnswerLines(state: ChatState): string[] {
+  return state.scope_questions.map((entry) => {
+    return `- Q${entry.question_number}: ${buildDisplayScopeResolutionSummary(state, entry)}`;
+  });
+}
+
+function buildEmptyScopeClarificationMessage(): string {
+  return "No scoped questions remain. Tell me the question or questions you want to analyze, and I'll rebuild the clarifications before data preparation.";
+}
+
+function buildScopeClarificationIntroMessage(state: ChatState): string {
+  if (state.scope_questions.length === 0) {
+    return buildEmptyScopeClarificationMessage();
+  }
+
+  const pendingSections = buildPendingScopeClarificationLines(state);
+  if (pendingSections.with_defaults.length === 0 && pendingSections.without_defaults.length === 0) {
+    return "All scope clarifications are captured.";
+  }
+  return [
+    "Before data preparation, let’s close the remaining scope details.",
+    "If you add or remove a question, the scope list below updates immediately.",
     "",
     "Questions in scope:",
-    pendingLines.join("\n\n"),
+    buildVisibleScopeQuestionLines(state, { include_suggestions: true }).join("\n"),
+    pendingSections.with_defaults.length > 0 ? "" : null,
+    pendingSections.with_defaults.length > 0 ? "Clarifications to confirm:" : null,
+    pendingSections.with_defaults.length > 0 ? pendingSections.with_defaults.join("\n\n") : null,
+    pendingSections.without_defaults.length > 0 ? "" : null,
+    pendingSections.without_defaults.length > 0 ? "Other open clarifications:" : null,
+    pendingSections.without_defaults.length > 0 ? pendingSections.without_defaults.join("\n") : null,
     "",
-    "You can answer naturally in one message or across multiple messages.",
-    "Are you okay with these defaults, or what should I change before I lock scope?"
+    state.scope_suggestions.length > 0
+      ? buildScopeSuggestionIncludeInstruction(state)
+      : "You can add a new question in plain English or remove a scoped question by saying remove Q3.",
+    "You can reply naturally, for example: confirm all, go ahead with these, or all good except Q2.",
+    "Run Data Preparation will appear once these are closed."
   ]
     .filter((line): line is string => typeof line === "string" && line.trim().length > 0)
     .join("\n");
 }
 
 function buildScopeClarificationPendingMessage(state: ChatState): string {
-  const pending = state.scope_questions.filter((entry) => !entry.answer || entry.answer.trim().length === 0);
-  if (pending.length === 0) {
+  if (state.scope_questions.length === 0) {
+    return buildEmptyScopeClarificationMessage();
+  }
+
+  const pendingSections = buildPendingScopeClarificationLines(state);
+  if (pendingSections.with_defaults.length === 0 && pendingSections.without_defaults.length === 0) {
     return "All scope clarifications are captured.";
   }
-  const answered = state.scope_questions.filter((entry) => Boolean(entry.answer && entry.answer.trim().length > 0));
-  const timezone = state.draft.timezone || "UTC";
-  const todayLocal = getTodayDateStringInTimezone(timezone);
-
-  const pendingLines = pending.map((entry) => {
-    const clarification =
-      entry.clarification && entry.clarification.trim().length > 0
-        ? entry.clarification
-        : buildClarificationForScopeQuestion(entry.question);
-    const metricLine =
-      entry.metric_display_name && entry.metric_display_name.trim().length > 0
-        ? ` (metric: ${entry.metric_display_name})`
-        : "";
-    const proposedDefault = buildProposedDefaultForScopeQuestion(state, entry);
-    return [
-      `- Q${entry.question_number}${metricLine}: ${entry.question}`,
-      `  Clarification needed: ${clarification}`,
-      `  Proposed default (not applied): ${proposedDefault}`
-    ].join("\n");
-  });
-
-  const answeredLines =
-    answered.length > 0
-      ? answered.map((entry) => `- Q${entry.question_number}: ${entry.question}\n  Recorded answer: ${entry.answer ?? ""}`)
-      : ["- None yet."];
+  const totalPendingCount =
+    pendingSections.with_defaults.length + pendingSections.without_defaults.length;
 
   return [
-    `Need clarification for ${pending.length} scope item${pending.length === 1 ? "" : "s"} before data preparation.`,
-    `Today is ${todayLocal} in ${timezone}; relative windows are anchored to this date by default.`,
-    "Proposed defaults remain unconfirmed until you explicitly confirm or edit them.",
+    `Still need clarification on ${totalPendingCount} item${totalPendingCount === 1 ? "" : "s"} before data preparation.`,
+    "The scope list below is the exact set of questions that will be prepared.",
     "",
-    "Recorded so far:",
-    answeredLines.join("\n"),
+    "Questions in scope:",
+    buildVisibleScopeQuestionLines(state, { include_suggestions: true }).join("\n"),
     "",
-    "Still pending:",
-    pendingLines.join("\n\n"),
+    pendingSections.with_defaults.length > 0 ? "Clarifications to confirm:" : null,
+    pendingSections.with_defaults.length > 0 ? pendingSections.with_defaults.join("\n\n") : null,
+    pendingSections.without_defaults.length > 0 ? "" : null,
+    pendingSections.without_defaults.length > 0 ? "Other open clarifications:" : null,
+    pendingSections.without_defaults.length > 0 ? pendingSections.without_defaults.join("\n") : null,
     "",
-    "Please confirm or edit the pending items. Are these defaults okay?"
-  ].join("\n");
+    state.scope_suggestions.length > 0
+      ? buildScopeSuggestionIncludeInstruction(state)
+      : "You can add a new question in plain English or remove a scoped question by saying remove Q3.",
+    "Reply naturally and I’ll keep this scope updated. Run Data Preparation will appear once these are closed."
+  ]
+    .filter((line): line is string => typeof line === "string" && line.trim().length > 0)
+    .join("\n");
+}
+
+function buildLockedScopeMessage(
+  state: ChatState,
+  options?: {
+    intro_lines?: string[];
+    footer_lines?: string[];
+  }
+): string {
+  const introLines = options?.intro_lines ?? [];
+  const footerLines = options?.footer_lines ?? [];
+
+  return [
+    ...introLines,
+    introLines.length > 0 ? "" : null,
+    "Questions in scope:",
+    buildVisibleScopeQuestionLines(state, { include_suggestions: false }).join("\n"),
+    "",
+    "Resolved scope:",
+    buildConfirmedScopeAnswerLines(state).join("\n"),
+    ...(
+      footerLines.length > 0
+        ? ["", ...footerLines]
+        : []
+    )
+  ]
+    .filter((line): line is string => typeof line === "string" && line.trim().length > 0)
+    .join("\n");
 }
 
 async function executeLlmRoutedSingleQuery(
@@ -7171,6 +9167,9 @@ async function buildPreparationConfirmation(state: ChatState, apiClient: WebApiC
   // Verify data scope before showing confirmation
   const verification = await verifyDataScope(gatedState.draft, apiClient);
   if (!verification.ok) {
+    gatedState.scope_finalized = false;
+    gatedState.scope_pending = false;
+    gatedState.prep_pending = false;
     return {
       assistant_message: verification.blocking_message!,
       state: gatedState
@@ -7185,53 +9184,17 @@ async function buildPreparationConfirmation(state: ChatState, apiClient: WebApiC
   nextState.scope_pending = false;
   syncQuestionRegistryFromScope(nextState);
 
-  const draft = nextState.draft;
-  const tables = draft.allowed_relations.length > 0 ? draft.allowed_relations.join(", ") : "default tables";
-  const metrics = draft.metric_ids.length > 0 ? draft.metric_ids.map((m) => m.replace(/^metric_/, "")).join(", ") : "all available";
-  const dimensions = draft.dimension_ids.length > 0 ? draft.dimension_ids.join(", ") : "none specified";
-  const modeLabel = draft.insight_mode === "data" ? "Data Quality" : "Business Insights";
-
-  // Try to detect date/time columns from catalog for timeline context
-  let timelineHint = "all available data in the selected tables";
-  try {
-    const catalog = await apiClient.getCatalog();
-    const dateColumns: string[] = [];
-    for (const table of catalog.tables) {
-      for (const col of table.columns) {
-        if (/date|time|timestamp|created|updated/i.test(col.column_name) && /timestamp|date|time/i.test(col.data_type)) {
-          dateColumns.push(`${table.qualified_name}.${col.column_name}`);
-        }
-      }
-    }
-    if (dateColumns.length > 0) {
-      timelineHint = `Data will be scoped using time columns: ${dateColumns.slice(0, 3).join(", ")}${dateColumns.length > 3 ? ` (+${dateColumns.length - 3} more)` : ""}`;
-    }
-  } catch {
-    // catalog unavailable — use default hint
-  }
-
-  const reportName = draft.name.trim().length > 0 ? draft.name.trim() : "Untitled Report";
-
+  const reportName =
+    nextState.draft.name.trim().length > 0 ? nextState.draft.name.trim() : "Untitled Report";
   const verificationLines = verification.warning_lines.length > 0
-    ? ["", "Data verification:", ...verification.warning_lines.map((w) => `- ${w}`)]
+    ? ["Data verification:", ...verification.warning_lines.map((w) => `- ${w}`)]
     : [];
 
-  const scopeMessage = [
-    `Ready to prepare data for: "${reportName}"`,
-    "",
-    "Scope summary:",
-    `- Tables: ${tables}`,
-    `- Metrics: ${metrics}`,
-    `- Dimensions: ${dimensions}`,
-    `- Mode: ${modeLabel}`,
-    `- Timeline: ${timelineHint}`,
-    ...verificationLines,
-    "",
-    "Scope is locked and waiting on the current workflow decision."
-  ].join("\n");
-
   return {
-    assistant_message: scopeMessage,
+    assistant_message: buildLockedScopeMessage(nextState, {
+      intro_lines: [`Scope is locked for "${reportName}".`],
+      footer_lines: [...verificationLines, "Run Data Preparation when you're ready."]
+    }),
     state: nextState
   };
 }
@@ -7325,9 +9288,23 @@ function isScopeFinalizeChoice(command: string): boolean {
   const normalized = command.trim();
   return (
     /^__ui_run_data_preparation__$/.test(normalized) ||
-    /^(looks good|scope looks good|finalize scope|lock scope|ready|all set|proceed|go ahead|yes|ok|okay|confirm|confirm all|yes to all|accept all|approve all|all good|all fine|defaults are fine|ok with everything|okay with everything)\s*[.!]?$/.test(
+    /^(looks good|scope looks good|finalize scope|lock scope|ready|all set|proceed|go ahead|go ahead with these|yes|ok|okay|confirm|confirm all|yes to all|accept all|approve all|all good|all fine|defaults are fine|assumptions are fine|i like your assumptions|ok with everything|okay with everything)\s*[.!]?$/.test(
       normalized
     )
+  );
+}
+
+function isStartReportClarificationChoice(command: string): boolean {
+  return (
+    /^__ui_report_clarifications__$/.test(command) ||
+    /^(ask clarifications on the report|report clarifications|clarify report|ask report questions)\b/.test(command)
+  );
+}
+
+function isStartBusinessCaseChoice(command: string): boolean {
+  return (
+    /^__ui_business_case_analysis__$/.test(command) ||
+    /^(ask for business case analysis|business case analysis|build business case|business case)\b/.test(command)
   );
 }
 
@@ -7359,8 +9336,127 @@ function isPdfGenerateNoChoice(command: string): boolean {
   );
 }
 
+function formatReportClarificationAnswer(
+  response: z.output<typeof ReportClarificationOutputSchema>
+): string {
+  const citationLine = response.citations.length > 0
+    ? `References: ${response.citations.join(", ")}`
+    : "";
+  return [response.answer, citationLine].filter((line) => line.length > 0).join("\n\n");
+}
+
+function formatBusinessCaseCandidateList(
+  candidates: z.output<typeof BusinessCaseCandidateSchema>[]
+): string {
+  const lines = candidates.map((candidate) =>
+    `Q${candidate.question_number} R${candidate.recommendation_index}: ${candidate.recommendation} (${candidate.question_text})`
+  );
+  return [
+    "Select a recommendation for business case analysis by replying with Qn Rn.",
+    lines.join("\n"),
+    "",
+    "You can add assumptions in the same message, for example: Q1 R1 assume a $50k rollout cost and 2 analysts."
+  ].join("\n");
+}
+
+function formatBusinessCaseClarificationRequest(
+  response: Extract<z.output<typeof BusinessCaseOutputSchema>, { status: "needs_clarification" }>
+): string {
+  const missingInputs = response.missing_inputs.length > 0
+    ? `Missing inputs: ${response.missing_inputs.join("; ")}`
+    : "";
+  return [response.clarification_prompt, missingInputs].filter((line) => line.length > 0).join("\n\n");
+}
+
+function formatBusinessCaseOutput(
+  response: Extract<z.output<typeof BusinessCaseOutputSchema>, { status: "complete" }>
+): string {
+  const timelineLines = response.timeline_impact.map((entry) => `- ${entry.period_label}: ${entry.impact}`);
+  const section = (title: string, lines: string[]) =>
+    lines.length > 0 ? `${title}\n${lines.map((line) => `- ${line}`).join("\n")}` : "";
+
+  return [
+    response.title,
+    "",
+    `Executive summary: ${response.executive_summary}`,
+    "",
+    `Recommendation: ${response.recommendation}`,
+    "",
+    section("Baseline", response.baseline),
+    section("Assumptions", response.assumptions),
+    section("Implementation plan", response.implementation_plan),
+    timelineLines.length > 0 ? `Impact over time\n${timelineLines.join("\n")}` : "",
+    section("Financial view", response.financial_view),
+    section("Operational view", response.operational_view),
+    section("Risks", response.risks),
+    section("KPIs to track", response.kpis_to_track),
+    response.citations.length > 0 ? `References: ${response.citations.join(", ")}` : ""
+  ].filter((line) => line.length > 0).join("\n\n");
+}
+
+function parseBusinessCaseCandidateSelection(
+  message: string,
+  candidates: z.output<typeof BusinessCaseCandidateSchema>[]
+): z.output<typeof BusinessCaseCandidateSchema> | null {
+  const normalized = message.trim().toLowerCase();
+  const pairMatch =
+    normalized.match(/\bq(?:uestion)?\s*(\d+)\s*[-,:/ ]+\s*r(?:ecommendation)?\s*(\d+)\b/i) ??
+    normalized.match(/\bq(?:uestion)?\s*(\d+)\b[\s,;:-]*\br(?:ecommendation)?\s*(\d+)\b/i);
+  if (pairMatch) {
+    const questionNumber = Number.parseInt(pairMatch[1] ?? "", 10);
+    const recommendationIndex = Number.parseInt(pairMatch[2] ?? "", 10);
+    return candidates.find((candidate) =>
+      candidate.question_number === questionNumber &&
+      candidate.recommendation_index === recommendationIndex
+    ) ?? null;
+  }
+
+  return candidates.find((candidate) => normalized.includes(candidate.candidate_id.toLowerCase())) ?? null;
+}
+
+function stripBusinessCaseSelection(message: string): string {
+  return message
+    .replace(/\bq(?:uestion)?\s*\d+\s*[-,:/ ]+\s*r(?:ecommendation)?\s*\d+\b/ig, " ")
+    .replace(/\bq(?:uestion)?\s*\d+\b[\s,;:-]*\br(?:ecommendation)?\s*\d+\b/ig, " ")
+    .trim();
+}
+
+function buildBusinessCaseQuestion(message: string): string {
+  const stripped = stripBusinessCaseSelection(message);
+  return stripped.length > 0
+    ? stripped
+    : "Build a detailed business case for the selected recommendation.";
+}
+
+function extractBusinessCaseAssumptionNotes(message: string): string[] {
+  const stripped = stripBusinessCaseSelection(message);
+  if (stripped.length === 0) {
+    return [];
+  }
+
+  if (
+    /\b(?:assum|cost|budget|price|headcount|fte|staff|team|workforce|hire|month|months|week|weeks|quarter|quarters|year|years|timeline|rollout|implementation)\b/i.test(stripped) ||
+    /\$|\b\d+\b/.test(stripped)
+  ) {
+    return [stripped];
+  }
+
+  return [];
+}
+
+function appendBusinessCaseAssumptionNotes(existing: string[], additions: string[]): string[] {
+  return Array.from(
+    new Set(
+      [...existing, ...additions]
+        .map((entry) => entry.trim())
+        .filter((entry) => entry.length > 0)
+    )
+  ).slice(0, 8);
+}
+
 function completePdfGeneration(state: ChatState): ChatTurnResponse {
   const nextState = parseChatState(state);
+  resetPostRunFollowupState(nextState);
   nextState.awaiting_pdf_confirmation = false;
   nextState.awaiting_post_run_refinement = false;
   nextState.refinement_active = false;
@@ -7376,6 +9472,118 @@ function completePdfGeneration(state: ChatState): ChatTurnResponse {
     assistant_message: `PDF is ready for run ${nextState.last_run_id}.\nWould you like to save this run to report logs?`,
     state: nextState,
     pdf_download_url: `/api/runs/${nextState.last_run_id}/pdf`
+  };
+}
+
+async function executeReportClarificationQa(
+  state: ChatState,
+  question: string,
+  apiClient: WebApiClient,
+  queryRouter?: QueryRouterClient
+): Promise<ChatTurnResponse> {
+  const nextState = parseChatState(state);
+  if (!nextState.last_run_id) {
+    return {
+      assistant_message: "No completed run found yet. Run analysis first.",
+      state: nextState
+    };
+  }
+
+  const response = await apiClient.askReportClarification(nextState.last_run_id, question);
+  if (!response.grounded || response.requires_new_analysis) {
+    if (!queryRouter) {
+      return {
+        assistant_message:
+          "That question needs fresh analysis rather than a report clarification. Start a new scoped analysis for it.",
+        state: nextState
+      };
+    }
+    return stageRefinementAsScopedQuestion(nextState, question, apiClient, queryRouter);
+  }
+
+  nextState.post_run_actions_pending = true;
+  nextState.report_clarification_active = true;
+  nextState.business_case_active = false;
+  nextState.business_case_selected_candidate_id = null;
+  nextState.business_case_assumption_notes = [];
+  nextState.business_case_pending_clarification = null;
+  return {
+    assistant_message: formatReportClarificationAnswer(response),
+    state: nextState
+  };
+}
+
+async function executeBusinessCaseQa(
+  state: ChatState,
+  message: string,
+  apiClient: WebApiClient
+): Promise<ChatTurnResponse> {
+  const nextState = parseChatState(state);
+  if (!nextState.last_run_id) {
+    return {
+      assistant_message: "No completed run found yet. Run analysis first.",
+      state: nextState
+    };
+  }
+
+  const candidates = nextState.business_case_candidates;
+  if (candidates.length === 0) {
+    return {
+      assistant_message: "No business case candidates are loaded for this run yet.",
+      state: nextState
+    };
+  }
+
+  const explicitCandidate = parseBusinessCaseCandidateSelection(message, candidates);
+  const selectedCandidateId = explicitCandidate?.candidate_id ?? nextState.business_case_selected_candidate_id;
+  if (!selectedCandidateId) {
+    return {
+      assistant_message: formatBusinessCaseCandidateList(candidates),
+      state: nextState
+    };
+  }
+
+  if (explicitCandidate && explicitCandidate.candidate_id !== nextState.business_case_selected_candidate_id) {
+    nextState.business_case_assumption_notes = [];
+    nextState.business_case_pending_clarification = null;
+  }
+
+  const question = nextState.business_case_pending_clarification
+    ? "Update the business case with the clarified assumptions."
+    : buildBusinessCaseQuestion(message);
+  const assumptionNotes = nextState.business_case_pending_clarification
+    ? appendBusinessCaseAssumptionNotes(nextState.business_case_assumption_notes, [message])
+    : appendBusinessCaseAssumptionNotes(
+        nextState.business_case_assumption_notes,
+        extractBusinessCaseAssumptionNotes(message)
+      );
+
+  nextState.post_run_actions_pending = true;
+  nextState.report_clarification_active = false;
+  nextState.business_case_active = true;
+  nextState.business_case_selected_candidate_id = selectedCandidateId;
+  nextState.business_case_assumption_notes = assumptionNotes;
+
+  const response = await apiClient.buildBusinessCase(nextState.last_run_id, {
+    candidate_id: selectedCandidateId,
+    question,
+    assumption_notes: assumptionNotes
+  });
+
+  if (response.status === "needs_clarification") {
+    nextState.business_case_pending_clarification = response.clarification_prompt;
+    return {
+      assistant_message: formatBusinessCaseClarificationRequest(response),
+      state: nextState
+    };
+  }
+
+  nextState.business_case_selected_candidate_id = null;
+  nextState.business_case_assumption_notes = [];
+  nextState.business_case_pending_clarification = null;
+  return {
+    assistant_message: formatBusinessCaseOutput(response),
+    state: nextState
   };
 }
 
@@ -7438,6 +9646,7 @@ async function stageRefinementAsScopedQuestion(
   queryRouter: QueryRouterClient | undefined
 ): Promise<ChatTurnResponse> {
   const nextState = parseChatState(state);
+  resetPostRunFollowupState(nextState);
   nextState.awaiting_post_run_refinement = false;
   nextState.refinement_active = false;
   nextState.refinement_questions_remaining = 0;
@@ -7687,14 +9896,33 @@ async function executePreparation(state: ChatState, apiClient: WebApiClient): Pr
   nextState.prep_complete = true;
   nextState.scope_pending = true;
   nextState.scope_clarification_pending = false;
-  nextState.prepared_payloads = prepared.prepared_payloads;
+  const preparedPayloads =
+    nextState.scope_questions.length === 0
+      ? [...prepared.prepared_payloads]
+      : prepared.prepared_payloads
+          .filter((payload) => {
+            if (typeof payload.question_number !== "number") {
+              return true;
+            }
+            return nextState.scope_questions.some(
+              (entry) => entry.question_number === payload.question_number
+            );
+          })
+          .sort((left, right) => {
+            const leftNumber =
+              typeof left.question_number === "number" ? left.question_number : Number.MAX_SAFE_INTEGER;
+            const rightNumber =
+              typeof right.question_number === "number" ? right.question_number : Number.MAX_SAFE_INTEGER;
+            return leftNumber - rightNumber;
+          });
+  nextState.prepared_payloads = preparedPayloads;
   nextState.preparation_summary = prepared.planner_summary ?? null;
   syncQuestionRegistryFromScope(nextState);
-  if (nextState.question_registry.length > 0 && prepared.prepared_payloads.length > 0) {
+  if (nextState.question_registry.length > 0 && preparedPayloads.length > 0) {
     const byNumber = new Map(
       nextState.question_registry.map((entry) => [entry.question_number, entry])
     );
-    for (const payload of prepared.prepared_payloads) {
+    for (const payload of preparedPayloads) {
       if (!payload.question_number) {
         continue;
       }
@@ -7714,7 +9942,7 @@ async function executePreparation(state: ChatState, apiClient: WebApiClient): Pr
     nextState.last_token_usage = prepared.token_usage;
   }
 
-  if (prepared.prepared_payloads.length === 0) {
+  if (preparedPayloads.length === 0) {
     nextState.prep_complete = false;
     nextState.scope_pending = false;
     nextState.prep_pending = true;
@@ -7730,13 +9958,16 @@ async function executePreparation(state: ChatState, apiClient: WebApiClient): Pr
     };
   }
 
-  const payloadLines = prepared.prepared_payloads.map((payload) =>
+  const payloadLines = preparedPayloads.map((payload) =>
     formatPreparedPayloadSummary(payload)
   );
 
   return {
     assistant_message: [
-      "Data preparation is complete, and the analysis run is staged.",
+      "Data preparation is complete for the locked scope.",
+      "",
+      "Prepared questions:",
+      buildVisibleScopeQuestionLines(nextState, { include_suggestions: false }).join("\n"),
       "",
       payloadLines.length > 0 ? payloadLines.join("\n") : "- No prepared payloads.",
       "",
@@ -7785,6 +10016,7 @@ async function executeRun(state: ChatState, apiClient: WebApiClient): Promise<Ch
   }
 
   const nextState = parseChatState(state);
+  resetPostRunFollowupState(nextState);
   nextState.prep_pending = false;
   nextState.scope_pending = false;
   nextState.pending_query_sql = null;
@@ -7999,6 +10231,22 @@ function buildStateContext(state: ChatState): string {
 
   if (state.scope_pending) {
     parts.push("Analysis execution is waiting for scope confirmation.");
+  }
+
+  if (state.post_run_actions_pending) {
+    parts.push("Post-run follow-up actions are available.");
+  }
+
+  if (state.report_clarification_active) {
+    parts.push("Report clarification mode is active.");
+  }
+
+  if (state.business_case_active) {
+    parts.push("Business case analysis mode is active.");
+  }
+
+  if (state.business_case_pending_clarification) {
+    parts.push(`Business case clarification needed: ${state.business_case_pending_clarification}`);
   }
 
   if (state.awaiting_post_run_refinement) {
@@ -8966,6 +11214,14 @@ function looksLikeComplexMultiQuestionPrompt(lower: string): boolean {
     return true;
   }
 
+  const analyticalMentions =
+    lower.match(
+      /\b(refund|refunded|return|cancel|revenue|sales|gmv|support|ticket|issue|reason|city|cities|region|regions|product|products|category|categories|trend|comparison|compare|rate|drivers?|breakdown)\b/g
+    ) ?? [];
+  if (/\band\b/.test(lower) && analyticalMentions.length >= 4 && lower.length >= 45) {
+    return true;
+  }
+
   // Long requests with multiple clauses should be treated as scoped analysis, not a simple number query.
   return lower.length > 160 && /,|\band\b/.test(lower);
 }
@@ -8975,7 +11231,9 @@ function extractRequestedMonths(lower: string): number | null {
     return 1;
   }
 
-  const match = lower.match(/\b(?:past|last|previous)\s+(\d{1,2})\s+months?\b/);
+  const match = lower.match(
+    /\b(?:past|last|previous|recent|most recent)\s+(\d{1,2})(?:\s+complete|\s+full|\s+calendar)?\s+months?\b/
+  );
   if (!match) {
     return null;
   }
@@ -9847,6 +12105,7 @@ function resetPreparedState(state: ChatState): void {
   state.scope_clarification_pending = false;
   state.scope_business_context = null;
   state.scope_source_prompt = null;
+  state.scope_suggestions = [];
   state.scope_questions = [];
   state.pending_inputs = [];
   state.question_registry = [];
@@ -9854,6 +12113,7 @@ function resetPreparedState(state: ChatState): void {
   state.last_orchestrator_decision = null;
   state.preparation_summary = null;
   state.prepared_payloads = [];
+  resetPostRunFollowupState(state);
   state.awaiting_pdf_confirmation = false;
   state.awaiting_post_run_refinement = false;
   state.refinement_active = false;
@@ -10031,6 +12291,12 @@ function asksForPdf(command: string): boolean {
   return command.includes("pdf") || command.includes("download");
 }
 
+function hasPreparationBlockedCue(message: string): boolean {
+  return /\bno data to analyze\b|\bthere'?s no data\b|\bappears to be empty\b|\bno tables are scoped\b|\bcannot run yet\b|\bcheck that data is being loaded\b|\bdoes not exist\b|\bnot accessible\b/i.test(
+    message
+  );
+}
+
 function hasScopeReadyContextInHistory(state: ChatState): boolean {
   const lastAssistant = [...state.conversation_history]
     .reverse()
@@ -10040,6 +12306,9 @@ function hasScopeReadyContextInHistory(state: ChatState): boolean {
   }
 
   const text = lastAssistant.content.toLowerCase();
+  if (hasPreparationBlockedCue(text)) {
+    return false;
+  }
   return (
     text.includes("scope clarifications captured for all questions") ||
     text.includes("ready to prepare data for:") ||

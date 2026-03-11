@@ -14,8 +14,10 @@ import {
 import type { DataPlane } from "@project-overload/dataplane";
 import type {
   AnalystClient,
+  BusinessCaseClient,
   PlannerClient,
   QueryStrategistClient,
+  ReportClarificationClient,
   ReportComposerClient
 } from "@project-overload/llm-client";
 import { renderExecBriefHtml, renderPdfFromHtml } from "@project-overload/report-render";
@@ -28,6 +30,11 @@ import {
   prepareReportContractData,
   runReportContractPipeline
 } from "../services/run-contract";
+import {
+  answerReportQuestionWithAgent,
+  buildBusinessCaseAnalysis,
+  listBusinessCaseCandidates
+} from "../services/report-followups";
 import { deliverReportRun } from "../services/delivery";
 
 export function registerContractRoutes(
@@ -35,7 +42,10 @@ export function registerContractRoutes(
   store: MetadataStore,
   dataPlane: DataPlane,
   analystClient: AnalystClient,
+  forecastClient: AnalystClient,
+  businessCaseClient: BusinessCaseClient,
   queryStrategist: QueryStrategistClient,
+  reportQaClient: ReportClarificationClient,
   reportComposer: ReportComposerClient,
   plannerClient: PlannerClient,
   connectionRegistry: UserConnectionRegistry
@@ -268,6 +278,7 @@ export function registerContractRoutes(
           store,
           data_plane: dataPlane,
           analyst_client: analystClient,
+          forecast_client: forecastClient,
           query_strategist: queryStrategist,
           report_composer: reportComposer,
           planner_client: plannerClient,
@@ -439,6 +450,86 @@ export function registerContractRoutes(
       catalog_summary: buildCatalogSummary(connectionRegistry.resolveForRequest())
     });
     return reply.code(200).send(answer);
+  });
+
+  app.post("/report-runs/:runId/report-qa", async (request, reply) => {
+    const context = resolveRequestContext(request);
+    const { runId } = request.params as { runId: string };
+    const parsed = z.object({ question: z.string().trim().min(1) }).safeParse(request.body ?? {});
+    if (!parsed.success) {
+      return reply.code(400).send({ message: "Question is required." });
+    }
+
+    const run = await store.getReportRunById(runId, context);
+    if (!run) {
+      return reply.code(404).send({ message: "Report run not found" });
+    }
+
+    const contract = await store.getReportContract(run.contract_id, context);
+    if (!contract) {
+      return reply.code(404).send({ message: "Report contract not found" });
+    }
+
+    const answer = await answerReportQuestionWithAgent({
+      run,
+      contract,
+      question: parsed.data.question,
+      report_qa_client: reportQaClient
+    });
+    return reply.code(200).send(answer);
+  });
+
+  app.get("/report-runs/:runId/business-case/candidates", async (request, reply) => {
+    const context = resolveRequestContext(request);
+    const { runId } = request.params as { runId: string };
+    const run = await store.getReportRunById(runId, context);
+    if (!run) {
+      return reply.code(404).send({ message: "Report run not found" });
+    }
+
+    return reply.code(200).send({
+      candidates: listBusinessCaseCandidates(run)
+    });
+  });
+
+  app.post("/report-runs/:runId/business-case", async (request, reply) => {
+    const context = resolveRequestContext(request);
+    const { runId } = request.params as { runId: string };
+    const parsed = z.object({
+      candidate_id: z.string().trim().min(1),
+      question: z.string().trim().min(1),
+      assumption_notes: z.array(z.string().trim().min(1)).max(8).default([])
+    }).safeParse(request.body ?? {});
+    if (!parsed.success) {
+      return reply.code(400).send({ message: "Invalid business case payload", issues: parsed.error.issues });
+    }
+
+    const run = await store.getReportRunById(runId, context);
+    if (!run) {
+      return reply.code(404).send({ message: "Report run not found" });
+    }
+
+    const contract = await store.getReportContract(run.contract_id, context);
+    if (!contract) {
+      return reply.code(404).send({ message: "Report contract not found" });
+    }
+
+    const result = await buildBusinessCaseAnalysis({
+      run,
+      contract,
+      tenant_id: context.tenant_id,
+      candidate_id: parsed.data.candidate_id,
+      question: parsed.data.question,
+      assumption_notes: parsed.data.assumption_notes,
+      business_case_client: businessCaseClient,
+      query_strategist: queryStrategist,
+      data_plane: dataPlane,
+      store,
+      catalog_summary: buildCatalogSummary(connectionRegistry.resolveForRequest(), contract.guardrails.allowed_relations),
+      sql_dialect: resolveSqlDialect(connectionRegistry.resolveForRequest())
+    });
+
+    return reply.code(200).send(result);
   });
 
   app.post("/report-runs/:runId/save", async (request, reply) => {

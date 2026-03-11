@@ -3,6 +3,9 @@ import {
   AnalystInputSchema,
   BatchPlanSchema,
   BatchAnalysisSchema,
+  BusinessCaseCandidateSchema,
+  BusinessCaseInputSchema,
+  BusinessCaseOutputSchema,
   ContractBatchAnalysisSchema,
   ContractEvidencePacketSchema,
   ContractExecBriefSchema,
@@ -17,6 +20,8 @@ import {
   QualityEvalSchema,
   ReportContractDraftSchema,
   QueryPlanSchema,
+  ReportClarificationInputSchema,
+  ReportClarificationOutputSchema,
   SemanticEntitySchema
 } from "../src";
 
@@ -380,5 +385,136 @@ describe("shared schemas", () => {
 
     expect(summary.coverage_status).toBe("complete");
     expect(summary.evidence_refs).toContain("q1:grp_q1:block_1");
+  });
+
+  it("validates report clarification input and output", () => {
+    const input = ReportClarificationInputSchema.parse({
+      report_title: "Weekly CEO Revenue",
+      question: "What changed in refunds?",
+      report_html: "<html><body>Summary</body></html>",
+      exec_brief: {
+        what_changed: ["Refunds rose 12%"],
+        why: ["Higher order volume"],
+        so_what: ["Margin pressure increased"],
+        what_to_do: ["Review returns policy"]
+      },
+      per_question_summaries: [
+        {
+          question_id: "q1",
+          question_text: "Refund trend",
+          findings: ["Refunds rose 12%"],
+          drivers: ["Order volume grew 8%"],
+          anomalies: [],
+          coverage_status: "complete",
+          coverage_notes: [],
+          evidence_refs: ["q1:trend"],
+          confidence_notes: []
+        }
+      ],
+      analysis_payloads: [
+        {
+          question_id: "q1",
+          question: "Q1. Refund trend",
+          data_summary: "12 monthly rows",
+          highlights: ["Refunds rose 12%"],
+          risks: [],
+          recommendations: ["Tighten refund review rules"]
+        }
+      ],
+      metric_definitions: [
+        {
+          metric_key: "refund_rate",
+          display_name: "Refund Rate",
+          definition: "refund_orders / total_orders"
+        }
+      ],
+      business_context: "Subscription marketplace."
+    });
+
+    const output = ReportClarificationOutputSchema.parse({
+      answer: "Refunds increased 12% period over period.",
+      citations: ["q1"],
+      grounded: true,
+      requires_new_analysis: false
+    });
+
+    expect(input.metric_definitions[0]?.metric_key).toBe("refund_rate");
+    expect(output.grounded).toBe(true);
+  });
+
+  it("validates business case schemas", () => {
+    const candidate = BusinessCaseCandidateSchema.parse({
+      candidate_id: "q1_r1",
+      question_id: "q1",
+      question_number: 1,
+      question_text: "Refund trend",
+      recommendation_index: 1,
+      recommendation: "Tighten refund review rules",
+      highlights: ["Refunds rose 12%"],
+      risks: ["Margin pressure"]
+    });
+
+    const input = BusinessCaseInputSchema.parse({
+      report_title: "Weekly CEO Revenue",
+      question: "Build a business case for this recommendation.",
+      candidate,
+      user_message: "Use a $50k implementation cost and 2 analysts.",
+      assumption_notes: ["Implementation cost is $50k", "Needs 2 analysts"],
+      business_context: "Subscription marketplace.",
+      metric_definitions: [
+        {
+          metric_key: "refund_rate",
+          display_name: "Refund Rate",
+          definition: "refund_orders / total_orders"
+        }
+      ],
+      analysis_payload: {
+        question_id: "q1",
+        question: "Q1. Refund trend",
+        data_summary: "12 monthly rows",
+        highlights: ["Refunds rose 12%"],
+        risks: ["Margin pressure"],
+        recommendations: ["Tighten refund review rules"]
+      },
+      prepared_payload: {
+        question_id: "q1",
+        question_number: 1,
+        question: "Refund trend",
+        purpose: "Trend analysis",
+        prepared_row_count: 120,
+        warnings: [],
+        sample_rows: [{ month: "2026-01", refund_amount: 1200 }]
+      },
+      supporting_data: [
+        {
+          label: "Refund trend support",
+          row_count: 2,
+          sample_rows: [{ month: "2026-01", refund_amount: 1200 }]
+        }
+      ]
+    });
+
+    const output = BusinessCaseOutputSchema.parse({
+      status: "complete",
+      title: "Business case for tighter refund review rules",
+      executive_summary: "A tighter review process can reduce avoidable refunds within one quarter.",
+      recommendation: "Tighten refund review rules",
+      baseline: ["Refunds rose 12% over the prior period."],
+      assumptions: ["Implementation cost is $50k", "Needs 2 analysts"],
+      implementation_plan: ["Configure policy rules", "Train reviewers"],
+      timeline_impact: [
+        { period_label: "0-30 days", impact: "Process control improves; savings begin." },
+        { period_label: "31-90 days", impact: "Refund leakage declines further as adoption stabilizes." }
+      ],
+      financial_view: ["Break-even possible in quarter 2."],
+      operational_view: ["Manual review workload increases temporarily."],
+      risks: ["Customer friction if rules are too strict."],
+      kpis_to_track: ["Refund rate", "Manual review backlog"],
+      citations: ["q1"],
+      additional_query_requests: []
+    });
+
+    expect(input.candidate.candidate_id).toBe("q1_r1");
+    expect(output.status).toBe("complete");
   });
 });

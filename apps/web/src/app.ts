@@ -4,6 +4,7 @@ import { z } from "zod";
 import {
   appendConversationTurn,
   applyLlmDraftUpdates,
+  buildDisplayClarificationPromptForScopeQuestion,
   ChatTurnRequestSchema,
   createInitialChatState,
   createWebApiClient,
@@ -361,6 +362,9 @@ export function buildWebApp(options: WebAppDependencies = {}) {
       }
       stateAfterLlm = syncDecisionStateFromAssistantMessage(stateAfterLlm, aiMessage);
       stateAfterLlm = normalizeWorkflowDecisionState(stateAfterLlm);
+      if (shouldUseAuthoritativeScopeActionContext(safeAiMessage, response.assistant_message, stateAfterLlm)) {
+        safeAiMessage = response.assistant_message;
+      }
       safeAiMessage = ensureScopeQuestionsVisible(safeAiMessage, stateAfterLlm);
 
       // Detect <<<SCHEDULE_PARAMS>>> block from LLM response
@@ -860,8 +864,10 @@ function isDecisionPendingContext(actionContext: string): boolean {
   return (
     /^Analysis is staged and waiting on the current workflow decision\./i.test(actionContext) ||
     /^Ready to prepare data for:/i.test(actionContext) ||
+    /^Scope is locked for\b/i.test(actionContext) ||
     /^Scope clarifications captured for all questions\./i.test(actionContext) ||
-    /^Need clarification for \d+ scope item/i.test(actionContext) ||
+    /^Need clarification for \d+\s+(?:scope\s+)?item(?:s)?\b/i.test(actionContext) ||
+    /^Still need clarification on \d+\s+item(?:s)?\b/i.test(actionContext) ||
     /^Before data preparation,/i.test(actionContext) ||
     /^Data preparation decision pending/i.test(actionContext) ||
     /^Analysis decision pending/i.test(actionContext) ||
@@ -910,7 +916,7 @@ function enforceExecutionTruth(modelMessage: string, actionContext: string): str
   }
 
   if (
-    /^Ready to prepare data for:/i.test(actionContext) &&
+    (/^Ready to prepare data for:/i.test(actionContext) || /^Scope is locked for\b/i.test(actionContext)) &&
     /\b(run report|execute report|finish scoping and run analysis)\b/i.test(modelMessage)
   ) {
     return actionContext;
@@ -928,6 +934,12 @@ function enforceExecutionTruth(modelMessage: string, actionContext: string): str
   }
 
   return modelMessage;
+}
+
+function hasPreparationBlockedCue(message: string): boolean {
+  return /\bno data to analyze\b|\bthere'?s no data\b|\bappears to be empty\b|\bno tables are scoped\b|\bcannot run yet\b|\bcheck that data is being loaded\b|\bdoes not exist\b|\bnot accessible\b/i.test(
+    message
+  );
 }
 
 function syncDecisionStateFromAssistantMessage(state: unknown, assistantMessage: string) {
@@ -1003,6 +1015,7 @@ function syncDecisionStateFromAssistantMessage(state: unknown, assistantMessage:
     scopeLockSignal &&
     !isAskingQuestions &&
     nextState.scope_questions.length > 0;
+  const hasPrepBlockerCue = hasPreparationBlockedCue(assistantMessage);
   const hasUnansweredScopeItems = nextState.scope_questions.some(
     (entry: { answer?: string | null }) => !entry.answer || entry.answer.trim().length === 0
   );
@@ -1011,6 +1024,7 @@ function syncDecisionStateFromAssistantMessage(state: unknown, assistantMessage:
     if (
       !nextState.prep_complete &&
       !isAskingQuestions &&
+      !hasPrepBlockerCue &&
       (hasAnsweredScope || explicitScopeLockSignal) &&
       !hasUnansweredScopeItems &&
       nextState.pending_inputs.length === 0
@@ -1158,6 +1172,9 @@ function hasScopeReadyContextInHistory(state: ReturnType<typeof parseChatState>)
   }
 
   const text = lastAssistant.content.toLowerCase();
+  if (hasPreparationBlockedCue(text)) {
+    return false;
+  }
   return (
     text.includes("scope clarifications captured for all questions") ||
     text.includes("ready to prepare data for:") ||
@@ -1428,17 +1445,44 @@ function ensureScopeQuestionsVisible(message: string, state: unknown): string {
     qMatch = qNumberPattern.exec(message);
   }
 
-  const hasAllScopedQuestionNumbers =
-    parsed.scope_questions.length > 0 &&
-    parsed.scope_questions.every((entry) => messageQuestionNumbers.has(entry.question_number));
+  const includeSuggestionsInCanonicalList = !parsed.scope_finalized;
+  const visibleQuestionNumbers = new Set([
+    ...parsed.scope_questions.map((entry) => entry.question_number),
+    ...(
+      includeSuggestionsInCanonicalList
+        ? parsed.scope_suggestions.map((entry) =>
+            getScopeSuggestionDisplayQuestionNumberForRender(
+              parsed.scope_questions.length,
+              entry.suggestion_number
+            )
+          )
+        : []
+    )
+  ]);
+  const hasAllVisibleQuestionNumbers =
+    visibleQuestionNumbers.size > 0 &&
+    Array.from(visibleQuestionNumbers.values()).every((questionNumber) =>
+      messageQuestionNumbers.has(questionNumber)
+    );
+  const hasOnlyVisibleQuestionNumbers =
+    hasAllVisibleQuestionNumbers &&
+    messageQuestionNumbers.size === visibleQuestionNumbers.size;
 
-  if (hasQuestionList && hasAllScopedQuestionNumbers && !hasMergedScopeLine) {
+  if (hasQuestionList && hasOnlyVisibleQuestionNumbers && !hasMergedScopeLine) {
     return message;
   }
 
-  const questionLines = parsed.scope_questions
-    .map((entry) => `- Q${entry.question_number}: ${entry.question}`)
-    .join("\n");
+  const questionLines = [
+    ...parsed.scope_questions.map((entry) => `- Q${entry.question_number}: ${entry.question}`),
+    ...(
+      includeSuggestionsInCanonicalList
+        ? parsed.scope_suggestions.map(
+            (entry) =>
+              `- ${getScopeSuggestionDisplayLabelForRender(parsed.scope_questions.length, entry.suggestion_number)}: ${entry.question}`
+          )
+        : []
+    )
+  ].join("\n");
   const pendingClarifications = parsed.scope_questions.filter(
     (entry) => !entry.answer || entry.answer.trim().length === 0
   );
@@ -1449,10 +1493,10 @@ function ensureScopeQuestionsVisible(message: string, state: unknown): string {
   const pendingClarificationLines = shouldShowPendingClarifications
     ? pendingClarifications
         .map((entry) => {
-          const clarificationText =
-            entry.clarification && entry.clarification.trim().length > 0
-              ? entry.clarification
-              : "Please confirm the final scope details for this question.";
+          const clarificationText = buildDisplayClarificationPromptForScopeQuestion(
+            parsed,
+            entry
+          );
           return `- Q${entry.question_number}: ${clarificationText}`;
         })
         .join("\n")
@@ -1465,15 +1509,23 @@ function ensureScopeQuestionsVisible(message: string, state: unknown): string {
   // Keep model-authored narrative intact below the canonical scoped-question list.
   // Merged labels like Q4+Q5 are allowed in clarification narrative, but never as the
   // canonical planned-question list at the top (which is always one row per Qn).
-  const sanitizedMessage = sanitizeMergedScopeLabelsInNarrative(message);
+  const validRenderedQuestionNumbers = visibleQuestionNumbers;
 
-  const questionHeader = parsed.scope_finalized
-    ? "Questions in scope (locked):"
-    : "Questions in scope:";
+  const sanitizedMessage = normalizeSuggestionLabelsInNarrative(
+    sanitizeMergedScopeLabelsInNarrative(
+      stripOutOfScopeQuestionBlocks(
+        message,
+        validRenderedQuestionNumbers
+      )
+    ),
+    parsed
+  );
+
+  const questionHeader = "Questions in scope:";
   return [
     questionHeader,
     questionLines,
-    pendingClarificationLines ? "\nPending clarifications:" : null,
+    pendingClarificationLines ? "\nClarifications to confirm:" : null,
     pendingClarificationLines,
     "",
     sanitizedMessage
@@ -1484,6 +1536,154 @@ function ensureScopeQuestionsVisible(message: string, state: unknown): string {
 
 function sanitizeMergedScopeLabelsInNarrative(message: string): string {
   return message.replace(/\bQ(\d+)\s*(?:\+|\/|&)\s*Q(\d+)\b/gi, "Q$1 and Q$2");
+}
+
+function getScopeSuggestionDisplayQuestionNumberForRender(
+  scopeQuestionCount: number,
+  suggestionNumber: number
+): number {
+  return scopeQuestionCount + suggestionNumber;
+}
+
+function getScopeSuggestionDisplayLabelForRender(
+  scopeQuestionCount: number,
+  suggestionNumber: number
+): string {
+  return `Q${getScopeSuggestionDisplayQuestionNumberForRender(scopeQuestionCount, suggestionNumber)} (suggested)`;
+}
+
+function normalizeSuggestionLabelsInNarrative(
+  message: string,
+  parsed: {
+    scope_questions: Array<{ question_number: number }>;
+    scope_suggestions: Array<{ suggestion_number: number }>;
+  }
+): string {
+  let normalized = message;
+  for (const entry of parsed.scope_suggestions) {
+    const displayLabel = getScopeSuggestionDisplayLabelForRender(
+      parsed.scope_questions.length,
+      entry.suggestion_number
+    );
+    const tokenPattern = new RegExp(`\\bS${entry.suggestion_number}\\b`, "gi");
+    normalized = normalized.replace(tokenPattern, displayLabel);
+  }
+
+  return normalized;
+}
+
+function stripOutOfScopeQuestionBlocks(message: string, validQuestionNumbers: Set<number>): string {
+  if (validQuestionNumbers.size === 0 || message.trim().length === 0) {
+    return message;
+  }
+
+  const lines = message.split("\n");
+  const kept: string[] = [];
+  let skippingOutOfScopeBlock = false;
+
+  for (const line of lines) {
+    const referencedQuestionNumbers = Array.from(line.matchAll(/\bQ(\d+)\b/gi))
+      .map((match) => Number.parseInt(match[1] ?? "", 10))
+      .filter((value) => Number.isInteger(value) && value > 0);
+    const startsQuestionBlock = /^\s*(?:[-*]\s*)?Q\d+\b/i.test(line);
+    const isIndentedContinuation =
+      /^\s{2,}\S/.test(line) ||
+      /^(?:\s*)(?:Recorded answer|Clarification needed|Proposed default|Why it may help)\b/i.test(line);
+
+    if (referencedQuestionNumbers.some((value) => !validQuestionNumbers.has(value))) {
+      skippingOutOfScopeBlock = true;
+      continue;
+    }
+
+    if (skippingOutOfScopeBlock) {
+      if (startsQuestionBlock || isIndentedContinuation || line.trim().length === 0) {
+        continue;
+      }
+      skippingOutOfScopeBlock = false;
+    }
+
+    kept.push(line);
+  }
+
+  return kept.join("\n").replace(/\n{3,}/g, "\n\n").trim();
+}
+
+function shouldUseAuthoritativeScopeActionContext(
+  modelMessage: string,
+  actionContext: string,
+  state: unknown
+): boolean {
+  const parsed = parseChatState(state);
+  if (parsed.scope_questions.length === 0) {
+    return false;
+  }
+
+  const authoritativePrePrepScopeFlow =
+    parsed.scope_clarification_pending ||
+    parsed.prep_pending ||
+    (parsed.scope_finalized && !parsed.prep_complete);
+  if (!authoritativePrePrepScopeFlow || !isDecisionPendingContext(actionContext)) {
+    return false;
+  }
+
+  if (
+    /\bquestions in scope\b/i.test(actionContext) ||
+    /\bclarifications to confirm\b/i.test(actionContext) ||
+    /\bneed clarification for\b/i.test(actionContext) ||
+    /\bscope is locked for\b/i.test(actionContext) ||
+    /\brun data preparation when/i.test(actionContext)
+  ) {
+    return true;
+  }
+
+  const inScopeDecisionFlow =
+    parsed.scope_clarification_pending ||
+    parsed.prep_pending ||
+    parsed.scope_pending ||
+    (parsed.scope_finalized && !parsed.prep_complete);
+  if (!inScopeDecisionFlow) {
+    return false;
+  }
+
+  const lowerModelMessage = modelMessage.toLowerCase();
+  const hasUnansweredScopeItems = parsed.scope_questions.some(
+    (entry) => !entry.answer || entry.answer.trim().length === 0
+  );
+  if (
+    hasUnansweredScopeItems &&
+    (
+      /\ball\s+confirmed\b/.test(lowerModelMessage) ||
+      /\bconfirmed\s+all\b/.test(lowerModelMessage) ||
+      /\ball\s+questions?\s+(?:are|is)\s+confirmed\b/.test(lowerModelMessage) ||
+      /\bscope is locked\b/.test(lowerModelMessage) ||
+      /\brun data prep(?:aration)?\b/.test(lowerModelMessage) ||
+      /\bready to prepare data\b/.test(lowerModelMessage)
+    )
+  ) {
+    return true;
+  }
+
+  const stateQuestionNumbers = new Set(parsed.scope_questions.map((entry) => entry.question_number));
+  const modelQuestionNumbers = new Set<number>();
+  const qNumberPattern = /\bQ(\d+)\b/gi;
+  let match: RegExpExecArray | null = qNumberPattern.exec(modelMessage);
+  while (match) {
+    const questionNumber = Number.parseInt(match[1] ?? "", 10);
+    if (Number.isInteger(questionNumber) && questionNumber > 0) {
+      modelQuestionNumbers.add(questionNumber);
+    }
+    match = qNumberPattern.exec(modelMessage);
+  }
+
+  if (Array.from(modelQuestionNumbers).some((questionNumber) => !stateQuestionNumbers.has(questionNumber))) {
+    return true;
+  }
+
+  if (/\bout of scope\b/i.test(modelMessage)) {
+    return true;
+  }
+
+  return false;
 }
 
 function isConversationOrchestratorEnabled(): boolean {

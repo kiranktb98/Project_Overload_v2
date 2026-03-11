@@ -1935,15 +1935,18 @@ export function renderChatPage(): string {
               entry && typeof entry.answer === "string" && entry.answer.trim().length > 0
             );
 
-          if (state.awaiting_post_run_refinement === true) {
+          if (
+            state.post_run_actions_pending === true ||
+            state.report_clarification_active === true ||
+            state.business_case_active === true
+          ) {
             return {
               kind: "post-run",
-              title: "Analysis is complete. Refine before PDF?",
-              lockPlaceholder: "Workflow locked while this decision is pending.",
+              title: "Analysis is complete.",
+              lockPlaceholder: "Ask questions on the report or start business case analysis.",
               options: [
-                { label: "Ask follow-up (max 2)", command: "__ui_refine_report__" },
-                { label: "Generate report PDF", command: "__ui_generate_pdf_yes__" },
-                { label: "Start new conversation", command: "__ui_start_new_conversation__" }
+                { label: "Ask clarifications on the report", command: "__ui_report_clarifications__" },
+                { label: "Ask for business case analysis", command: "__ui_business_case_analysis__" }
               ]
             };
           }
@@ -2110,10 +2113,13 @@ export function renderChatPage(): string {
 	          ].some(function (cue) {
 	            return lastAssistantLower.includes(cue);
 	          });
+	          const hasPrepBlockerCue =
+	            /\bno data to analyze\b|\bthere'?s no data\b|\bappears to be empty\b|\bno tables are scoped\b|\bcannot run yet\b|\bcheck that data is being loaded\b|\bdoes not exist\b|\bnot accessible\b/.test(lastAssistantLower);
 
 	          if (
 	            hasScopeLockSignal &&
 	            hasScopeQuestions &&
+	            !hasPrepBlockerCue &&
 	            !hasPendingScopeCue &&
 	            !hasUnansweredScopeItems &&
 	            !hasPendingScopeInputs &&
@@ -2272,7 +2278,8 @@ export function renderChatPage(): string {
               state &&
                 (state.awaiting_custom_day_input === true ||
                   (decisionRef.value &&
-                    (decisionRef.value.kind === "refinement" ||
+                    (decisionRef.value.kind === "post-run" ||
+                      decisionRef.value.kind === "refinement" ||
                       decisionRef.value.kind === "prep" ||
                       decisionRef.value.kind === "analysis")))
             );
@@ -2362,10 +2369,18 @@ export function renderChatPage(): string {
                   stateRef.value = Object.assign({}, stateRef.value, {
                     pending_run_id: null,
                     last_run_id: runId,
-                    awaiting_post_run_refinement: true,
+                    last_exec_brief: s.exec_brief || null,
+                    post_run_actions_pending: true,
+                    report_clarification_active: false,
+                    business_case_active: false,
+                    business_case_candidates: [],
+                    business_case_selected_candidate_id: null,
+                    business_case_assumption_notes: [],
+                    business_case_pending_clarification: null,
+                    awaiting_post_run_refinement: false,
                     awaiting_pdf_confirmation: false,
                     refinement_active: false,
-                    refinement_questions_remaining: 2,
+                    refinement_questions_remaining: 0,
                     pdf_download_url: s.pdf_path ? "/api/runs/" + runId + "/pdf" : null,
                     prepared_payloads: Array.isArray(s.prepared_payloads) ? s.prepared_payloads : []
                   });
@@ -3108,6 +3123,13 @@ export function renderChatPage(): string {
             planner_summary: null,
             preparation_summary: null,
             prepared_payloads: [],
+            post_run_actions_pending: false,
+            report_clarification_active: false,
+            business_case_active: false,
+            business_case_candidates: [],
+            business_case_selected_candidate_id: null,
+            business_case_assumption_notes: [],
+            business_case_pending_clarification: null,
             awaiting_pdf_confirmation: false,
             awaiting_post_run_refinement: false,
             refinement_active: false,

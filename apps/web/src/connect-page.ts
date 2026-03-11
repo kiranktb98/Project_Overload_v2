@@ -1199,9 +1199,10 @@ export function renderConnectionPage(): string {
         }
 
         async function request(path, method, body) {
+          const headers = body === undefined ? {} : { "content-type": "application/json" };
           const response = await fetch(path, {
             method,
-            headers: { "content-type": "application/json" },
+            headers,
             body: body === undefined ? undefined : JSON.stringify(body)
           });
 
