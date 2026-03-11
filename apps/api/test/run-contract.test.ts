@@ -73,6 +73,13 @@ function fixedStrategist(queries: QueryStrategyOutput["queries"]): QueryStrategi
   };
 }
 
+type CapturedReportAnalysis = {
+  data_summary: string;
+  highlights: string[];
+  answer_focus?: string;
+  evidence_snapshot?: string;
+};
+
 function sequencedStrategist(plans: QueryStrategyOutput["queries"][]): QueryStrategistClient {
   let index = 0;
   return {
@@ -104,6 +111,74 @@ function spyAnalyst(): { client: AnalystClient; calls: Array<{ question: string;
 }
 
 describe("run pipeline", () => {
+  it("routes forecast-scoped questions to the forecast analyst and leaves standard questions on the analyst", async () => {
+    let standardCalls = 0;
+    let forecastCalls = 0;
+    const analystClient: AnalystClient = {
+      provider: "stub",
+      async analyzeBatch(input) {
+        standardCalls += 1;
+        return {
+          request_id: input.request_id,
+          batch_index: input.batch_index,
+          total_batches: input.total_batches,
+          highlights: ["Standard analyst handled this question."],
+          risks: [],
+          recommendations: ["Proceed with standard analysis follow-up."],
+          confidence_score: 0.84,
+          appendix_refs: [`${input.request_id}:batch-${input.batch_index + 1}`],
+          additional_query_requests: []
+        };
+      }
+    };
+    const forecastClient: AnalystClient = {
+      provider: "stub",
+      async analyzeBatch(input) {
+        forecastCalls += 1;
+        return {
+          request_id: input.request_id,
+          batch_index: input.batch_index,
+          total_batches: input.total_batches,
+          highlights: ["Forecast analyst handled this question."],
+          risks: ["Forecast confidence depends on trend stability."],
+          recommendations: ["Track the forecast weekly."],
+          confidence_score: 0.77,
+          appendix_refs: [`${input.request_id}:batch-${input.batch_index + 1}`],
+          additional_query_requests: []
+        };
+      }
+    };
+
+    const strategist = fixedStrategist([
+      {
+        question: "Forecast refunds for the next 3 months",
+        sql: "SELECT event_time, amount AS refund_amount FROM public.sales LIMIT 200",
+        purpose: "Forecast trend"
+      },
+      {
+        question: "What drove refunds last month?",
+        sql: "SELECT event_time, amount AS refund_amount FROM public.sales LIMIT 200",
+        purpose: "Driver analysis"
+      }
+    ]);
+
+    const result = await runReportContractPipeline({
+      contract: makeContract(),
+      store: new InMemoryMetadataStore(),
+      data_plane: new LocalStubDataPlane({ row_provider: () => makeRows(120) }),
+      analyst_client: analystClient,
+      forecast_client: forecastClient,
+      query_strategist: strategist,
+      report_composer: createStubReportComposerClient(),
+      planner_client: createStubPlannerClient(),
+      catalog_summary: "public.sales [TABLE]: amount, event_time"
+    });
+
+    expect(forecastCalls).toBe(1);
+    expect(standardCalls).toBe(1);
+    expect(result.prepared_payloads).toHaveLength(2);
+  });
+
   it("lets batch analyst request additional queries and re-runs analysis with supplemental evidence", async () => {
     let analystCalls = 0;
     const analystClient: AnalystClient = {
@@ -1081,6 +1156,76 @@ describe("run pipeline", () => {
     expect(result.run.status).toBe("succeeded");
     expect(result.html.toLowerCase()).not.toContain("pending full export");
     expect(result.html).toMatch(/Bengaluru|Mumbai|Delhi/);
+  });
+
+  it("keeps city refund-rate questions focused on refund rate in the composer input", async () => {
+    const strategist = fixedStrategist([
+      {
+        question: "Which cities have the highest refund rate over the past 4 complete months?",
+        sql: "SELECT city, refund_rate, total_orders, total_revenue, refunded_orders_total FROM public.sales",
+        purpose: "City refund-rate ranking"
+      }
+    ]);
+
+    let capturedAnalysis: CapturedReportAnalysis | null = null;
+    const capturingComposer: ReportComposerClient = {
+      provider: "stub",
+      async composeReport(input) {
+        const first = input.analyses[0];
+        capturedAnalysis = first
+          ? {
+              data_summary: first.data_summary,
+              highlights: [...first.highlights],
+              answer_focus: first.answer_focus,
+              evidence_snapshot: first.evidence_snapshot
+            }
+          : null;
+        return "<html><body><p>ok</p></body></html>";
+      },
+      drainUsageEvents() {
+        return [];
+      }
+    };
+
+    const rows = [
+      { city: "Bengaluru", refund_rate: 25.49, total_orders: 102, total_revenue: 254310.48, refunded_orders_total: 26 },
+      { city: "Pune", refund_rate: 24.37, total_orders: 119, total_revenue: 296895.56, refunded_orders_total: 29 },
+      { city: "Hyderabad", refund_rate: 23.53, total_orders: 102, total_revenue: 254310.48, refunded_orders_total: 24 },
+      { city: "Delhi", refund_rate: 23.23, total_orders: 99, total_revenue: 246830.76, refunded_orders_total: 23 },
+      { city: "Chennai", refund_rate: 21.93, total_orders: 114, total_revenue: 284229.36, refunded_orders_total: 25 }
+    ];
+
+    const result = await runReportContractPipeline({
+      contract: makeContract({
+        metric_definitions: [
+          {
+            metric_key: "refund_rate",
+            display_name: "Refund Rate",
+            definition: "refunded_orders_total / total_orders * 100"
+          }
+        ]
+      }),
+      store: new InMemoryMetadataStore(),
+      data_plane: new LocalStubDataPlane({ row_provider: () => rows }),
+      analyst_client: createStubAnalystClient(),
+      query_strategist: strategist,
+      report_composer: capturingComposer,
+      planner_client: createStubPlannerClient(),
+      catalog_summary: "public.sales [table]: city(text), refund_rate(numeric), total_orders(integer), total_revenue(numeric), refunded_orders_total(integer)"
+    });
+
+    expect(result.run.status).toBe("succeeded");
+    expect(capturedAnalysis).not.toBeNull();
+    const analysis = capturedAnalysis!;
+    expect(analysis.answer_focus?.toLowerCase()).toContain("refund rate");
+    expect(analysis.answer_focus?.toLowerCase()).toContain("city");
+    expect(analysis.data_summary).toContain("Direct answer cue:");
+    expect(analysis.data_summary.toLowerCase()).toContain("refund rate");
+    expect(analysis.evidence_snapshot).toContain("Primary metric: refund_rate");
+    expect(analysis.evidence_snapshot).toContain("city=Bengaluru");
+    expect(analysis.evidence_snapshot).toContain("refund_rate=25.49%");
+    expect(analysis.highlights.join(" ")).toContain("Bengaluru");
+    expect(analysis.highlights.join(" ").toLowerCase()).toContain("refund rate");
   });
 
   it("passes per-question summaries directly to html composer without super-summary stage", async () => {

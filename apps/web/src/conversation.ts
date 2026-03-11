@@ -115,7 +115,7 @@ type ProviderRequest = {
 
 const DEFAULT_TIMEOUT_MS = 900_000;
 const DEFAULT_OPENAI_MODEL = "gpt-4.1-mini";
-const DEFAULT_OPENROUTER_MODEL = "openai/gpt-5.2";
+const DEFAULT_OPENROUTER_MODEL = "openai/gpt-5.4";
 const DEFAULT_OPENROUTER_BASE_URL = "https://openrouter.ai/api/v1";
 const DEFAULT_OPENROUTER_EMBEDDING_MODEL = "openai/text-embedding-3-small";
 const DEFAULT_OPENROUTER_RERANK_MODEL = "openai/gpt-4.1-mini";
@@ -796,7 +796,8 @@ function orchestrationSystemPrompt(input: ConversationTurnInput): string {
     "SCOPE MODIFICATIONS:",
     "When the user modifies existing questions (e.g. 'use refund value instead of order count for Q1'), emit resolved_scope_answers with the updated parameters â€” do NOT create a duplicate question.",
     "When the user adds NEW questions during clarification, emit them as new_scope_questions alongside any resolved_scope_answers.",
-    "When the user wants to REPLACE or REMOVE a question, use resolved_scope_answers to update the answer to reflect the change.",
+    "When the user wants to REPLACE or REMOVE a question, treat that as an authoritative scope edit: do not re-emit the removed question in later turns.",
+    "If the user says 'new question', 'add question', 'follow-up', or similar during clarification, append that new_scope_question and keep scope open until that new question is clarified too.",
     "The user can change direction at ANY point â€” always respect their latest instruction even if it contradicts earlier scope.",
     "",
     "NATURAL ANSWER PARSING (CRITICAL):",
@@ -811,6 +812,7 @@ function orchestrationSystemPrompt(input: ConversationTurnInput): string {
     "When the user gives a blanket confirmation ('confirm all', 'looks good', 'ok with everything', 'yes to all', 'defaults are fine'),",
     "  emit resolved_scope_answers for EVERY unanswered scope question with the proposed default as the answer.",
     "If the user has NOT confirmed all pending items, keep unresolved items unresolved and request only those missing confirmations.",
+    "If ANY unanswered scope question or pending_input remains, keep next_owner='wait_for_user' and do not declare scope complete.",
     "Do not set state_updates.mark_scope_complete=true unless every pending scope item is resolved.",
     "NEVER ask the user to reply with numbered answers. NEVER suggest a format like `1) ... 2) ... 3) ...`.",
     "Accept answers in any conversational form and map them to the right scope questions.",
@@ -1619,6 +1621,7 @@ function createTitleStateSkeleton() {
     scope_clarification_pending: false,
     scope_business_context: null,
     scope_source_prompt: null,
+    scope_suggestions: [],
     scope_questions: [],
     pending_query_sql: null,
     pending_query_limit: null,
@@ -1629,6 +1632,13 @@ function createTitleStateSkeleton() {
     planner_summary: null,
     preparation_summary: null,
     prepared_payloads: [],
+    post_run_actions_pending: false,
+    report_clarification_active: false,
+    business_case_active: false,
+    business_case_candidates: [],
+    business_case_selected_candidate_id: null,
+    business_case_assumption_notes: [],
+    business_case_pending_clarification: null,
     awaiting_pdf_confirmation: false,
     awaiting_post_run_refinement: false,
     refinement_active: false,

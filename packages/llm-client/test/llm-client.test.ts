@@ -1,8 +1,16 @@
 import { describe, expect, it } from "vitest";
-import type { AnalystInput, BatchAnalysis, PlannerInput, QueryStrategyInput } from "@project-overload/shared";
+import type {
+  AnalystInput,
+  BatchAnalysis,
+  BusinessCaseInput,
+  PlannerInput,
+  QueryStrategyInput
+} from "@project-overload/shared";
 import {
   createAnalystClient,
   createAnalystClientFromEnv,
+  createBusinessCaseClient,
+  createReportComposerClient,
   createStubAnalystClient,
   createStubPlannerClient,
   createStubQueryStrategistClient,
@@ -22,6 +30,35 @@ const sampleInput: AnalystInput = {
     rows: [{ region: "NA", amount: 120 }],
     row_count: 1
   }
+};
+
+const sampleBusinessCaseInput: BusinessCaseInput = {
+  report_title: "Refund Reduction Plan",
+  question: "Build the business case for the recommendation.",
+  user_message: "Build the business case for the recommendation.",
+  candidate: {
+    candidate_id: "q1_r1",
+    question_id: "q1",
+    question_number: 1,
+    question_text: "How can we reduce refund-linked support burden?",
+    recommendation_index: 1,
+    recommendation: "Prioritize the highest-volume refund-linked issue types.",
+    highlights: ["Refund-linked support contacts are concentrated in two issue types."],
+    risks: ["Operational savings depend on implementation quality."]
+  },
+  assumption_notes: ["Implementation begins next quarter."],
+  business_context: "Customer support cost and refund recovery are operational priorities.",
+  metric_definitions: [],
+  analysis_payload: {
+    question_id: "q1",
+    question: "How can we reduce refund-linked support burden?",
+    data_summary: "Top issue types drive most refund-linked contacts.",
+    highlights: ["Two issue types account for most refund-linked contacts."],
+    risks: ["Ticket tagging quality may vary."],
+    recommendations: ["Focus intervention on the top two issue types first."]
+  },
+  prepared_payload: null,
+  supporting_data: []
 };
 
 describe("llm client", () => {
@@ -144,6 +181,98 @@ describe("llm client", () => {
     ]);
 
     expect(result).toEqual(expected);
+  });
+
+  it("coerces string additional-query requests from analyst output into object form", async () => {
+    const client = createAnalystClient({
+      provider: "openrouter",
+      openrouterApiKey: "test_key",
+      timeoutMs: 200,
+      fallbackToStub: false,
+      fetcher: async () =>
+        new Response(
+          JSON.stringify({
+            choices: [
+              {
+                message: {
+                  content: JSON.stringify({
+                    request_id: "req_1",
+                    batch_index: 0,
+                    total_batches: 1,
+                    highlights: ["Coverage is incomplete for the root-cause slice."],
+                    risks: ["Issue-type detail is missing."],
+                    recommendations: ["Fetch a more granular issue-type split."],
+                    confidence_score: 0.61,
+                    appendix_refs: ["req_1:batch-1"],
+                    additional_query_requests: ["Need issue-type level evidence for refunded orders in the same window."]
+                  })
+                }
+              }
+            ]
+          }),
+          { status: 200, headers: { "content-type": "application/json" } }
+        )
+    });
+
+    const result = await client.analyzeBatch(sampleInput);
+
+    expect(result.additional_query_requests).toEqual([
+      {
+        reason: "Need issue-type level evidence for refunded orders in the same window.",
+        question: "Need issue-type level evidence for refunded orders in the same window.",
+        required_fields: []
+      }
+    ]);
+  });
+
+  it("coerces string additional-query requests from business-case output into object form", async () => {
+    const client = createBusinessCaseClient({
+      provider: "openrouter",
+      openrouterApiKey: "test_key",
+      timeoutMs: 200,
+      fallbackToStub: false,
+      fetcher: async () =>
+        new Response(
+          JSON.stringify({
+            choices: [
+              {
+                message: {
+                  content: JSON.stringify({
+                    status: "complete",
+                    title: "Refund Root-Cause Intervention Case",
+                    executive_summary: "Targeting the top refund-linked issue types should reduce avoidable support load.",
+                    recommendation: "Prioritize the highest-volume refund-linked issue types.",
+                    baseline: ["Two issue types drive most refund-linked support contacts."],
+                    assumptions: ["Implementation begins next quarter."],
+                    implementation_plan: ["Confirm issue taxonomy.", "Roll out fixes for the top issue types."],
+                    timeline_impact: [
+                      { period_label: "Time period 1 after implementation", impact: "Operational noise should begin to fall." },
+                      { period_label: "Time period 2 after implementation", impact: "Support savings should become more visible." }
+                    ],
+                    financial_view: ["Support handling effort should decline if ticket volumes fall."],
+                    operational_view: ["Support teams can focus on fewer repeat refund-linked issues."],
+                    risks: ["Benefits depend on tagging quality and rollout discipline."],
+                    kpis_to_track: ["Refund-linked ticket volume", "Resolution time"],
+                    citations: ["q1"],
+                    additional_query_requests: ["Need city-level savings split for the same intervention window."]
+                  })
+                }
+              }
+            ]
+          }),
+          { status: 200, headers: { "content-type": "application/json" } }
+        )
+    });
+
+    const result = await client.buildCase(sampleBusinessCaseInput);
+
+    expect(result.additional_query_requests).toEqual([
+      {
+        reason: "Need city-level savings split for the same intervention window.",
+        question: "Need city-level savings split for the same intervention window.",
+        required_fields: []
+      }
+    ]);
   });
 });
 
@@ -275,6 +404,77 @@ describe("stub report composer", () => {
     });
 
     expect(html).toContain("Data Quality Assessment");
+  });
+
+  it("passes question-first evidence guidance to the remote report composer prompt", async () => {
+    const calls: Array<{ input: RequestInfo | URL; init?: RequestInit }> = [];
+    const client = createReportComposerClient({
+      provider: "openrouter",
+      openrouterApiKey: "test_key",
+      openrouterBaseUrl: "https://openrouter.ai/api/v1",
+      timeoutMs: 200,
+      fallbackToStub: false,
+      fetcher: async (input, init) => {
+        calls.push({ input, init });
+        return new Response(
+          JSON.stringify({
+            choices: [
+              {
+                message: {
+                  content: "<html><body><p>ok</p></body></html>"
+                }
+              }
+            ]
+          }),
+          { status: 200, headers: { "content-type": "application/json" } }
+        );
+      }
+    });
+
+    await client.composeReport({
+      title: "Refund Rate Report",
+      audience: "Ops",
+      insight_mode: "business",
+      analyses: [
+        {
+          question: "Q3. Which cities have the highest refund rate over the past 4 complete months?",
+          highlights: ["City with the highest refund rate: Bengaluru (25.49%), Pune (24.37%), Hyderabad (23.53%)."],
+          risks: ["Refund rate is concentrated in a few cities."],
+          recommendations: ["Investigate the highest-rate cities first."],
+          data_summary: "5 prepared rows analyzed. Direct answer cue: City with the highest refund rate: Bengaluru (25.49%), Pune (24.37%), Hyderabad (23.53%).",
+          answer_focus: "Lead with refund rate by city because that is the exact metric and breakdown requested by the scoped question.",
+          evidence_snapshot: [
+            "Primary metric: refund_rate",
+            "Primary breakdown: city",
+            "Prepared evidence preview:",
+            "- city=Bengaluru | refund_rate=25.49% | total_orders=102 | total_revenue=254,310.48",
+            "- city=Pune | refund_rate=24.37% | total_orders=119 | total_revenue=296,895.56"
+          ].join("\n")
+        }
+      ],
+      metric_definitions: [
+        {
+          metric_key: "refund_rate",
+          display_name: "Refund Rate",
+          definition: "refunded_orders_total / total_orders * 100"
+        }
+      ],
+      catalog_summary: "public.sales"
+    });
+
+    expect(calls).toHaveLength(1);
+    const body = JSON.parse(String(calls[0].init?.body)) as {
+      messages: Array<{ role: string; content: string }>;
+    };
+    const systemPrompt = body.messages[0]?.content ?? "";
+    const userPrompt = body.messages[1]?.content ?? "";
+
+    expect(systemPrompt).toContain("QUESTION-FIRST");
+    expect(systemPrompt).toContain("DO NOT SUBSTITUTE METRICS");
+    expect(systemPrompt).toContain("evidence_snapshot");
+    expect(userPrompt).toContain("Answer focus: Lead with refund rate by city");
+    expect(userPrompt).toContain("Evidence snapshot: Primary metric: refund_rate");
+    expect(userPrompt).toContain("city=Bengaluru");
   });
 });
 

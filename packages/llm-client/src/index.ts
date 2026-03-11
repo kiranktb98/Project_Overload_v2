@@ -2,16 +2,24 @@ import { analyzeBatch as analyzeBatchStub } from "@project-overload/evidence";
 import {
   AnalystInputSchema,
   BatchAnalysisSchema,
+  BusinessCaseInputSchema,
+  BusinessCaseOutputSchema,
   MergedQueryPlanOutputSchema,
   PlannerExplorationSchema,
   PlannerOutputSchema,
   QueryStrategyOutputSchema,
+  ReportClarificationInputSchema,
+  ReportClarificationOutputSchema,
   type AnalystInput,
   type BatchAnalysis,
+  type BusinessCaseInput,
+  type BusinessCaseOutput,
   type MergedQueryPlanOutput,
   type PlannerExploration,
   type PlannerInput,
   type PlannerOutput,
+  type ReportClarificationInput,
+  type ReportClarificationOutput,
   type SqlDialect,
   type QueryStrategyInput,
   type QueryStrategyOutput
@@ -33,6 +41,18 @@ export type TokenUsageEvent = {
 export interface AnalystClient {
   provider: LlmProvider;
   analyzeBatch(input: AnalystInput): Promise<BatchAnalysis>;
+  drainUsageEvents?(): TokenUsageEvent[];
+}
+
+export interface ReportClarificationClient {
+  provider: LlmProvider;
+  answerQuestion(input: ReportClarificationInput): Promise<ReportClarificationOutput>;
+  drainUsageEvents?(): TokenUsageEvent[];
+}
+
+export interface BusinessCaseClient {
+  provider: LlmProvider;
+  buildCase(input: BusinessCaseInput): Promise<BusinessCaseOutput>;
   drainUsageEvents?(): TokenUsageEvent[];
 }
 
@@ -75,6 +95,8 @@ export type ReportComposerInput = {
     risks: string[];
     recommendations: string[];
     data_summary: string;
+    answer_focus?: string;
+    evidence_snapshot?: string;
   }>;
   catalog_summary: string;
   business_context?: string;
@@ -191,6 +213,7 @@ const DEFAULT_TIMEOUT_MS = 900_000;
 const MAX_TIMEOUT_MS = 3_600_000;
 const DEFAULT_OPENAI_MODEL = "gpt-4.1-mini";
 const DEFAULT_OPENROUTER_MODEL = "openai/gpt-5.2";
+const DEFAULT_OPENROUTER_DEEP_ANALYSIS_MODEL = "openai/gpt-5.4";
 const DEFAULT_SUPER_SUMMARY_OPENAI_MODEL = "gpt-5.2";
 const DEFAULT_SUPER_SUMMARY_OPENROUTER_MODEL = "openai/gpt-5.2";
 const DEFAULT_OPENROUTER_BASE_URL = "https://openrouter.ai/api/v1";
@@ -222,6 +245,28 @@ export function createStubAnalystClient(): AnalystClient {
   };
 }
 
+export function createStubForecastAnalystClient(): AnalystClient {
+  const fallback = createStubAnalystClient();
+  return {
+    provider: "stub",
+    async analyzeBatch(input: AnalystInput): Promise<BatchAnalysis> {
+      const analysis = await fallback.analyzeBatch(input);
+      const forecastHighlight = "Forecast outlook is based on historical patterns visible in the prepared evidence.";
+      return {
+        ...analysis,
+        highlights: analysis.highlights.length > 0 ? analysis.highlights : [forecastHighlight],
+        risks:
+          analysis.risks.length > 0
+            ? analysis.risks
+            : ["Forecast confidence depends on stability of the historical trend and current assumptions."]
+      };
+    },
+    drainUsageEvents() {
+      return [];
+    }
+  };
+}
+
 export function createAnalystClientFromEnv(overrides: Partial<CreateAnalystClientOptions> = {}): AnalystClient {
   const provider = parseProvider(overrides.provider ?? process.env.LLM_PROVIDER);
 
@@ -246,7 +291,10 @@ export function createAnalystClientFromEnv(overrides: Partial<CreateAnalystClien
     openrouterAppName: overrides.openrouterAppName ?? process.env.OPENROUTER_APP_NAME,
     openrouterAppUrl: overrides.openrouterAppUrl ?? process.env.OPENROUTER_APP_URL,
     openaiModel: overrides.openaiModel ?? process.env.OPENAI_MODEL,
-    openrouterModel: overrides.openrouterModel ?? process.env.ANALYST_MODEL ?? process.env.MODEL_GPT,
+    openrouterModel:
+      overrides.openrouterModel ??
+      process.env.ANALYST_MODEL ??
+      DEFAULT_OPENROUTER_DEEP_ANALYSIS_MODEL,
     timeoutMs: overrides.timeoutMs ?? (Number.isNaN(timeoutFromEnv) ? undefined : timeoutFromEnv),
     fallbackToStub: overrides.fallbackToStub,
     fetcher: overrides.fetcher
@@ -276,7 +324,8 @@ export function createAnalystClient(options: CreateAnalystClientOptions): Analys
       timeoutMs,
       fetcher,
       requestFactory: (input) => buildOpenAiAnalystRequest(input, options),
-      usageBuffer
+      usageBuffer,
+      usageAgent: "batch_analyst"
     });
 
     console.log("[analyst] Created remote client (provider=openai, timeout=%dms, fallback=%s)", timeoutMs, fallbackToStub);
@@ -297,7 +346,8 @@ export function createAnalystClient(options: CreateAnalystClientOptions): Analys
       timeoutMs,
       fetcher,
       requestFactory: (input) => buildOpenRouterAnalystRequest(input, options),
-      usageBuffer
+      usageBuffer,
+      usageAgent: "batch_analyst"
     });
 
     console.log("[analyst] Created remote client (provider=openrouter, model=%s, timeout=%dms, fallback=%s)", options.openrouterModel, timeoutMs, fallbackToStub);
@@ -311,12 +361,110 @@ export function createAnalystClient(options: CreateAnalystClientOptions): Analys
   throw new Error(`Unsupported analyst provider: ${String(options.provider)}.`);
 }
 
+export function createForecastAnalystClientFromEnv(
+  overrides: Partial<CreateAnalystClientOptions> = {}
+): AnalystClient {
+  const provider = parseProvider(overrides.provider ?? process.env.LLM_PROVIDER);
+
+  if (provider === "stub") {
+    if (isTestRuntime()) {
+      console.log("[forecast] LLM_PROVIDER=stub in test runtime, using stub client");
+      return createStubForecastAnalystClient();
+    }
+    throw new Error("LLM_PROVIDER=stub is disabled in runtime for forecast client.");
+  }
+
+  const timeoutFromEnv = Number.parseInt(
+    process.env.LLM_TIMEOUT_MS ?? process.env.DEFAULT_QUERY_TIMEOUT_MS ?? "",
+    10
+  );
+
+  const options: CreateAnalystClientOptions = {
+    provider,
+    openaiApiKey: overrides.openaiApiKey ?? process.env.OPENAI_API_KEY,
+    openrouterApiKey: overrides.openrouterApiKey ?? process.env.OPENROUTER_API_KEY,
+    openrouterBaseUrl: overrides.openrouterBaseUrl ?? process.env.OPENROUTER_BASE_URL,
+    openrouterAppName: overrides.openrouterAppName ?? process.env.OPENROUTER_APP_NAME,
+    openrouterAppUrl: overrides.openrouterAppUrl ?? process.env.OPENROUTER_APP_URL,
+    openaiModel: overrides.openaiModel ?? process.env.OPENAI_MODEL,
+    // Forecast deliberately shares the same model selection as batch analyst.
+    openrouterModel:
+      overrides.openrouterModel ??
+      process.env.ANALYST_MODEL ??
+      DEFAULT_OPENROUTER_DEEP_ANALYSIS_MODEL,
+    timeoutMs: overrides.timeoutMs ?? (Number.isNaN(timeoutFromEnv) ? undefined : timeoutFromEnv),
+    fallbackToStub: overrides.fallbackToStub,
+    fetcher: overrides.fetcher
+  };
+
+  return createForecastAnalystClient(options);
+}
+
+export function createForecastAnalystClient(options: CreateAnalystClientOptions): AnalystClient {
+  const timeoutMs = normalizeTimeoutMs(options.timeoutMs);
+  const fallbackToStub = options.fallbackToStub ?? isTestRuntime();
+  const fetcher = options.fetcher ?? fetch;
+  const stub = createStubForecastAnalystClient();
+  const usageBuffer = createUsageEventBuffer();
+
+  if (options.provider === "openai") {
+    if (!options.openaiApiKey) {
+      if (isTestRuntime()) {
+        console.warn("[forecast] provider=openai but missing API key in test runtime, using stub");
+        return stub;
+      }
+      throw new Error("OPENAI_API_KEY is required for forecast provider=openai.");
+    }
+
+    const remote = createRemoteAnalystClient({
+      provider: "openai",
+      timeoutMs,
+      fetcher,
+      requestFactory: (input) => buildOpenAiForecastRequest(input, options),
+      usageBuffer,
+      usageAgent: "batch_forecast"
+    });
+
+    console.log("[forecast] Created remote client (provider=openai, timeout=%dms, fallback=%s)", timeoutMs, fallbackToStub);
+    return fallbackToStub ? wrapAnalystWithFallback(remote, stub) : remote;
+  }
+
+  if (options.provider === "openrouter") {
+    if (!options.openrouterApiKey) {
+      if (isTestRuntime()) {
+        console.warn("[forecast] provider=openrouter but missing API key in test runtime, using stub");
+        return stub;
+      }
+      throw new Error("OPENROUTER_API_KEY is required for forecast provider=openrouter.");
+    }
+
+    const remote = createRemoteAnalystClient({
+      provider: "openrouter",
+      timeoutMs,
+      fetcher,
+      requestFactory: (input) => buildOpenRouterForecastRequest(input, options),
+      usageBuffer,
+      usageAgent: "batch_forecast"
+    });
+
+    console.log("[forecast] Created remote client (provider=openrouter, model=%s, timeout=%dms, fallback=%s)", options.openrouterModel, timeoutMs, fallbackToStub);
+    return fallbackToStub ? wrapAnalystWithFallback(remote, stub) : remote;
+  }
+
+  if (isTestRuntime()) {
+    console.warn("[forecast] Unsupported provider=%s in test runtime, using stub", options.provider);
+    return stub;
+  }
+  throw new Error(`Unsupported forecast provider: ${String(options.provider)}.`);
+}
+
 type RemoteAnalystClientOptions = {
   provider: Exclude<LlmProvider, "stub">;
   timeoutMs: number;
   fetcher: Fetcher;
   requestFactory: (input: AnalystInput) => ProviderRequest;
   usageBuffer: UsageEventBuffer;
+  usageAgent: string;
 };
 
 function createRemoteAnalystClient(options: RemoteAnalystClientOptions): AnalystClient {
@@ -348,7 +496,7 @@ function createRemoteAnalystClient(options: RemoteAnalystClientOptions): Analyst
         payload,
         options.provider,
         pickModelFromRequest(request),
-        "batch_analyst"
+        options.usageAgent
       );
       return parseBatchAnalysisPayload(payload);
     },
@@ -378,7 +526,7 @@ function wrapAnalystWithFallback(remote: AnalystClient, fallback: AnalystClient)
 }
 
 function parseBatchAnalysisPayload(payload: unknown): BatchAnalysis {
-  const direct = BatchAnalysisSchema.safeParse(payload);
+  const direct = BatchAnalysisSchema.safeParse(normalizeBatchAnalysisPayload(payload));
   if (direct.success) {
     return direct.data;
   }
@@ -388,7 +536,7 @@ function parseBatchAnalysisPayload(payload: unknown): BatchAnalysis {
     throw new Error("Unable to parse provider response as BatchAnalysis JSON.");
   }
 
-  const parsedTextPayload = parseJsonObjectFromText(textPayload);
+  const parsedTextPayload = normalizeBatchAnalysisPayload(parseJsonObjectFromText(textPayload));
   return BatchAnalysisSchema.parse(parsedTextPayload);
 }
 
@@ -1464,8 +1612,7 @@ export function createReportComposerClientFromEnv(
     openrouterModel:
       overrides.openrouterModel ??
       process.env.REPORT_COMPOSER_MODEL ??
-      process.env.MODEL_GPT ??
-      "anthropic/claude-opus-4.6"
+      DEFAULT_OPENROUTER_DEEP_ANALYSIS_MODEL
   });
   return createReportComposerClient(options);
 }
@@ -1753,6 +1900,559 @@ function wrapSuperSummaryWithFallback(
   };
 }
 
+// ---------------------------------------------------------------------------
+// Report Clarification Client
+// ---------------------------------------------------------------------------
+
+export function createStubReportClarificationClient(): ReportClarificationClient {
+  return {
+    provider: "stub",
+    async answerQuestion(input: ReportClarificationInput): Promise<ReportClarificationOutput> {
+      const query = input.question.toLowerCase();
+      const matchingSummary =
+        input.per_question_summaries.find((entry) => {
+          const haystack = [
+            entry.question_text,
+            ...entry.findings,
+            ...entry.drivers,
+            ...entry.anomalies
+          ].join(" ").toLowerCase();
+          return tokenizeForMatching(query).some((token) => haystack.includes(token));
+        }) ?? input.per_question_summaries[0];
+
+      if (!matchingSummary) {
+        return {
+          answer: "I cannot answer that from the generated report alone. It needs new analysis.",
+          citations: [],
+          grounded: false,
+          requires_new_analysis: true
+        };
+      }
+
+      const parts = [
+        matchingSummary.findings[0] ?? `The report section on "${matchingSummary.question_text}" is the closest match.`,
+        matchingSummary.drivers[0] ? `Driver: ${matchingSummary.drivers[0]}` : "",
+        matchingSummary.anomalies[0] ? `Risk: ${matchingSummary.anomalies[0]}` : ""
+      ].filter((value) => value.length > 0);
+
+      return {
+        answer: parts.join("\n"),
+        citations: [matchingSummary.question_id],
+        grounded: true,
+        requires_new_analysis: false
+      };
+    },
+    drainUsageEvents() {
+      return [];
+    }
+  };
+}
+
+export function createReportClarificationClientFromEnv(
+  overrides: Partial<CreateAnalystClientOptions> = {}
+): ReportClarificationClient {
+  const provider = parseProvider(overrides.provider ?? process.env.LLM_PROVIDER);
+  if (provider === "stub") {
+    if (isTestRuntime()) {
+      console.log("[report-clarification] LLM_PROVIDER=stub in test runtime, using stub client");
+      return createStubReportClarificationClient();
+    }
+    throw new Error("LLM_PROVIDER=stub is disabled in runtime for report clarification.");
+  }
+
+  const options = resolveClientOptions({
+    ...overrides,
+    openrouterModel:
+      overrides.openrouterModel ??
+      process.env.REPORT_QA_MODEL ??
+      DEFAULT_OPENROUTER_DEEP_ANALYSIS_MODEL
+  });
+  return createReportClarificationClient(options);
+}
+
+export function createReportClarificationClient(
+  options: CreateAnalystClientOptions
+): ReportClarificationClient {
+  const timeoutMs = normalizeTimeoutMs(options.timeoutMs ?? DEFAULT_TIMEOUT_MS);
+  const fallbackToStub = options.fallbackToStub ?? isTestRuntime();
+  const fetcher = options.fetcher ?? fetch;
+  const stub = createStubReportClarificationClient();
+  const usageBuffer = createUsageEventBuffer();
+
+  if (options.provider === "openai") {
+    if (!options.openaiApiKey) {
+      if (isTestRuntime()) {
+        console.warn("[report-clarification] provider=openai but missing API key in test runtime, using stub");
+        return stub;
+      }
+      throw new Error("OPENAI_API_KEY is required for report clarification provider=openai.");
+    }
+
+    const remote: ReportClarificationClient = {
+      provider: "openai",
+      async answerQuestion(input: ReportClarificationInput): Promise<ReportClarificationOutput> {
+        const validatedInput = ReportClarificationInputSchema.parse(input);
+        const request = {
+          endpoint: "https://api.openai.com/v1/responses",
+          headers: {
+            Authorization: `Bearer ${options.openaiApiKey}`,
+            "content-type": "application/json"
+          },
+          payload: {
+            model: options.openaiModel ?? DEFAULT_OPENAI_MODEL,
+            input: [
+              { role: "system", content: [{ type: "text", text: reportClarificationSystemPrompt() }] },
+              { role: "user", content: [{ type: "text", text: reportClarificationUserPrompt(validatedInput) }] }
+            ],
+            temperature: 0
+          }
+        } satisfies ProviderRequest;
+
+        const response = await fetchWithTimeout(fetcher, request.endpoint, {
+          method: "POST",
+          headers: request.headers,
+          body: JSON.stringify(request.payload)
+        }, timeoutMs);
+
+        if (!response.ok) {
+          const text = await response.text();
+          throw new Error(`Report clarification failed (${response.status}): ${text}`);
+        }
+
+        const payload = (await response.json()) as unknown;
+        recordUsageEventFromPayload(usageBuffer, payload, "openai", pickModelFromRequest(request), "report_clarification");
+        return parseReportClarificationPayload(payload);
+      },
+      drainUsageEvents() {
+        return usageBuffer.drain();
+      }
+    };
+
+    return fallbackToStub ? wrapReportClarificationWithFallback(remote, stub) : remote;
+  }
+
+  if (options.provider === "openrouter") {
+    if (!options.openrouterApiKey) {
+      if (isTestRuntime()) {
+        console.warn("[report-clarification] provider=openrouter but missing API key in test runtime, using stub");
+        return stub;
+      }
+      throw new Error("OPENROUTER_API_KEY is required for report clarification provider=openrouter.");
+    }
+
+    const remote: ReportClarificationClient = {
+      provider: "openrouter",
+      async answerQuestion(input: ReportClarificationInput): Promise<ReportClarificationOutput> {
+        const validatedInput = ReportClarificationInputSchema.parse(input);
+        const request = buildOpenRouterGenericRequest(
+          reportClarificationSystemPrompt(),
+          reportClarificationUserPrompt(validatedInput),
+          options
+        );
+        const response = await fetchWithTimeout(fetcher, request.endpoint, {
+          method: "POST",
+          headers: request.headers,
+          body: JSON.stringify(request.payload)
+        }, timeoutMs);
+
+        if (!response.ok) {
+          const text = await response.text();
+          throw new Error(`Report clarification failed (${response.status}): ${text}`);
+        }
+
+        const payload = (await response.json()) as unknown;
+        recordUsageEventFromPayload(usageBuffer, payload, "openrouter", pickModelFromRequest(request), "report_clarification");
+        return parseReportClarificationPayload(payload);
+      },
+      drainUsageEvents() {
+        return usageBuffer.drain();
+      }
+    };
+
+    return fallbackToStub ? wrapReportClarificationWithFallback(remote, stub) : remote;
+  }
+
+  if (isTestRuntime()) {
+    console.warn("[report-clarification] Unsupported provider=%s in test runtime, using stub", options.provider);
+    return stub;
+  }
+  throw new Error(`Unsupported report clarification provider: ${String(options.provider)}.`);
+}
+
+function wrapReportClarificationWithFallback(
+  remote: ReportClarificationClient,
+  fallback: ReportClarificationClient
+): ReportClarificationClient {
+  return {
+    provider: remote.provider,
+    async answerQuestion(input: ReportClarificationInput): Promise<ReportClarificationOutput> {
+      try {
+        return await remote.answerQuestion(input);
+      } catch (error) {
+        console.error("[report-clarification] LLM call failed, falling back to stub:", error instanceof Error ? error.message : error);
+        return fallback.answerQuestion(input);
+      }
+    },
+    drainUsageEvents() {
+      const remoteEvents = remote.drainUsageEvents ? remote.drainUsageEvents() : [];
+      const fallbackEvents = fallback.drainUsageEvents ? fallback.drainUsageEvents() : [];
+      return [...remoteEvents, ...fallbackEvents];
+    }
+  };
+}
+
+// ---------------------------------------------------------------------------
+// Business Case Client
+// ---------------------------------------------------------------------------
+
+export function createStubBusinessCaseClient(): BusinessCaseClient {
+  return {
+    provider: "stub",
+    async buildCase(input: BusinessCaseInput): Promise<BusinessCaseOutput> {
+      const assumptionNotes = input.assumption_notes.filter((note) => note.trim().length > 0);
+      if (assumptionNotes.length === 0) {
+        return {
+          status: "needs_clarification",
+          clarification_prompt:
+            "To build a defensible business case, I need at least one assumption about implementation cost, staffing, or rollout timing.",
+          missing_inputs: ["Implementation cost or budget", "Team or workforce assumption"],
+          additional_query_requests: []
+        };
+      }
+
+      const highlight = input.candidate.highlights[0] ?? "The recommendation addresses a material business issue in the report.";
+      const risk = input.candidate.risks[0] ?? "Execution quality and adoption rate will drive realized impact.";
+      return {
+        status: "complete",
+        title: `Business case for ${input.candidate.recommendation}`,
+        executive_summary:
+          "The recommendation appears commercially viable if the stated assumptions hold and rollout discipline is maintained.",
+        recommendation: input.candidate.recommendation,
+        baseline: [
+          highlight,
+          input.analysis_payload?.data_summary ?? "Use the analyzed report section as the baseline evidence set."
+        ],
+        assumptions: assumptionNotes,
+        implementation_plan: [
+          "Confirm scope, owner, and implementation sequence for the recommendation.",
+          "Pilot on the highest-impact segment first and measure impact weekly.",
+          "Scale only after KPI movement and operational capacity are validated."
+        ],
+        timeline_impact: [
+          {
+            period_label: "Time period 1 after implementation",
+            impact: "Initial operational changes take effect, with early KPI movement and setup costs concentrated in this phase."
+          },
+          {
+            period_label: "Time period 2 after implementation",
+            impact: "Benefits compound if adoption remains high and the intervention continues to address the observed driver."
+          }
+        ],
+        financial_view: ["Compare savings or uplift against the stated implementation assumptions before scaling."],
+        operational_view: ["Monitor staffing load, cycle time, and execution quality during rollout."],
+        risks: [risk],
+        kpis_to_track: ["Primary KPI from the report", "Implementation adoption rate", "Operational backlog"],
+        citations: [input.candidate.question_id],
+        additional_query_requests: []
+      };
+    },
+    drainUsageEvents() {
+      return [];
+    }
+  };
+}
+
+export function createBusinessCaseClientFromEnv(
+  overrides: Partial<CreateAnalystClientOptions> = {}
+): BusinessCaseClient {
+  const provider = parseProvider(overrides.provider ?? process.env.LLM_PROVIDER);
+  if (provider === "stub") {
+    if (isTestRuntime()) {
+      console.log("[business-case] LLM_PROVIDER=stub in test runtime, using stub client");
+      return createStubBusinessCaseClient();
+    }
+    throw new Error("LLM_PROVIDER=stub is disabled in runtime for business case.");
+  }
+
+  const options = resolveClientOptions({
+    ...overrides,
+    openrouterModel:
+      overrides.openrouterModel ??
+      process.env.BUSINESS_CASE_MODEL ??
+      process.env.REPORT_COMPOSER_MODEL ??
+      DEFAULT_OPENROUTER_DEEP_ANALYSIS_MODEL
+  });
+  return createBusinessCaseClient(options);
+}
+
+export function createBusinessCaseClient(
+  options: CreateAnalystClientOptions
+): BusinessCaseClient {
+  const timeoutMs = normalizeTimeoutMs(options.timeoutMs ?? DEFAULT_TIMEOUT_MS);
+  const fallbackToStub = options.fallbackToStub ?? isTestRuntime();
+  const fetcher = options.fetcher ?? fetch;
+  const stub = createStubBusinessCaseClient();
+  const usageBuffer = createUsageEventBuffer();
+
+  if (options.provider === "openai") {
+    if (!options.openaiApiKey) {
+      if (isTestRuntime()) {
+        console.warn("[business-case] provider=openai but missing API key in test runtime, using stub");
+        return stub;
+      }
+      throw new Error("OPENAI_API_KEY is required for business case provider=openai.");
+    }
+
+    const remote: BusinessCaseClient = {
+      provider: "openai",
+      async buildCase(input: BusinessCaseInput): Promise<BusinessCaseOutput> {
+        const validatedInput = BusinessCaseInputSchema.parse(input);
+        const request = {
+          endpoint: "https://api.openai.com/v1/responses",
+          headers: {
+            Authorization: `Bearer ${options.openaiApiKey}`,
+            "content-type": "application/json"
+          },
+          payload: {
+            model: options.openaiModel ?? DEFAULT_OPENAI_MODEL,
+            input: [
+              { role: "system", content: [{ type: "text", text: businessCaseSystemPrompt(validatedInput) }] },
+              { role: "user", content: [{ type: "text", text: businessCaseUserPrompt(validatedInput) }] }
+            ],
+            temperature: 0
+          }
+        } satisfies ProviderRequest;
+
+        const response = await fetchWithTimeout(fetcher, request.endpoint, {
+          method: "POST",
+          headers: request.headers,
+          body: JSON.stringify(request.payload)
+        }, timeoutMs);
+
+        if (!response.ok) {
+          const text = await response.text();
+          throw new Error(`Business case generation failed (${response.status}): ${text}`);
+        }
+
+        const payload = (await response.json()) as unknown;
+        recordUsageEventFromPayload(usageBuffer, payload, "openai", pickModelFromRequest(request), "business_case");
+        return parseBusinessCasePayload(payload);
+      },
+      drainUsageEvents() {
+        return usageBuffer.drain();
+      }
+    };
+
+    return fallbackToStub ? wrapBusinessCaseWithFallback(remote, stub) : remote;
+  }
+
+  if (options.provider === "openrouter") {
+    if (!options.openrouterApiKey) {
+      if (isTestRuntime()) {
+        console.warn("[business-case] provider=openrouter but missing API key in test runtime, using stub");
+        return stub;
+      }
+      throw new Error("OPENROUTER_API_KEY is required for business case provider=openrouter.");
+    }
+
+    const remote: BusinessCaseClient = {
+      provider: "openrouter",
+      async buildCase(input: BusinessCaseInput): Promise<BusinessCaseOutput> {
+        const validatedInput = BusinessCaseInputSchema.parse(input);
+        const request = buildOpenRouterGenericRequest(
+          businessCaseSystemPrompt(validatedInput),
+          businessCaseUserPrompt(validatedInput),
+          options
+        );
+        const response = await fetchWithTimeout(fetcher, request.endpoint, {
+          method: "POST",
+          headers: request.headers,
+          body: JSON.stringify(request.payload)
+        }, timeoutMs);
+
+        if (!response.ok) {
+          const text = await response.text();
+          throw new Error(`Business case generation failed (${response.status}): ${text}`);
+        }
+
+        const payload = (await response.json()) as unknown;
+        recordUsageEventFromPayload(usageBuffer, payload, "openrouter", pickModelFromRequest(request), "business_case");
+        return parseBusinessCasePayload(payload);
+      },
+      drainUsageEvents() {
+        return usageBuffer.drain();
+      }
+    };
+
+    return fallbackToStub ? wrapBusinessCaseWithFallback(remote, stub) : remote;
+  }
+
+  if (isTestRuntime()) {
+    console.warn("[business-case] Unsupported provider=%s in test runtime, using stub", options.provider);
+    return stub;
+  }
+  throw new Error(`Unsupported business case provider: ${String(options.provider)}.`);
+}
+
+function wrapBusinessCaseWithFallback(
+  remote: BusinessCaseClient,
+  fallback: BusinessCaseClient
+): BusinessCaseClient {
+  return {
+    provider: remote.provider,
+    async buildCase(input: BusinessCaseInput): Promise<BusinessCaseOutput> {
+      try {
+        return await remote.buildCase(input);
+      } catch (error) {
+        console.error("[business-case] LLM call failed, falling back to stub:", error instanceof Error ? error.message : error);
+        return fallback.buildCase(input);
+      }
+    },
+    drainUsageEvents() {
+      const remoteEvents = remote.drainUsageEvents ? remote.drainUsageEvents() : [];
+      const fallbackEvents = fallback.drainUsageEvents ? fallback.drainUsageEvents() : [];
+      return [...remoteEvents, ...fallbackEvents];
+    }
+  };
+}
+
+function parseReportClarificationPayload(payload: unknown): ReportClarificationOutput {
+  const direct = ReportClarificationOutputSchema.safeParse(payload);
+  if (direct.success) {
+    return direct.data;
+  }
+
+  const text = extractTextPayload(payload);
+  if (!text) {
+    throw new Error("Unable to parse report clarification response.");
+  }
+  return ReportClarificationOutputSchema.parse(parseJsonObjectFromText(text));
+}
+
+function parseBusinessCasePayload(payload: unknown): BusinessCaseOutput {
+  const direct = BusinessCaseOutputSchema.safeParse(normalizeBusinessCasePayload(payload));
+  if (direct.success) {
+    return direct.data;
+  }
+
+  const text = extractTextPayload(payload);
+  if (!text) {
+    throw new Error("Unable to parse business case response.");
+  }
+  return BusinessCaseOutputSchema.parse(normalizeBusinessCasePayload(parseJsonObjectFromText(text)));
+}
+
+function normalizeBatchAnalysisPayload(payload: unknown): unknown {
+  if (!isRecord(payload)) {
+    return payload;
+  }
+
+  return {
+    ...payload,
+    additional_query_requests: normalizeAdditionalQueryRequests(payload.additional_query_requests)
+  };
+}
+
+function normalizeBusinessCasePayload(payload: unknown): unknown {
+  if (!isRecord(payload)) {
+    return payload;
+  }
+
+  return {
+    ...payload,
+    additional_query_requests: normalizeAdditionalQueryRequests(payload.additional_query_requests)
+  };
+}
+
+function normalizeAdditionalQueryRequests(value: unknown): Array<{
+  reason: string;
+  question: string;
+  required_fields: string[];
+}> {
+  if (value === undefined || value === null) {
+    return [];
+  }
+
+  const rawEntries = Array.isArray(value) ? value : [value];
+  const normalized = rawEntries
+    .map((entry) => normalizeAdditionalQueryRequest(entry))
+    .filter(
+      (
+        entry
+      ): entry is {
+        reason: string;
+        question: string;
+        required_fields: string[];
+      } => entry !== null
+    );
+
+  return normalized.slice(0, 2);
+}
+
+function normalizeAdditionalQueryRequest(entry: unknown): {
+  reason: string;
+  question: string;
+  required_fields: string[];
+} | null {
+  if (typeof entry === "string") {
+    const trimmed = entry.trim();
+    if (trimmed.length === 0) {
+      return null;
+    }
+
+    if (trimmed.startsWith("{")) {
+      try {
+        return normalizeAdditionalQueryRequest(JSON.parse(trimmed) as unknown);
+      } catch {
+        // fall through to string coercion below
+      }
+    }
+
+    const normalizedText = trimmed.replace(/\s+/g, " ");
+    return {
+      reason: normalizedText,
+      question: normalizedText,
+      required_fields: []
+    };
+  }
+
+  if (!isRecord(entry)) {
+    return null;
+  }
+
+  const reasonValue = typeof entry.reason === "string" ? entry.reason.trim() : "";
+  const questionValue = typeof entry.question === "string" ? entry.question.trim() : "";
+  const mergedFallback =
+    reasonValue.length > 0
+      ? reasonValue
+      : questionValue.length > 0
+        ? questionValue
+        : "";
+
+  if (mergedFallback.length === 0) {
+    return null;
+  }
+
+  const requiredFields =
+    Array.isArray(entry.required_fields)
+      ? entry.required_fields
+          .filter((value): value is string => typeof value === "string")
+          .map((value) => value.trim())
+          .filter((value) => value.length > 0)
+      : typeof entry.required_fields === "string"
+        ? entry.required_fields
+            .split(/[,\n]/)
+            .map((value) => value.trim())
+            .filter((value) => value.length > 0)
+        : [];
+
+  return {
+    reason: reasonValue.length > 0 ? reasonValue : mergedFallback,
+    question: questionValue.length > 0 ? questionValue : mergedFallback,
+    required_fields: requiredFields.slice(0, 12)
+  };
+}
+
 function parseSuperSummaryPayload(payload: unknown): SuperSummaryOutput {
   const direct = SuperSummaryOutputSchema.safeParse(payload);
   if (direct.success) {
@@ -1854,6 +2554,144 @@ function superSummaryUserPrompt(input: SuperSummaryInput): string {
   ].join("\n");
 }
 
+function reportClarificationSystemPrompt(): string {
+  return [
+    "You answer clarification questions about a generated business report.",
+    "Use only the supplied report, executive brief, per-question summaries, metric definitions, and business context.",
+    "Do not invent new calculations, fresh analysis, or unsupported numbers.",
+    "If the answer cannot be grounded in the supplied report artifacts, set requires_new_analysis=true.",
+    "",
+    "Return strictly valid JSON:",
+    '{"answer":"...","citations":["q1"],"grounded":true,"requires_new_analysis":false}',
+    "",
+    "Citations should reference relevant question IDs when possible.",
+    "No markdown, no extra keys."
+  ].join("\n");
+}
+
+function reportClarificationUserPrompt(input: ReportClarificationInput): string {
+  const summaries = input.per_question_summaries
+    .map((summary) => [
+      `${summary.question_id}: ${summary.question_text}`,
+      `Findings: ${summary.findings.join("; ") || "None"}`,
+      `Drivers: ${summary.drivers.join("; ") || "None"}`,
+      `Anomalies: ${summary.anomalies.join("; ") || "None"}`
+    ].join("\n"))
+    .join("\n\n");
+
+  const analyses = input.analysis_payloads
+    .map((analysis) => [
+      `${analysis.question_id}: ${analysis.question}`,
+      `Data summary: ${analysis.data_summary}`,
+      `Highlights: ${analysis.highlights.join("; ") || "None"}`,
+      `Risks: ${analysis.risks.join("; ") || "None"}`,
+      `Recommendations: ${analysis.recommendations.join("; ") || "None"}`
+    ].join("\n"))
+    .join("\n\n");
+
+  const metricDefs = input.metric_definitions
+    .map((metric) => `${metric.display_name} (${metric.metric_key}): ${metric.definition}`)
+    .join("\n");
+
+  return [
+    `Report title: ${input.report_title}`,
+    `Question: ${input.question}`,
+    "",
+    `Business context: ${input.business_context || "None"}`,
+    "",
+    "Metric definitions:",
+    metricDefs || "None",
+    "",
+    "Per-question summaries:",
+    summaries || "None",
+    "",
+    "Analysis payloads:",
+    analyses || "None",
+    "",
+    "Executive brief JSON:",
+    JSON.stringify(input.exec_brief),
+    "",
+    "Report HTML excerpt:",
+    input.report_html.slice(0, 6000)
+  ].join("\n");
+}
+
+function businessCaseSystemPrompt(input: BusinessCaseInput): string {
+  return [
+    "You are a principal strategy consultant building a detailed business case for a selected report recommendation.",
+    "Ground the case in supplied evidence, business context, metric definitions, and explicit assumptions.",
+    "Never invent hard numbers that are not supported by evidence or assumptions.",
+    "If a defensible case needs missing assumptions, return needs_clarification.",
+    "If a defensible case needs more data, use additional_query_requests to ask for at most 2 missing evidence slices.",
+    "",
+    "A complete business case must cover:",
+    "- baseline problem or opportunity",
+    "- assumptions",
+    "- implementation plan",
+    "- financial and operational view",
+    "- period-by-period impact outlook",
+    "- risks and KPI tracking",
+    "",
+    "Return strictly valid JSON matching one of these shapes:",
+    '{"status":"needs_clarification","clarification_prompt":"...","missing_inputs":["..."],"additional_query_requests":[]}',
+    '{"status":"complete","title":"...","executive_summary":"...","recommendation":"...","baseline":["..."],"assumptions":["..."],"implementation_plan":["..."],"timeline_impact":[{"period_label":"Time period 1 after implementation","impact":"..."},{"period_label":"Time period 2 after implementation","impact":"..."}],"financial_view":["..."],"operational_view":["..."],"risks":["..."],"kpis_to_track":["..."],"citations":["q1"],"additional_query_requests":[]}',
+    "",
+    'If additional_query_requests is not empty, each item MUST be an object like {"reason":"...","question":"...","required_fields":["..."]}. Never return plain strings in that array.',
+    `Selected recommendation: ${input.candidate.recommendation}`,
+    "No markdown, no extra keys."
+  ].join("\n");
+}
+
+function businessCaseUserPrompt(input: BusinessCaseInput): string {
+  const metricDefs = input.metric_definitions
+    .map((metric) => `${metric.display_name} (${metric.metric_key}): ${metric.definition}`)
+    .join("\n");
+  const supportingData = input.supporting_data
+    .map((item, index) => [
+      `Supporting data ${index + 1}: ${item.label}`,
+      item.sql ? `SQL: ${item.sql}` : "",
+      `Rows: ${item.row_count}`,
+      `Sample: ${JSON.stringify(item.sample_rows)}`
+    ].filter((line) => line.length > 0).join("\n"))
+    .join("\n\n");
+
+  return [
+    `Report title: ${input.report_title}`,
+    `User request: ${input.question}`,
+    `Latest user message: ${input.user_message}`,
+    "",
+    `Business context: ${input.business_context || "None"}`,
+    "",
+    `Question ${input.candidate.question_number} (${input.candidate.question_id}): ${input.candidate.question_text}`,
+    `Recommendation ${input.candidate.recommendation_index}: ${input.candidate.recommendation}`,
+    `Highlights: ${input.candidate.highlights.join("; ") || "None"}`,
+    `Risks: ${input.candidate.risks.join("; ") || "None"}`,
+    "",
+    "Assumption notes:",
+    input.assumption_notes.join("\n") || "None provided.",
+    "",
+    "Metric definitions:",
+    metricDefs || "None",
+    "",
+    "Analysis payload:",
+    input.analysis_payload ? JSON.stringify(input.analysis_payload) : "None",
+    "",
+    "Prepared payload:",
+    input.prepared_payload ? JSON.stringify(input.prepared_payload) : "None",
+    "",
+    "Supporting data:",
+    supportingData || "None"
+  ].join("\n");
+}
+
+function tokenizeForMatching(value: string): string[] {
+  return value
+    .toLowerCase()
+    .split(/[^a-z0-9]+/i)
+    .map((token) => token.trim())
+    .filter((token) => token.length >= 3);
+}
+
 function reportComposerSystemPrompt(input: ReportComposerInput): string {
   const modeGuidance = input.insight_mode === "data"
     ? "This is a DATA QUALITY report. Focus on data issues, completeness, anomalies, and recommendations for fixing them. Use tables showing null rates, distribution charts, and data quality scores."
@@ -1869,7 +2707,9 @@ function reportComposerSystemPrompt(input: ReportComposerInput): string {
     "STRUCTURE:",
     "- Complete HTML: <!doctype html>, <head> with embedded CSS, <body>.",
     "- Executive Summary at top: 2-3 key cross-cutting takeaways as bold callout cards (synthesized from per_question_summaries).",
-    "- Each analysis section: clear heading, key finding callout box, supporting table or chart.",
+    "- Each analysis section: clear heading, direct answer to the scoped question in the opening paragraph, key finding callout box, supporting chart, and supporting table.",
+    "- When evidence supports it, add a second visual or secondary detail table instead of keeping the section short.",
+    "- Prefer richer sections with substantive explanation and evidence bullets, not terse one-line summaries.",
     "- End with numbered 'Recommended Actions' section.",
     "- Metric Definitions reference table when metric_definitions are provided.",
     "",
@@ -1882,6 +2722,10 @@ function reportComposerSystemPrompt(input: ReportComposerInput): string {
     "- NO BLANKS: Every cell must have a real value. If unknown, omit the row/card — never show '—' or 'N/A'.",
     "- FACT-CHECK: Verify peaks/maxs/mins by comparing actual numbers. If Jan=109, Dec=93 → Jan is peak.",
     "- EXACT NAMES: Use real entity names from data (city names, products). Never 'City 1' or 'Category A'.",
+    "- QUESTION-FIRST: Answer the exact scoped question before discussing adjacent metrics. If the question asks for refund rate, lead with refund rate. Use revenue, counts, or totals only as supporting context.",
+    "- DO NOT SUBSTITUTE METRICS: Never replace the requested metric with a proxy metric. Example: do not turn 'highest refund rate' into 'highest refunded revenue'.",
+    "- USE THE PREPARED EVIDENCE: Each analysis includes answer_focus, data_summary, and evidence_snapshot fields. The evidence_snapshot contains the prepared rows to ground tables and charts.",
+    "- VISUAL COVERAGE: If the evidence shows a ranking or grouped breakdown, render a sorted table and bar chart. If the evidence shows a time series, render a line chart plus a summary table.",
     "- NO INTERNAL INFO: Never mention validation, pipeline issues, SQL compilation, or confidence scores.",
     "- Return ONLY the HTML document, no markdown fences."
   ].join("\n");
@@ -1894,10 +2738,12 @@ function reportComposerUserPrompt(input: ReportComposerInput): string {
 
   const sections = input.analyses.map((a, i) => [
     `--- Analysis ${i + 1}: ${a.question} ---`,
+    `Answer focus: ${a.answer_focus ?? "Answer the scoped question directly using the prepared evidence."}`,
     `Key findings: ${a.highlights.join("; ") || "None"}`,
     `Risks: ${a.risks.join("; ") || "None"}`,
     `Recommendations: ${a.recommendations.join("; ") || "None"}`,
-    `Data summary: ${a.data_summary}`
+    `Data summary: ${a.data_summary}`,
+    `Evidence snapshot: ${a.evidence_snapshot ?? "None"}`
   ].join("\n")).join("\n\n");
 
   const perQuestionSummaries = (input.per_question_summaries ?? [])
@@ -1953,10 +2799,12 @@ function renderStubReportHtml(input: ReportComposerInput): string {
     return `
     <section class="analysis-card">
       <h2>${escapeHtml(a.question)}</h2>
+      ${a.answer_focus ? `<p class="answer-focus"><strong>Answer focus:</strong> ${escapeHtml(a.answer_focus)}</p>` : ""}
       ${highlights.length > 0 ? `<h3>Key Findings</h3><ul>${highlights}</ul>` : ""}
       ${risks.length > 0 ? `<h3>Risks</h3><ul>${risks}</ul>` : ""}
       ${recs.length > 0 ? `<h3>Recommendations</h3><ul>${recs}</ul>` : ""}
       <p class="data-note">${escapeHtml(a.data_summary)}</p>
+      ${a.evidence_snapshot ? `<details class="evidence-note"><summary>Prepared evidence</summary><pre>${escapeHtml(a.evidence_snapshot)}</pre></details>` : ""}
     </section>`;
   }).join("\n");
 
@@ -1974,7 +2822,11 @@ function renderStubReportHtml(input: ReportComposerInput): string {
   .analysis-card h3{margin:14px 0 6px;font-size:0.9rem;color:#475569}
   .analysis-card ul{padding-left:18px;margin:4px 0}
   .analysis-card li{margin-bottom:4px;font-size:0.88rem;line-height:1.5}
+  .answer-focus{font-size:0.86rem;line-height:1.5;color:#1e3a8a;background:#eff6ff;border:1px solid #bfdbfe;border-radius:8px;padding:10px 12px}
   .data-note{font-size:0.8rem;color:#64748b;margin-top:12px;padding:8px;background:#f1f5f9;border-radius:6px}
+  .evidence-note{margin-top:12px}
+  .evidence-note summary{cursor:pointer;font-size:0.85rem;font-weight:600;color:#1f2937}
+  .evidence-note pre{white-space:pre-wrap;font-size:0.76rem;line-height:1.5;color:#334155;background:#f8fafc;border:1px solid #e2e8f0;border-radius:8px;padding:10px;margin-top:8px}
   .metric-definitions{background:#fff;border:1px solid #dbeafe;border-radius:10px;padding:18px;margin-bottom:16px}
   .metric-definitions h2{margin:0 0 10px;font-size:1rem;color:#1e3a8a}
   .metric-definitions li{margin-bottom:6px;line-height:1.45}
@@ -2047,6 +2899,7 @@ function analystSystemPrompt(input: AnalystInput): string {
     "Return strictly valid JSON:",
     '{"request_id":"...","batch_index":0,"total_batches":1,"highlights":["..."],"risks":["..."],"recommendations":["..."],"confidence_score":0.85,"appendix_refs":["..."],"additional_query_requests":[]}',
     "",
+    'If additional_query_requests is not empty, each item MUST be an object like {"reason":"...","question":"...","required_fields":["..."]}. Never return plain strings in that array.',
     "highlights: 3-5 specific findings with numbers. risks: 1-3 concerns with impact. recommendations: 2-4 actionable steps.",
     "confidence_score: 0.0-1.0. additional_query_requests: optional (0-2), only when crucial evidence is missing.",
     "No markdown, no extra keys."
@@ -2089,6 +2942,86 @@ function analystUserPrompt(input: AnalystInput): string {
   return parts.join("\n");
 }
 
+function forecastSystemPrompt(input: AnalystInput): string {
+  const questionContext = input.question
+    ? `Primary forecasting question: "${input.question}"`
+    : "Produce a forecast-oriented analysis from the provided evidence.";
+
+  const metricDefs = input.metric_definitions ?? [];
+  const metricDefsBlock = metricDefs.length > 0
+    ? "\nMETRIC DEFINITIONS:\n" +
+      metricDefs.map((m) => `- ${m.display_name} (${m.metric_key}): ${m.definition}`).join("\n") +
+      "\n"
+    : "";
+
+  const businessCtxBlock = input.business_context && input.business_context.trim().length > 0
+    ? `\nBUSINESS CONTEXT:\n${input.business_context.trim()}\n`
+    : "";
+
+  return [
+    "You are a senior forecasting analyst.",
+    "Your job is to answer the scoped question with a forecast-quality view while staying grounded in the evidence provided.",
+    questionContext,
+    businessCtxBlock,
+    metricDefsBlock,
+    "RULES:",
+    "- Separate observed facts from forecast implications. Use only the available evidence and stated assumptions.",
+    "- Call out trend direction, seasonality, leading signals, inflection points, and confidence constraints.",
+    "- Every highlight must include specific numbers, rates, or period comparisons from the evidence.",
+    "- Do not fabricate future values. If the available data is insufficient for a robust forecast, say so explicitly in risks and request the missing data.",
+    "- If rows contain '_source_query', cross-reference them before forming a forecast narrative.",
+    "- Use METRIC DEFINITIONS exactly when they are provided.",
+    "- Recommendations should be forecasting-oriented actions such as monitoring, scenario planning, capacity planning, or assumption validation.",
+    "",
+    "Return strictly valid JSON:",
+    '{"request_id":"...","batch_index":0,"total_batches":1,"highlights":["..."],"risks":["..."],"recommendations":["..."],"confidence_score":0.85,"appendix_refs":["..."],"additional_query_requests":[]}',
+    "",
+    'If additional_query_requests is not empty, each item MUST be an object like {"reason":"...","question":"...","required_fields":["..."]}. Never return plain strings in that array.',
+    "highlights: 3-5 forecast-relevant findings grounded in the historical evidence.",
+    "risks: 1-3 forecast caveats, uncertainty drivers, or missing-signal issues.",
+    "recommendations: 2-4 actions for forecast readiness, monitoring, or decision-making.",
+    "confidence_score: 0.0-1.0. additional_query_requests: optional (0-2), only when crucial evidence is missing.",
+    "No markdown, no extra keys."
+  ].join("\n");
+}
+
+function forecastUserPrompt(input: AnalystInput): string {
+  const packet = input.evidence_packet;
+  const rowPreview = packet.rows.slice(0, 30).map((row) => JSON.stringify(row)).join("\n");
+  const allColumns = packet.rows.length > 0 ? Object.keys(packet.rows[0]) : [];
+
+  const parts = [
+    `request_id: ${input.request_id}`,
+    `batch_index: ${input.batch_index}`,
+    `total_batches: ${input.total_batches}`,
+    `row_count: ${packet.row_count}`,
+    `columns: ${allColumns.join(", ")}`,
+    `word_budget: ${input.summary_word_budget}`
+  ];
+
+  if (input.question) {
+    parts.push(`question: ${input.question}`);
+  }
+
+  if (input.data_context && input.data_context.trim().length > 0) {
+    parts.push("", "=== DATA CONTEXT (authoritative aggregates) ===");
+    parts.push(input.data_context);
+    parts.push("=== END DATA CONTEXT ===");
+  }
+
+  parts.push("", "=== SAMPLE ROWS (up to 30) ===", rowPreview);
+  if (packet.row_count > 30) {
+    parts.push(`... and ${packet.row_count - 30} more rows are available in the evidence packet.`);
+  }
+
+  parts.push(
+    "",
+    "Analyze this as a forecasting question. Stay grounded in observed evidence and request missing evidence if confidence would otherwise be weak.",
+    "Return JSON only."
+  );
+  return parts.join("\n");
+}
+
 // ---------------------------------------------------------------------------
 // Shared Request Builders
 // ---------------------------------------------------------------------------
@@ -2115,6 +3048,32 @@ function buildOpenRouterAnalystRequest(input: AnalystInput, options: CreateAnaly
   return buildOpenRouterGenericRequest(
     analystSystemPrompt(input),
     analystUserPrompt(input),
+    options
+  );
+}
+
+function buildOpenAiForecastRequest(input: AnalystInput, options: CreateAnalystClientOptions): ProviderRequest {
+  return {
+    endpoint: "https://api.openai.com/v1/responses",
+    headers: {
+      Authorization: `Bearer ${options.openaiApiKey}`,
+      "content-type": "application/json"
+    },
+    payload: {
+      model: options.openaiModel ?? DEFAULT_OPENAI_MODEL,
+      input: [
+        { role: "system", content: [{ type: "text", text: forecastSystemPrompt(input) }] },
+        { role: "user", content: [{ type: "text", text: forecastUserPrompt(input) }] }
+      ],
+      temperature: 0
+    }
+  };
+}
+
+function buildOpenRouterForecastRequest(input: AnalystInput, options: CreateAnalystClientOptions): ProviderRequest {
+  return buildOpenRouterGenericRequest(
+    forecastSystemPrompt(input),
+    forecastUserPrompt(input),
     options
   );
 }

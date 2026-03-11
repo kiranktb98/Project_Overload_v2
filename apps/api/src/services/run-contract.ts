@@ -440,6 +440,7 @@ export async function runReportContractPipeline(input: {
   store: MetadataStore;
   data_plane: DataPlane;
   analyst_client: AnalystClient;
+  forecast_client?: AnalystClient;
   query_strategist: QueryStrategistClient;
   report_composer: ReportComposerClient;
   planner_client: PlannerClient;
@@ -553,8 +554,13 @@ export async function runReportContractPipeline(input: {
       continue;
     }
 
+    const selectedAnalystClient = selectBatchAnalysisClientForQuestion(
+      payload.question,
+      input.analyst_client,
+      input.forecast_client
+    );
     const analystResult = await runAnalystWithOptionalAdditionalQueries({
-      analyst_client: input.analyst_client,
+      analyst_client: selectedAnalystClient,
       query_strategist: input.query_strategist,
       data_plane: input.data_plane,
       store: input.store,
@@ -575,7 +581,7 @@ export async function runReportContractPipeline(input: {
       metric_definitions: allMetricDefs,
       business_context: businessContext
     });
-    collectClientUsage(input.analyst_client, tokenUsage);
+    collectClientUsage(selectedAnalystClient, tokenUsage);
     collectClientUsage(input.query_strategist, tokenUsage);
     payload = analystResult.payload;
     preparation.prepared_payloads[payloadIndex] = payload;
@@ -713,6 +719,8 @@ export async function runReportContractPipeline(input: {
       insight_mode: insightMode,
       previous_run_id: previousRun?.id ?? null,
       metric_definitions: metricDefinitions,
+      business_context: businessContext,
+      catalog_summary: input.catalog_summary,
       super_summary: null,
       super_summary_context_queries: [],
       super_summary_context_results: [],
@@ -737,6 +745,39 @@ export async function runReportContractPipeline(input: {
     kpi_results: kpiResults,
     token_usage: tokenUsage.snapshot()
   };
+}
+
+export function isForecastScopedQuestion(question: string): boolean {
+  const normalized = question.trim().toLowerCase();
+  if (normalized.length === 0) {
+    return false;
+  }
+
+  return [
+    /\bforecast(?:ing)?\b/,
+    /\bprojection\b/,
+    /\bprojected\b/,
+    /\bpredict(?:ion|ed)?\b/,
+    /\boutlook\b/,
+    /\bexpected\b/,
+    /\bnext\s+\d+\s+(?:day|days|week|weeks|month|months|quarter|quarters|year|years)\b/,
+    /\bnext\s+(?:month|quarter|year)\b/,
+    /\bfuture\b/,
+    /\brun[- ]?rate\b/,
+    /\bwhat will\b/,
+    /\bhow will\b/
+  ].some((pattern) => pattern.test(normalized));
+}
+
+function selectBatchAnalysisClientForQuestion(
+  question: string,
+  analystClient: AnalystClient,
+  forecastClient?: AnalystClient
+): AnalystClient {
+  if (!forecastClient) {
+    return analystClient;
+  }
+  return isForecastScopedQuestion(question) ? forecastClient : analystClient;
 }
 
 export function answerRunPayloadQuestion(input: {
@@ -2898,6 +2939,11 @@ function pickValidationMetricColumn(rows: Record<string, unknown>[], question: s
     return null;
   }
 
+  const explicitQuestionMetric = pickQuestionPrimaryMetricColumn(numericColumns, question);
+  if (explicitQuestionMetric) {
+    return explicitQuestionMetric;
+  }
+
   const lowerQuestion = question.toLowerCase();
   const scored = numericColumns.map((column) => {
     const lowerColumn = column.toLowerCase();
@@ -2965,6 +3011,7 @@ function hardenBatchAnalysisOutput(
   analysis: BatchAnalysis,
   questionLabel: string
 ): HardenedBatchAnalysisOutput {
+  const questionAlignedInsights = buildQuestionAlignedInsights(payload);
   const payloadTopInsights = buildPayloadTopValueInsights(payload);
   const cleanedHighlights = filterAnalysisLinesToScope(
     normalizeAnalysisLines(analysis.highlights, 6),
@@ -2994,6 +3041,8 @@ function hardenBatchAnalysisOutput(
   const hardenedConfidence = Number((boundedConfidence * grounding.score).toFixed(2));
 
   const dataSummary = buildPayloadDataSummary(payload);
+  const answerFocus = buildQuestionAnswerFocus(payload);
+  const evidenceSnapshot = buildComposerEvidenceSnapshot(payload);
 
   if (
     grounding.score < MIN_ANALYSIS_GROUNDING_SCORE ||
@@ -3007,10 +3056,15 @@ function hardenBatchAnalysisOutput(
     return {
       entry: {
         question: questionLabel,
-        highlights: mergePreferredHighlights(fallbackHighlights, payloadTopInsights, 6),
+        highlights: normalizeAnalysisLines(
+          [...questionAlignedInsights, ...payloadTopInsights, ...fallbackHighlights],
+          6
+        ),
         risks: fallbackRisks,
         recommendations: fallbackRecommendations,
-        data_summary: dataSummary
+        data_summary: dataSummary,
+        answer_focus: answerFocus,
+        evidence_snapshot: evidenceSnapshot
       },
       confidence_score: Number(Math.min(hardenedConfidence, MIN_ANALYSIS_GROUNDING_SCORE).toFixed(2))
     };
@@ -3019,18 +3073,19 @@ function hardenBatchAnalysisOutput(
   return {
     entry: {
       question: questionLabel,
-      highlights: mergePreferredHighlights(cleanedHighlights, payloadTopInsights, 6),
+      highlights: normalizeAnalysisLines(
+        [...questionAlignedInsights, ...payloadTopInsights, ...cleanedHighlights],
+        6
+      ),
       risks: cleanedRisks.length > 0 ? cleanedRisks : buildFallbackRisks(payload),
       recommendations:
         cleanedRecommendations.length > 0 ? cleanedRecommendations : buildFallbackRecommendations(payload),
-      data_summary: dataSummary
+      data_summary: dataSummary,
+      answer_focus: answerFocus,
+      evidence_snapshot: evidenceSnapshot
     },
     confidence_score: hardenedConfidence
   };
-}
-
-function mergePreferredHighlights(primary: string[], payloadInsights: string[], maxItems: number): string[] {
-  return normalizeAnalysisLines([...payloadInsights, ...primary], maxItems);
 }
 
 function filterAnalysisLinesToScope(
@@ -4125,6 +4180,11 @@ function buildPayloadDataSummary(payload: PreparedQuestionPayload): string {
     payload.purpose
   ];
 
+  const directAnswerInsights = buildQuestionAlignedInsights(payload);
+  if (directAnswerInsights.length > 0) {
+    lines.push(`Direct answer cue: ${directAnswerInsights[0]}`);
+  }
+
   if (payload.validation) {
     const validation = payload.validation;
     if (validation.expected_months !== null) {
@@ -4242,6 +4302,11 @@ function pickPreferredMetricColumn(
   question: string,
   validationMetricColumn: string | null
 ): string | null {
+  const explicitQuestionMetric = pickQuestionPrimaryMetricColumn(numericColumns, question);
+  if (explicitQuestionMetric) {
+    return explicitQuestionMetric;
+  }
+
   if (validationMetricColumn && numericColumns.includes(validationMetricColumn)) {
     return validationMetricColumn;
   }
@@ -4269,6 +4334,274 @@ function pickPreferredMetricColumn(
   }
 
   return numericColumns[0] ?? null;
+}
+
+function pickQuestionPrimaryMetricColumn(numericColumns: string[], question: string): string | null {
+  const lowerQuestion = question.toLowerCase();
+  const asksRefund = /\brefund/.test(lowerQuestion);
+
+  const findMatchingColumn = (patterns: RegExp[], requireRefundToken = false): string | null => {
+    const predicate = (column: string) =>
+      patterns.some((pattern) => pattern.test(column)) &&
+      (!requireRefundToken || /refund/i.test(column));
+    return numericColumns.find(predicate) ?? null;
+  };
+
+  if (/\b(rate|share|pct|percent|percentage)\b/.test(lowerQuestion)) {
+    const refundRateColumn = findMatchingColumn([/(rate|share|pct|percent|percentage)/i], asksRefund);
+    if (refundRateColumn) {
+      return refundRateColumn;
+    }
+    const anyRateColumn = findMatchingColumn([/(rate|share|pct|percent|percentage)/i]);
+    if (anyRateColumn) {
+      return anyRateColumn;
+    }
+  }
+
+  if (/\b(resolution|duration|time|hours?|hrs?|minutes?|mins?|latency|delay)\b/.test(lowerQuestion)) {
+    const durationColumn = findMatchingColumn([/(resolution|duration|time|hours|hrs|minutes|mins|latency|delay)/i]);
+    if (durationColumn) {
+      return durationColumn;
+    }
+  }
+
+  if (/\b(revenue|amount|value|sales|gmv|loss)\b/.test(lowerQuestion)) {
+    const revenueColumn = findMatchingColumn([/(revenue|amount|value|sales|gmv|loss)/i], asksRefund);
+    if (revenueColumn) {
+      return revenueColumn;
+    }
+    const anyRevenueColumn = findMatchingColumn([/(revenue|amount|value|sales|gmv|loss)/i]);
+    if (anyRevenueColumn) {
+      return anyRevenueColumn;
+    }
+  }
+
+  if (/\b(count|volume|orders?|tickets?|qty|quantity|number)\b/.test(lowerQuestion)) {
+    const countColumn = findMatchingColumn([/(count|volume|orders|tickets|qty|quantity|number|total)/i], asksRefund);
+    if (countColumn) {
+      return countColumn;
+    }
+    const anyCountColumn = findMatchingColumn([/(count|volume|orders|tickets|qty|quantity|number|total)/i]);
+    if (anyCountColumn) {
+      return anyCountColumn;
+    }
+  }
+
+  return null;
+}
+
+function buildQuestionAnswerFocus(payload: PreparedQuestionPayload): string {
+  const rows = payload.prepared_rows;
+  const sample = rows[0] ?? {};
+  const columns = Object.keys(sample).filter((column) => !column.startsWith("_"));
+  const numericColumns = columns.filter((column) => columnLooksNumeric(rows, column));
+  const dimensionColumns = columns.filter((column) => !numericColumns.includes(column) && !isDateLikeColumnName(column));
+  const primaryMetric = pickPreferredMetricColumn(
+    numericColumns,
+    payload.question,
+    payload.validation?.metric_column ?? null
+  );
+  const primaryDimension = pickPreferredDimensionColumn(dimensionColumns, payload.question);
+
+  if (primaryMetric && primaryDimension) {
+    return `Lead with ${humanizeColumnName(primaryMetric)} by ${humanizeColumnName(primaryDimension)} because that is the exact metric and breakdown requested by the scoped question. Use other columns only as supporting context, not as a replacement metric.`;
+  }
+
+  if (primaryMetric) {
+    return `Lead with ${humanizeColumnName(primaryMetric)} because it is the primary metric requested by the scoped question. Use secondary metrics only as supporting context.`;
+  }
+
+  return "Answer the scoped question directly from the prepared evidence. Do not replace the requested metric with a proxy metric.";
+}
+
+function buildComposerEvidenceSnapshot(payload: PreparedQuestionPayload): string {
+  const rows = payload.prepared_rows.slice(0, 200);
+  if (rows.length === 0) {
+    return "";
+  }
+
+  const sample = rows[0] ?? {};
+  const columns = Object.keys(sample).filter((column) => !column.startsWith("_"));
+  const numericColumns = columns.filter((column) => columnLooksNumeric(rows, column));
+  const dimensionColumns = columns.filter((column) => !numericColumns.includes(column) && !isDateLikeColumnName(column));
+  const primaryMetric = pickPreferredMetricColumn(
+    numericColumns,
+    payload.question,
+    payload.validation?.metric_column ?? null
+  );
+  const primaryDimension = pickPreferredDimensionColumn(dimensionColumns, payload.question);
+  const directAnswer = buildQuestionAlignedInsights(payload)[0] ?? "";
+  const supportingMetrics = numericColumns.filter((column) => column !== primaryMetric).slice(0, 4);
+  const orderedColumns = [
+    ...(primaryDimension ? [primaryDimension] : []),
+    ...(primaryMetric ? [primaryMetric] : []),
+    ...columns.filter((column) => column !== primaryDimension && column !== primaryMetric)
+  ].slice(0, 6);
+  const previewRows = sortEvidenceRowsForQuestion(rows, primaryMetric, payload.question).slice(0, 8);
+
+  const lines: string[] = [
+    `Scoped question: ${payload.question}`,
+    `Prepared rows: ${payload.prepared_row_count}`,
+    `Primary metric: ${primaryMetric ?? "not inferred"}`,
+    `Primary breakdown: ${primaryDimension ?? "none"}`,
+    `Available columns: ${orderedColumns.join(", ")}`
+  ];
+
+  if (supportingMetrics.length > 0) {
+    lines.push(`Supporting metrics: ${supportingMetrics.join(", ")}`);
+  }
+  if (directAnswer.length > 0) {
+    lines.push(`Direct answer from prepared data: ${directAnswer}`);
+  }
+  if (previewRows.length > 0) {
+    lines.push("Prepared evidence preview:");
+    for (const row of previewRows) {
+      const formatted = orderedColumns
+        .map((column) => `${column}=${formatEvidenceValue(row[column], column)}`)
+        .join(" | ");
+      lines.push(`- ${formatted}`);
+    }
+  }
+
+  return lines.join("\n");
+}
+
+function buildQuestionAlignedInsights(payload: PreparedQuestionPayload): string[] {
+  const rows = payload.prepared_rows.slice(0, 500);
+  if (rows.length === 0) {
+    return [];
+  }
+
+  const sample = rows[0] ?? {};
+  const columns = Object.keys(sample).filter((column) => !column.startsWith("_"));
+  const numericColumns = columns.filter((column) => columnLooksNumeric(rows, column));
+  if (numericColumns.length === 0) {
+    return [];
+  }
+
+  const dimensionColumns = columns.filter((column) => !numericColumns.includes(column) && !isDateLikeColumnName(column));
+  const primaryMetric = pickPreferredMetricColumn(
+    numericColumns,
+    payload.question,
+    payload.validation?.metric_column ?? null
+  );
+  if (!primaryMetric) {
+    return [];
+  }
+
+  const lowerQuestion = payload.question.toLowerCase();
+  const primaryDimension = pickPreferredDimensionColumn(dimensionColumns, payload.question);
+  const insights: string[] = [];
+
+  if (
+    primaryDimension &&
+    /\b(top|highest|lowest|best|worst|rank|ranking|city|cities|region|regions|state|states|country|countries|product|products|category|categories|issue|issues|reason|reasons|driver|drivers)\b/.test(lowerQuestion)
+  ) {
+    const ranked = aggregateMetricByDimension(rows, primaryDimension, primaryMetric, lowerQuestion);
+    if (ranked.length > 0) {
+      const descriptor = /\b(lowest|bottom|least|smallest|worst)\b/.test(lowerQuestion) ? "lowest" : "highest";
+      const topRows = ranked.slice(0, 3)
+        .map(([name, value]) => `${name} (${formatMetricValueForQuestion(value, primaryMetric)})`)
+        .join(", ");
+      insights.push(`${humanizeColumnName(primaryDimension)} with the ${descriptor} ${humanizeColumnName(primaryMetric)}: ${topRows}.`);
+    }
+  }
+
+  const dateColumn = columns.find((column) => isDateLikeColumnName(column));
+  if (dateColumn && /\b(trend|month|monthly|week|weekly|day|daily|over time)\b/.test(lowerQuestion)) {
+    const chronological = rows
+      .map((row) => ({
+        label: String(row[dateColumn] ?? "").trim(),
+        value: toFiniteNumber(row[primaryMetric])
+      }))
+      .filter((item) => item.label.length > 0 && item.value !== null)
+      .sort((left, right) => left.label.localeCompare(right.label));
+    if (chronological.length >= 2) {
+      const first = chronological[0]!;
+      const last = chronological[chronological.length - 1]!;
+      insights.push(
+        `${humanizeColumnName(primaryMetric)} moved from ${formatMetricValueForQuestion(first.value!, primaryMetric)} in ${first.label} to ${formatMetricValueForQuestion(last.value!, primaryMetric)} in ${last.label}.`
+      );
+    }
+  }
+
+  return normalizeAnalysisLines(insights, 2);
+}
+
+function aggregateMetricByDimension(
+  rows: Record<string, unknown>[],
+  dimensionColumn: string,
+  metricColumn: string,
+  lowerQuestion: string
+): Array<[string, number]> {
+  const aggregated = new Map<string, number>();
+  for (const row of rows) {
+    const dimensionRaw = row[dimensionColumn];
+    const dimensionValue = typeof dimensionRaw === "string" ? dimensionRaw.trim() : String(dimensionRaw ?? "").trim();
+    if (dimensionValue.length === 0) {
+      continue;
+    }
+    const numeric = toFiniteNumber(row[metricColumn]);
+    if (numeric === null) {
+      continue;
+    }
+    aggregated.set(dimensionValue, (aggregated.get(dimensionValue) ?? 0) + numeric);
+  }
+
+  const sortAscending = /\b(lowest|bottom|least|smallest|worst)\b/.test(lowerQuestion);
+  return Array.from(aggregated.entries()).sort((left, right) => {
+    if (left[1] === right[1]) {
+      return left[0].localeCompare(right[0]);
+    }
+    return sortAscending ? left[1] - right[1] : right[1] - left[1];
+  });
+}
+
+function sortEvidenceRowsForQuestion(
+  rows: Record<string, unknown>[],
+  metricColumn: string | null,
+  question: string
+): Record<string, unknown>[] {
+  if (!metricColumn) {
+    return rows;
+  }
+
+  const sortAscending = /\b(lowest|bottom|least|smallest|worst)\b/.test(question.toLowerCase());
+  return [...rows].sort((left, right) => {
+    const leftValue = toFiniteNumber(left[metricColumn]) ?? (sortAscending ? Number.POSITIVE_INFINITY : Number.NEGATIVE_INFINITY);
+    const rightValue = toFiniteNumber(right[metricColumn]) ?? (sortAscending ? Number.POSITIVE_INFINITY : Number.NEGATIVE_INFINITY);
+    if (leftValue === rightValue) {
+      return JSON.stringify(left).localeCompare(JSON.stringify(right));
+    }
+    return sortAscending ? leftValue - rightValue : rightValue - leftValue;
+  });
+}
+
+function humanizeColumnName(column: string): string {
+  return column.replace(/_/g, " ").trim();
+}
+
+function formatMetricValueForQuestion(value: number, column: string): string {
+  if (/(rate|share|pct|percent|percentage)/i.test(column)) {
+    const normalized = Math.abs(value) <= 1 ? value * 100 : value;
+    return `${normalized.toLocaleString("en-US", { maximumFractionDigits: 2 })}%`;
+  }
+  if (/(count|orders|tickets|volume|qty|quantity|number|total)/i.test(column)) {
+    return value.toLocaleString("en-US", { maximumFractionDigits: 0 });
+  }
+  return formatInsightNumber(value);
+}
+
+function formatEvidenceValue(value: unknown, column: string): string {
+  const numeric = toFiniteNumber(value);
+  if (numeric !== null) {
+    return formatMetricValueForQuestion(numeric, column);
+  }
+  if (value instanceof Date) {
+    return value.toISOString();
+  }
+  const stringValue = String(value ?? "").trim();
+  return stringValue.length > 80 ? `${stringValue.slice(0, 77)}...` : stringValue;
 }
 
 function formatInsightNumber(value: number): string {

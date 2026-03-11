@@ -162,6 +162,173 @@ describe("api semantic and run flow", () => {
     await app.close();
   }, 90_000);
 
+  it("serves report clarification and business case follow-up routes for a completed run", async () => {
+    const store = new InMemoryMetadataStore();
+    const dataPlane = new LocalStubDataPlane({
+      row_provider: () =>
+        Array.from({ length: 240 }, (_, index) => ({
+          customer_id: `c_${(index % 8) + 1}`,
+          amount: (index % 25) + 1,
+          region: ["NA", "EU", "APAC"][index % 3],
+          order_id: `o_${index + 1}`,
+          event_time: new Date(Date.UTC(2025, index % 12, 1)).toISOString()
+        }))
+    });
+
+    const app = await buildApiApp({
+      store,
+      data_plane: dataPlane,
+      analyst_client: {
+        provider: "stub",
+        async analyzeBatch(input) {
+          return {
+            request_id: input.request_id,
+            batch_index: input.batch_index,
+            total_batches: input.total_batches,
+            highlights: ["Refund pressure is concentrated in a few regions."],
+            risks: ["Margin leakage can persist without intervention."],
+            recommendations: ["Tighten refund review rules"],
+            confidence_score: 0.88,
+            appendix_refs: [`${input.request_id}:batch-${input.batch_index + 1}`],
+            additional_query_requests: []
+          };
+        }
+      },
+      report_qa_client: {
+        provider: "stub",
+        async answerQuestion() {
+          return {
+            answer: "The generated report shows refund pressure concentrated in a few regions.",
+            citations: ["q_1"],
+            grounded: true,
+            requires_new_analysis: false
+          };
+        }
+      },
+      business_case_client: {
+        provider: "stub",
+        async buildCase(input) {
+          if (input.assumption_notes.length === 0) {
+            return {
+              status: "needs_clarification" as const,
+              clarification_prompt: "Please provide at least one implementation cost or staffing assumption.",
+              missing_inputs: ["Implementation cost", "Staffing assumption"],
+              additional_query_requests: []
+            };
+          }
+
+          return {
+            status: "complete" as const,
+            title: "Business case for tighter refund review rules",
+            executive_summary: "The recommendation is viable if rollout cost and staffing assumptions hold.",
+            recommendation: input.candidate.recommendation,
+            baseline: ["Refund pressure is concentrated in a few regions."],
+            assumptions: input.assumption_notes,
+            implementation_plan: ["Configure review rules", "Pilot in the highest-risk region"],
+            timeline_impact: [
+              { period_label: "Time period 1 after implementation", impact: "Controls tighten and leakage slows." },
+              { period_label: "Time period 2 after implementation", impact: "Savings accumulate as adoption stabilizes." }
+            ],
+            financial_view: ["Compare avoided refunds against implementation cost."],
+            operational_view: ["Review queue volume may rise during the pilot."],
+            risks: ["Strict rules may increase customer friction."],
+            kpis_to_track: ["Refund rate", "Review backlog"],
+            citations: [input.candidate.question_id],
+            additional_query_requests: []
+          };
+        }
+      },
+      query_strategist: createStubQueryStrategistClient(),
+      report_composer: createStubReportComposerClient(),
+      planner_client: createStubPlannerClient()
+    });
+
+    const contractCreate = await app.inject({
+      method: "POST",
+      url: "/report-contracts",
+      payload: {
+        id: "contract_followups",
+        name: "Follow-up route test",
+        audience: "CEO",
+        timezone: "UTC",
+        schedule_cron: null,
+        sql_template: "SELECT * FROM analytics.sales",
+        guardrails: {
+          evidence_row_cap: 200,
+          max_batches: 5,
+          allowed_relations: ["analytics.sales"],
+          allowed_schemas: ["analytics"],
+          timeout_ms: 10000,
+          deny_write: true
+        }
+      }
+    });
+    expect(contractCreate.statusCode).toBe(201);
+
+    const runContract = await app.inject({
+      method: "POST",
+      url: "/report-contracts/contract_followups/run"
+    });
+    expect(runContract.statusCode).toBe(202);
+    const { run_id } = runContract.json();
+
+    let runReady = false;
+    for (let i = 0; i < 40; i++) {
+      await new Promise((resolve) => setTimeout(resolve, 100));
+      const poll = await app.inject({ method: "GET", url: `/report-runs/${run_id}` });
+      if (poll.json().status === "succeeded") {
+        runReady = true;
+        break;
+      }
+    }
+    expect(runReady).toBe(true);
+
+    const reportQa = await app.inject({
+      method: "POST",
+      url: `/report-runs/${run_id}/report-qa`,
+      payload: {
+        question: "What does the report say about refunds?"
+      }
+    });
+    expect(reportQa.statusCode).toBe(200);
+    expect(reportQa.json().grounded).toBe(true);
+    expect(reportQa.json().answer).toContain("refund");
+
+    const candidates = await app.inject({
+      method: "GET",
+      url: `/report-runs/${run_id}/business-case/candidates`
+    });
+    expect(candidates.statusCode).toBe(200);
+    expect(Array.isArray(candidates.json().candidates)).toBe(true);
+    expect(candidates.json().candidates.length).toBeGreaterThan(0);
+
+    const clarification = await app.inject({
+      method: "POST",
+      url: `/report-runs/${run_id}/business-case`,
+      payload: {
+        candidate_id: candidates.json().candidates[0].candidate_id,
+        question: "Build the business case."
+      }
+    });
+    expect(clarification.statusCode).toBe(200);
+    expect(clarification.json().status).toBe("needs_clarification");
+
+    const completed = await app.inject({
+      method: "POST",
+      url: `/report-runs/${run_id}/business-case`,
+      payload: {
+        candidate_id: candidates.json().candidates[0].candidate_id,
+        question: "Build the business case.",
+        assumption_notes: ["Assume a $50k rollout cost and 2 analysts for the first quarter."]
+      }
+    });
+    expect(completed.statusCode).toBe(200);
+    expect(completed.json().status).toBe("complete");
+    expect(completed.json().timeline_impact).toHaveLength(2);
+
+    await app.close();
+  }, 90_000);
+
   it("falls back to HTML download when PDF rendering is unavailable", async () => {
     const previousChromePath = process.env.CHROME_PATH;
     process.env.CHROME_PATH = "Z:\\missing\\chrome.exe";

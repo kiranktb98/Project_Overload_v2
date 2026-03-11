@@ -6,3 +6,4 @@ export * from "./orchestration";
 export * from "./contracts";
 export * from "./core-contracts";
 export * from "./config";
+export * from "./followups";
