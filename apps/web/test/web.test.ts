@@ -7679,6 +7679,175 @@ describe("web chat interface", () => {
     await app.close();
   });
 
+  it("bypasses orchestrator and conversational rewrite on report clarification follow-up turns", async () => {
+    let orchestratorCalls = 0;
+    let respondCalls = 0;
+    const app = buildWebApp({
+      api_base_url: "http://api.local",
+      fetch_impl: async (input, init) => {
+        const url = typeof input === "string" ? input : input instanceof URL ? input.toString() : input.url;
+        const method = init?.method?.toUpperCase() ?? "GET";
+
+        if (url.endsWith("/ui/rag/search") && method === "POST") {
+          return new Response(JSON.stringify({ chunks: [] }), {
+            status: 200,
+            headers: { "content-type": "application/json" }
+          });
+        }
+
+        if (url.endsWith("/report-runs/run_followup/report-qa") && method === "POST") {
+          return new Response(JSON.stringify({
+            answer: "Clarification answer 1",
+            citations: ["q_1"],
+            grounded: true,
+            requires_new_analysis: false
+          }), {
+            status: 200,
+            headers: { "content-type": "application/json" }
+          });
+        }
+
+        return new Response(JSON.stringify({ message: `Unhandled request: ${method} ${url}` }), {
+          status: 404,
+          headers: { "content-type": "application/json" }
+        });
+      },
+      conversation_client: {
+        provider: "openrouter",
+        mode: "provider",
+        async respond() {
+          respondCalls += 1;
+          throw new Error("conversation rewrite should not run for report clarification follow-up turns");
+        },
+        async orchestrateTurn() {
+          orchestratorCalls += 1;
+          throw new Error("orchestrator should not run for report clarification follow-up turns");
+        }
+      }
+    });
+
+    const seededState = {
+      last_run_id: "run_followup",
+      post_run_actions_pending: true,
+      report_clarification_active: true
+    };
+
+    const response = await app.inject({
+      method: "POST",
+      url: "/api/chat",
+      payload: {
+        message: "What changed in city-level refunds?",
+        state: seededState
+      }
+    });
+
+    expect(response.statusCode).toBe(200);
+    expect(response.json().assistant_message).toContain("Clarification answer 1");
+    expect(response.json().state.report_clarification_active).toBe(true);
+    expect(orchestratorCalls).toBe(0);
+    expect(respondCalls).toBe(0);
+
+    await app.close();
+  });
+
+  it("bypasses orchestrator and conversational rewrite on business case clarification turns", async () => {
+    let orchestratorCalls = 0;
+    let respondCalls = 0;
+    const app = buildWebApp({
+      api_base_url: "http://api.local",
+      fetch_impl: async (input, init) => {
+        const url = typeof input === "string" ? input : input instanceof URL ? input.toString() : input.url;
+        const method = init?.method?.toUpperCase() ?? "GET";
+
+        if (url.endsWith("/ui/rag/search") && method === "POST") {
+          return new Response(JSON.stringify({ chunks: [] }), {
+            status: 200,
+            headers: { "content-type": "application/json" }
+          });
+        }
+
+        if (url.endsWith("/report-runs/run_followup/business-case") && method === "POST") {
+          return new Response(JSON.stringify({
+            status: "complete",
+            title: "Business case for tighter refund review rules",
+            executive_summary: "The recommendation is viable if rollout assumptions hold.",
+            recommendation: "Tighten refund review rules",
+            baseline: ["Refund concentration is materially above baseline."],
+            assumptions: ["Assume a $50k rollout cost and 2 analysts for the first quarter."],
+            implementation_plan: ["Configure review rules", "Pilot the new process"],
+            timeline_impact: [
+              { period_label: "Time period 1 after implementation", impact: "Leakage begins to slow." },
+              { period_label: "Time period 2 after implementation", impact: "Savings compound as adoption stabilizes." }
+            ],
+            financial_view: ["Compare avoided refunds against rollout cost."],
+            operational_view: ["Review workload rises temporarily during adoption."],
+            risks: ["Rules that are too strict may create customer friction."],
+            kpis_to_track: ["Refund rate", "Review backlog"],
+            citations: ["q_1"],
+            additional_query_requests: []
+          }), {
+            status: 200,
+            headers: { "content-type": "application/json" }
+          });
+        }
+
+        return new Response(JSON.stringify({ message: `Unhandled request: ${method} ${url}` }), {
+          status: 404,
+          headers: { "content-type": "application/json" }
+        });
+      },
+      conversation_client: {
+        provider: "openrouter",
+        mode: "provider",
+        async respond() {
+          respondCalls += 1;
+          throw new Error("conversation rewrite should not run for business case follow-up turns");
+        },
+        async orchestrateTurn() {
+          orchestratorCalls += 1;
+          throw new Error("orchestrator should not run for business case follow-up turns");
+        }
+      }
+    });
+
+    const seededState = {
+      last_run_id: "run_followup",
+      post_run_actions_pending: true,
+      business_case_active: true,
+      business_case_selected_candidate_id: "q_1_r1",
+      business_case_pending_clarification: "Please provide at least one implementation cost or staffing assumption.",
+      business_case_candidates: [
+        {
+          candidate_id: "q_1_r1",
+          question_id: "q_1",
+          question_number: 1,
+          question_text: "Refund trend",
+          recommendation_index: 1,
+          recommendation: "Tighten refund review rules",
+          highlights: ["Refunds are concentrated in a small set of cases."],
+          risks: ["Margin leakage continues without intervention."]
+        }
+      ]
+    };
+
+    const response = await app.inject({
+      method: "POST",
+      url: "/api/chat",
+      payload: {
+        message: "Assume a $50k rollout cost and 2 analysts for the first quarter.",
+        state: seededState
+      }
+    });
+
+    expect(response.statusCode).toBe(200);
+    expect(response.json().assistant_message).toContain("Business case for tighter refund review rules");
+    expect(response.json().state.business_case_active).toBe(true);
+    expect(orchestratorCalls).toBe(0);
+    expect(respondCalls).toBe(0);
+
+    await app.close();
+  });
+
   it("recovers stale analysis-decision state back to prep decision when scope is locked", async () => {
     const app = buildWebApp({
       api_base_url: "http://api.local",

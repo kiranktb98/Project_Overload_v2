@@ -1505,6 +1505,7 @@ async function runDataPreparationAgent(input: {
   const validation = buildPreparedDataValidation(
     preparedRows,
     firstPlanned.question,
+    firstPlanned.purpose,
     comparisonMonths,
     hintedDateColumns,
     requestedAnchorMonth
@@ -2271,6 +2272,35 @@ function applyComparisonPeriodLabels(
     return rows;
   }
 
+  const bucketRows = findComparisonBucketRows(rows);
+  if (bucketRows) {
+    const labelSet = buildComparisonLabelSet(
+      extractLatestMentionedMonthKey(question) ?? lastCompleteMonthKey(),
+      comparisonMonths
+    );
+    if (!labelSet) {
+      return rows;
+    }
+
+    return rows.map((row) => {
+      if (row === bucketRows.prior_row) {
+        return {
+          ...row,
+          [bucketRows.bucket_column]: labelSet.prior_label,
+          month_label: labelSet.prior_label
+        };
+      }
+      if (row === bucketRows.current_row) {
+        return {
+          ...row,
+          [bucketRows.bucket_column]: labelSet.current_label,
+          month_label: labelSet.current_label
+        };
+      }
+      return row;
+    });
+  }
+
   const window = resolveComparisonLabelWindow(rows, question, comparisonMonths, hintedDateColumns);
   if (!window) {
     return rows;
@@ -2343,6 +2373,7 @@ function isComparisonAggregateRowset(
     const marker = row._sub_query;
     return typeof marker === "string" && /\b(period|comparison|vs|versus|prior|current)\b/i.test(marker);
   });
+  const comparisonBucketRows = findComparisonBucketRows(rows);
 
   const hasMonthSpanValues = rows.some((row) =>
     Object.values(row).some((value) => {
@@ -2368,6 +2399,10 @@ function isComparisonAggregateRowset(
     return true;
   }
 
+  if (comparisonBucketRows) {
+    return true;
+  }
+
   if (hasLabelColumns && hasMonthSpanValues && !hasStrongTemporalCoverage) {
     return true;
   }
@@ -2377,6 +2412,109 @@ function isComparisonAggregateRowset(
   }
 
   return false;
+}
+
+function normalizeComparisonBucketLabel(value: unknown): string {
+  return String(value ?? "")
+    .trim()
+    .toLowerCase()
+    .replace(/[_-]+/g, " ")
+    .replace(/\s+/g, " ");
+}
+
+function isPriorComparisonBucket(value: unknown): boolean {
+  const normalized = normalizeComparisonBucketLabel(value);
+  if (normalized.length === 0) {
+    return false;
+  }
+  return /\b(prior|previous|baseline)\b/.test(normalized);
+}
+
+function isCurrentComparisonBucket(value: unknown): boolean {
+  const normalized = normalizeComparisonBucketLabel(value);
+  if (normalized.length === 0) {
+    return false;
+  }
+  return /\b(recent|current|latest)\b/.test(normalized);
+}
+
+function findComparisonBucketRows(
+  rows: Record<string, unknown>[]
+): { bucket_column: string; prior_row: Record<string, unknown>; current_row: Record<string, unknown> } | null {
+  if (rows.length < 2) {
+    return null;
+  }
+
+  const sample = rows[0] ?? {};
+  const candidateColumns = Object.keys(sample).filter((column) =>
+    rows.some((row) => typeof row[column] === "string" && String(row[column]).trim().length > 0)
+  );
+
+  candidateColumns.sort((left, right) => {
+    const leftScore = /(period|window|bucket|label|comparison)/i.test(left) ? 1 : 0;
+    const rightScore = /(period|window|bucket|label|comparison)/i.test(right) ? 1 : 0;
+    return rightScore - leftScore;
+  });
+
+  for (const column of candidateColumns) {
+    let priorRow: Record<string, unknown> | null = null;
+    let currentRow: Record<string, unknown> | null = null;
+    for (const row of rows) {
+      const value = row[column];
+      if (priorRow === null && isPriorComparisonBucket(value)) {
+        priorRow = row;
+      }
+      if (currentRow === null && isCurrentComparisonBucket(value)) {
+        currentRow = row;
+      }
+      if (priorRow && currentRow) {
+        return {
+          bucket_column: column,
+          prior_row: priorRow,
+          current_row: currentRow
+        };
+      }
+    }
+  }
+
+  return null;
+}
+
+function findComparisonLabeledRows(
+  rows: Record<string, unknown>[],
+  question: string
+): { label_column: string; prior_row: Record<string, unknown>; current_row: Record<string, unknown> } | null {
+  const comparisonMonths = extractExplicitMonthComparison(question);
+  if (!comparisonMonths) {
+    return null;
+  }
+
+  const labelSet = buildComparisonLabelSet(
+    extractLatestMentionedMonthKey(question) ?? lastCompleteMonthKey(),
+    comparisonMonths
+  );
+  if (!labelSet) {
+    return null;
+  }
+
+  const sample = rows[0] ?? {};
+  const candidateColumns = Object.keys(sample).filter((column) =>
+    rows.some((row) => typeof row[column] === "string" && String(row[column]).trim().length > 0)
+  );
+
+  for (const column of candidateColumns) {
+    const priorRow = rows.find((row) => String(row[column] ?? "").trim() === labelSet.prior_label);
+    const currentRow = rows.find((row) => String(row[column] ?? "").trim() === labelSet.current_label);
+    if (priorRow && currentRow) {
+      return {
+        label_column: column,
+        prior_row: priorRow,
+        current_row: currentRow
+      };
+    }
+  }
+
+  return null;
 }
 
 function resolveComparisonLabelWindow(
@@ -2399,9 +2537,36 @@ function resolveComparisonLabelWindow(
   }
 
   const fallbackAnchor =
-    coverage.month_keys.length > 0 ? coverage.month_keys[coverage.month_keys.length - 1] : currentMonthKey();
+    coverage.month_keys.length > 0 ? coverage.month_keys[coverage.month_keys.length - 1] : lastCompleteMonthKey();
   const anchor = extractLatestMentionedMonthKey(question) ?? fallbackAnchor;
-  const expected = buildExpectedMonthKeys(anchor, comparisonMonths * 2);
+  const labelSet = buildComparisonLabelSet(anchor, comparisonMonths);
+  if (!labelSet) {
+    return null;
+  }
+
+  return {
+    month_column: coverage.date_column,
+    prior_months: labelSet.prior_months,
+    current_months: labelSet.current_months,
+    prior_start: labelSet.prior_start,
+    current_start: labelSet.current_start,
+    prior_label: labelSet.prior_label,
+    current_label: labelSet.current_label
+  };
+}
+
+function buildComparisonLabelSet(
+  anchorMonth: string,
+  comparisonMonths: number
+): {
+  prior_months: string[];
+  current_months: string[];
+  prior_start: string;
+  current_start: string;
+  prior_label: string;
+  current_label: string;
+} | null {
+  const expected = buildExpectedMonthKeys(anchorMonth, comparisonMonths * 2);
   if (expected.length < comparisonMonths * 2) {
     return null;
   }
@@ -2412,17 +2577,13 @@ function resolveComparisonLabelWindow(
     return null;
   }
 
-  const priorLabel = formatMonthSpanLabel(priorMonths[0], priorMonths[priorMonths.length - 1]);
-  const currentLabel = formatMonthSpanLabel(currentMonths[0], currentMonths[currentMonths.length - 1]);
-
   return {
-    month_column: coverage.date_column,
     prior_months: priorMonths,
     current_months: currentMonths,
     prior_start: priorMonths[0],
     current_start: currentMonths[0],
-    prior_label: priorLabel,
-    current_label: currentLabel
+    prior_label: formatMonthSpanLabel(priorMonths[0], priorMonths[priorMonths.length - 1]),
+    current_label: formatMonthSpanLabel(currentMonths[0], currentMonths[currentMonths.length - 1])
   };
 }
 
@@ -2448,19 +2609,42 @@ function formatMonthSpanLabel(startMonthKey: string, endMonthKey: string): strin
 
 function extractExplicitMonthComparison(question: string): number | null {
   const normalized = question.toLowerCase();
-  const exact = normalized.match(/\blast\s+(\d+)\s+months?\s+vs(?:\.|)\s+(?:the\s+)?(?:previous|prior)\s+(\d+)\s+months?\b/);
+  const wordToNumber = (token: string): number | null => {
+    const direct = Number.parseInt(token, 10);
+    if (!Number.isNaN(direct) && direct > 0) {
+      return direct;
+    }
+
+    const mapping: Record<string, number> = {
+      one: 1,
+      two: 2,
+      three: 3,
+      four: 4,
+      five: 5,
+      six: 6,
+      seven: 7,
+      eight: 8,
+      nine: 9,
+      ten: 10,
+      eleven: 11,
+      twelve: 12
+    };
+    return mapping[token] ?? null;
+  };
+
+  const exact = normalized.match(/\blast\s+(\d+|one|two|three|four|five|six|seven|eight|nine|ten|eleven|twelve)\s+months?\s+vs(?:\.|)\s+(?:the\s+)?(?:previous|prior)\s+(\d+|one|two|three|four|five|six|seven|eight|nine|ten|eleven|twelve)\s+months?\b/);
   if (exact) {
-    const left = Number.parseInt(exact[1], 10);
-    const right = Number.parseInt(exact[2], 10);
-    if (!Number.isNaN(left) && left > 0 && left === right) {
+    const left = wordToNumber(exact[1]);
+    const right = wordToNumber(exact[2]);
+    if (left !== null && right !== null && left > 0 && left === right) {
       return left;
     }
   }
 
-  const generic = normalized.match(/\b(\d+)\s+months?\b/);
+  const generic = normalized.match(/\b(\d+|one|two|three|four|five|six|seven|eight|nine|ten|eleven|twelve)\s+months?\b/);
   if (generic && /\b(previous|prior|vs)\b/.test(normalized)) {
-    const months = Number.parseInt(generic[1], 10);
-    if (!Number.isNaN(months) && months > 0) {
+    const months = wordToNumber(generic[1]);
+    if (months !== null && months > 0) {
       return months;
     }
   }
@@ -2840,15 +3024,28 @@ function resolveMonthCoverageWindow(
 function buildPreparedDataValidation(
   rows: Record<string, unknown>[],
   question: string,
+  purpose: string = "",
   comparisonMonths: number | null,
   hintedDateColumns: string[] = [],
   requestedAnchorMonth: string | null = null
 ): NonNullable<PreparedQuestionPayload["validation"]> {
+  const isAggregateComparison =
+    comparisonMonths !== null && isComparisonAggregateRowset(rows, question, purpose);
+  if (isAggregateComparison && comparisonMonths !== null) {
+    return {
+      expected_months: comparisonMonths * 2,
+      observed_months: comparisonMonths * 2,
+      missing_months: [],
+      monthly_row_counts: [],
+      metric_column: pickValidationMetricColumn(rows, question),
+      monthly_metric_totals: []
+    };
+  }
+
   const coverage = detectMonthCoverage(rows, hintedDateColumns);
   const observedMonths = coverage.month_keys.filter((monthKey) => isMonthKey(monthKey));
   const observedSet = new Set(observedMonths);
-  const skipStrictTimelineCoverage =
-    comparisonMonths !== null && isComparisonAggregateRowset(rows, question);
+  const skipStrictTimelineCoverage = comparisonMonths !== null && isAggregateComparison;
   const expectedMonths =
     comparisonMonths && !skipStrictTimelineCoverage ? comparisonMonths * 2 : null;
   const expectedAnchor =
@@ -2856,7 +3053,7 @@ function buildPreparedDataValidation(
       ? requestedAnchorMonth
       : observedMonths.length > 0
         ? observedMonths[observedMonths.length - 1]
-        : currentMonthKey();
+        : lastCompleteMonthKey();
   const expectedMonthKeys =
     expectedMonths !== null
       ? buildExpectedMonthKeys(expectedAnchor, expectedMonths).filter((monthKey) => isMonthKey(monthKey))
@@ -3402,9 +3599,14 @@ function parseMonthKey(monthKey: string): { year: number; month: number } | null
   return { year, month };
 }
 
-function currentMonthKey(): string {
-  const now = new Date();
-  return `${now.getUTCFullYear()}-${String(now.getUTCMonth() + 1).padStart(2, "0")}`;
+function lastCompleteMonthKey(referenceDate: Date = new Date()): string {
+  let year = referenceDate.getUTCFullYear();
+  let month = referenceDate.getUTCMonth();
+  if (month === 0) {
+    year -= 1;
+    month = 12;
+  }
+  return `${year}-${String(month).padStart(2, "0")}`;
 }
 
 async function executeQueryWithPolicy(input: {
@@ -4179,6 +4381,10 @@ function buildPayloadDataSummary(payload: PreparedQuestionPayload): string {
     `${payload.prepared_row_count} prepared rows analyzed.`,
     payload.purpose
   ];
+  const comparisonLabels = extractComparisonDisplayLabels(payload);
+  if (comparisonLabels) {
+    lines.push(`Comparison windows: ${comparisonLabels.current_label} vs ${comparisonLabels.prior_label}.`);
+  }
 
   const directAnswerInsights = buildQuestionAlignedInsights(payload);
   if (directAnswerInsights.length > 0) {
@@ -4402,6 +4608,11 @@ function buildQuestionAnswerFocus(payload: PreparedQuestionPayload): string {
     payload.validation?.metric_column ?? null
   );
   const primaryDimension = pickPreferredDimensionColumn(dimensionColumns, payload.question);
+  const comparisonLabels = extractComparisonDisplayLabels(payload);
+
+  if (comparisonLabels && primaryMetric) {
+    return `Lead with ${humanizeColumnName(primaryMetric)} for ${comparisonLabels.current_label} versus ${comparisonLabels.prior_label}, because that is the exact comparison window requested by the scoped question. Use supporting metrics only as supporting context.`;
+  }
 
   if (primaryMetric && primaryDimension) {
     return `Lead with ${humanizeColumnName(primaryMetric)} by ${humanizeColumnName(primaryDimension)} because that is the exact metric and breakdown requested by the scoped question. Use other columns only as supporting context, not as a replacement metric.`;
@@ -4446,6 +4657,10 @@ function buildComposerEvidenceSnapshot(payload: PreparedQuestionPayload): string
     `Primary breakdown: ${primaryDimension ?? "none"}`,
     `Available columns: ${orderedColumns.join(", ")}`
   ];
+  const comparisonLabels = extractComparisonDisplayLabels(payload);
+  if (comparisonLabels) {
+    lines.push(`Comparison windows: ${comparisonLabels.current_label} vs ${comparisonLabels.prior_label}`);
+  }
 
   if (supportingMetrics.length > 0) {
     lines.push(`Supporting metrics: ${supportingMetrics.join(", ")}`);
@@ -4492,6 +4707,10 @@ function buildQuestionAlignedInsights(payload: PreparedQuestionPayload): string[
   const lowerQuestion = payload.question.toLowerCase();
   const primaryDimension = pickPreferredDimensionColumn(dimensionColumns, payload.question);
   const insights: string[] = [];
+  const comparisonInsights = buildComparisonAggregateInsights(rows, payload.question, payload.purpose);
+  if (comparisonInsights.length > 0) {
+    insights.push(...comparisonInsights);
+  }
 
   if (
     primaryDimension &&
@@ -4526,6 +4745,214 @@ function buildQuestionAlignedInsights(payload: PreparedQuestionPayload): string[
   }
 
   return normalizeAnalysisLines(insights, 2);
+}
+
+function extractComparisonDisplayLabels(
+  payload: PreparedQuestionPayload
+): { prior_label: string; current_label: string } | null {
+  const rows = payload.prepared_rows.slice(0, 50);
+  const comparisonMonths = extractExplicitMonthComparison(payload.question);
+  if (comparisonMonths) {
+    const labelSet = buildComparisonLabelSet(
+      extractLatestMentionedMonthKey(payload.question) ?? lastCompleteMonthKey(),
+      comparisonMonths
+    );
+    if (labelSet) {
+      return {
+        prior_label: labelSet.prior_label,
+        current_label: labelSet.current_label
+      };
+    }
+  }
+
+  if (!isComparisonAggregateRowset(rows, payload.question, payload.purpose)) {
+    return null;
+  }
+
+  const bucketRows = findComparisonBucketRows(rows);
+  if (bucketRows) {
+    const priorLabel = String(bucketRows.prior_row.month_label ?? bucketRows.prior_row[bucketRows.bucket_column] ?? "").trim();
+    const currentLabel = String(bucketRows.current_row.month_label ?? bucketRows.current_row[bucketRows.bucket_column] ?? "").trim();
+    if (priorLabel.length > 0 && currentLabel.length > 0) {
+      return {
+        prior_label: priorLabel,
+        current_label: currentLabel
+      };
+    }
+  }
+
+  const sample = rows[0] ?? {};
+  const priorLabel = String(sample.prior_period ?? "").trim();
+  const currentLabel = String(sample.current_period ?? sample.month_label ?? "").trim();
+  if (priorLabel.length > 0 && currentLabel.length > 0) {
+    return {
+      prior_label: priorLabel,
+      current_label: currentLabel
+    };
+  }
+
+  return null;
+}
+
+function buildComparisonAggregateInsights(
+  rows: Record<string, unknown>[],
+  question: string,
+  purpose: string
+): string[] {
+  if (!isComparisonAggregateRowset(rows, question, purpose)) {
+    return [];
+  }
+
+  const row = rows[0] ?? {};
+  const keys = Object.keys(row).filter((column) => !column.startsWith("_"));
+  const recentPairs = new Map<string, { current: string; prior: string }>();
+
+  for (const key of keys) {
+    const currentMatch = key.match(/^(recent|current)_(.+)$/i);
+    if (currentMatch) {
+      const suffix = currentMatch[2];
+      const priorKey = keys.find((candidate) => candidate.toLowerCase() === `prior_${suffix.toLowerCase()}`);
+      if (priorKey) {
+        recentPairs.set(suffix.toLowerCase(), { current: key, prior: priorKey });
+      }
+    }
+  }
+
+  if (recentPairs.size === 0) {
+    const bucketRows = findComparisonBucketRows(rows);
+    const labeledRows = bucketRows ? null : findComparisonLabeledRows(rows, question);
+    const comparableRows = bucketRows ?? labeledRows;
+    const labelColumn = bucketRows ? bucketRows.bucket_column : labeledRows?.label_column;
+    if (!comparableRows || !labelColumn) {
+      return [];
+    }
+
+    const sharedNumericColumns = Object.keys(comparableRows.current_row).filter((column) => {
+      if (column.startsWith("_") || column === labelColumn) {
+        return false;
+      }
+      return (
+        toFiniteNumber(comparableRows.current_row[column]) !== null &&
+        toFiniteNumber(comparableRows.prior_row[column]) !== null
+      );
+    });
+
+    if (sharedNumericColumns.length === 0) {
+      return [];
+    }
+
+    const lowerQuestion = question.toLowerCase();
+    const preferredColumns = [...sharedNumericColumns].sort((left, right) => {
+      return scoreComparisonSuffix(right, lowerQuestion) - scoreComparisonSuffix(left, lowerQuestion);
+    });
+
+    const insights: string[] = [];
+    for (const column of preferredColumns.slice(0, 2)) {
+      const priorValue = toFiniteNumber(comparableRows.prior_row[column]);
+      const currentValue = toFiniteNumber(comparableRows.current_row[column]);
+      if (priorValue === null || currentValue === null) {
+        continue;
+      }
+
+      const absDelta = Number((currentValue - priorValue).toFixed(2));
+      const pctDelta =
+        Math.abs(priorValue) > 0.000001
+          ? Number((((currentValue - priorValue) / priorValue) * 100).toFixed(2))
+          : null;
+      const metricLabel = humanizeColumnName(column);
+      const base = `Recent ${metricLabel} was ${formatMetricValueForQuestion(currentValue, column)} versus ${formatMetricValueForQuestion(priorValue, column)} in the prior period`;
+
+      if (pctDelta !== null) {
+        insights.push(
+          `${base}, a change of ${formatComparisonDeltaValue(absDelta, column, currentValue, priorValue)} (${pctDelta.toLocaleString("en-US", { maximumFractionDigits: 2 })}%).`
+        );
+      } else {
+        insights.push(
+          `${base}, a change of ${formatComparisonDeltaValue(absDelta, column, currentValue, priorValue)}.`
+        );
+      }
+    }
+
+    return insights;
+  }
+
+  const lowerQuestion = question.toLowerCase();
+  const preferredSuffixes = Array.from(recentPairs.keys()).sort((left, right) => {
+    return scoreComparisonSuffix(right, lowerQuestion) - scoreComparisonSuffix(left, lowerQuestion);
+  });
+
+  const insights: string[] = [];
+  for (const suffix of preferredSuffixes.slice(0, 2)) {
+    const pair = recentPairs.get(suffix);
+    if (!pair) {
+      continue;
+    }
+    const priorValue = toFiniteNumber(row[pair.prior]);
+    const currentValue = toFiniteNumber(row[pair.current]);
+    if (priorValue === null || currentValue === null) {
+      continue;
+    }
+
+    const absDeltaKey = keys.find((candidate) => candidate.toLowerCase() === `${suffix}_abs_delta`);
+    const pctDeltaKey = keys.find((candidate) => candidate.toLowerCase() === `${suffix}_pct_delta`);
+    const absDelta = absDeltaKey ? toFiniteNumber(row[absDeltaKey]) : null;
+    const pctDelta = pctDeltaKey ? toFiniteNumber(row[pctDeltaKey]) : null;
+    const metricLabel = humanizeColumnName(suffix);
+    const base = `Recent ${metricLabel} was ${formatMetricValueForQuestion(currentValue, suffix)} versus ${formatMetricValueForQuestion(priorValue, suffix)} in the prior period`;
+
+    if (absDelta !== null && pctDelta !== null) {
+      insights.push(
+        `${base}, a change of ${formatComparisonDeltaValue(absDelta, suffix, currentValue, priorValue)} (${pctDelta.toLocaleString("en-US", { maximumFractionDigits: 2 })}%).`
+      );
+      continue;
+    }
+    if (absDelta !== null) {
+      insights.push(
+        `${base}, a change of ${formatComparisonDeltaValue(absDelta, suffix, currentValue, priorValue)}.`
+      );
+      continue;
+    }
+
+    insights.push(`${base}.`);
+  }
+
+  return insights;
+}
+
+function scoreComparisonSuffix(suffix: string, lowerQuestion: string): number {
+  const normalized = suffix.toLowerCase();
+  let score = 0;
+  if (lowerQuestion.includes(normalized)) {
+    score += 10;
+  }
+  if (/refund[_ ]rate/.test(normalized)) {
+    score += /\brate\b/.test(lowerQuestion) ? 8 : 3;
+  }
+  if (/refunded?_revenue|refund_amount|refund_value/.test(normalized)) {
+    score += /\brevenue|value|amount\b/.test(lowerQuestion) ? 8 : 4;
+  }
+  if (/refunded?_orders|refund_count|refunds|count/.test(normalized)) {
+    score += /\bcount|orders|refunds?\b/.test(lowerQuestion) ? 8 : 4;
+  }
+  if (/total_orders/.test(normalized)) {
+    score += 2;
+  }
+  return score;
+}
+
+function formatComparisonDeltaValue(
+  value: number,
+  suffix: string,
+  currentValue: number,
+  priorValue: number
+): string {
+  if (/(rate|share|pct|percent|percentage)/i.test(suffix)) {
+    const treatAsPercentagePoints = Math.abs(currentValue) > 1 || Math.abs(priorValue) > 1;
+    const normalized = treatAsPercentagePoints ? value : value * 100;
+    return `${normalized.toLocaleString("en-US", { maximumFractionDigits: 2 })}%`;
+  }
+
+  return formatMetricValueForQuestion(value, `${suffix}_delta`);
 }
 
 function aggregateMetricByDimension(
@@ -5184,6 +5611,7 @@ async function runAnalystWithOptionalAdditionalQueries(input: {
     const validation = buildPreparedDataValidation(
       mergedRows,
       workingPayload.question,
+      workingPayload.purpose,
       comparisonMonths,
       [],
       requestedAnchorMonth
@@ -5292,6 +5720,15 @@ function buildAnalystDataContext(
   parts.push(`Question number: Q${payload.question_number}`);
   parts.push(`Scoped question: ${payload.question}`);
   parts.push(`Question purpose: ${payload.purpose}`);
+  const comparisonLabels = extractComparisonDisplayLabels(payload);
+  if (comparisonLabels) {
+    parts.push(
+      `Canonical comparison windows: recent period = ${comparisonLabels.current_label}; prior period = ${comparisonLabels.prior_label}.`
+    );
+    parts.push(
+      `If the prepared evidence uses shorthand labels such as recent_2m/current/prior_2m, interpret them using those canonical month windows.`
+    );
+  }
   if (payload.preparation_sqls.length > 0) {
     parts.push(`Preparation query count: ${payload.preparation_sqls.length}`);
   }

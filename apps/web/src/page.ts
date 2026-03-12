@@ -1348,12 +1348,120 @@ export function renderChatPage(): string {
           return truncate(cleaned, 64);
         }
 
+        function parseTimestampMs(value) {
+          const raw = String(value || "").trim();
+          if (!raw) {
+            return NaN;
+          }
+          const direct = Date.parse(raw);
+          if (Number.isFinite(direct)) {
+            return direct;
+          }
+
+          const normalized = raw
+            .replace(" ", "T")
+            .replace(/([+-]\\d{2})$/, "$1:00")
+            .replace(/Z\\+00:00$/, "Z");
+          const fallback = Date.parse(normalized);
+          return Number.isFinite(fallback) ? fallback : NaN;
+        }
+
+        function normalizeTimestamp(value, fallbackIso) {
+          const ts = parseTimestampMs(value);
+          if (Number.isFinite(ts)) {
+            return new Date(ts).toISOString();
+          }
+          return fallbackIso;
+        }
+
+        function latestMessageTimestamp(messages) {
+          if (!Array.isArray(messages) || messages.length === 0) {
+            return null;
+          }
+          let latestTs = NaN;
+          for (const entry of messages) {
+            const ts = parseTimestampMs(entry && entry.at);
+            if (Number.isFinite(ts) && (!Number.isFinite(latestTs) || ts > latestTs)) {
+              latestTs = ts;
+            }
+          }
+          return Number.isFinite(latestTs) ? new Date(latestTs).toISOString() : null;
+        }
+
+        function resolveChatUpdatedAt(rawUpdatedAt, messages, createdAt) {
+          const messageTimestamp = latestMessageTimestamp(messages);
+          if (messageTimestamp) {
+            return messageTimestamp;
+          }
+          return normalizeTimestamp(rawUpdatedAt, normalizeTimestamp(createdAt, nowIso()));
+        }
+
+        function getChatDisplayTimestamp(chat) {
+          if (!chat || typeof chat !== "object") {
+            return nowIso();
+          }
+          return (
+            latestMessageTimestamp(chat.messages) ||
+            normalizeTimestamp(chat.updated_at, normalizeTimestamp(chat.created_at, nowIso()))
+          );
+        }
+
+        function getChatFreshnessMs(chat) {
+          return parseTimestampMs(getChatDisplayTimestamp(chat));
+        }
+
+        function chooseFresherSession(left, right) {
+          if (!left) {
+            return right || null;
+          }
+          if (!right) {
+            return left;
+          }
+
+          const leftTs = getChatFreshnessMs(left);
+          const rightTs = getChatFreshnessMs(right);
+          if (Number.isFinite(leftTs) && Number.isFinite(rightTs)) {
+            return leftTs >= rightTs ? left : right;
+          }
+          if (Number.isFinite(leftTs)) {
+            return left;
+          }
+          if (Number.isFinite(rightTs)) {
+            return right;
+          }
+          return left;
+        }
+
+        function replaceSession(session) {
+          if (!session || typeof session.id !== "string") {
+            return;
+          }
+          const index = chatsRef.value.findIndex((entry) => entry.id === session.id);
+          if (index === -1) {
+            chatsRef.value.push(session);
+            return;
+          }
+          chatsRef.value[index] = chooseFresherSession(session, chatsRef.value[index]);
+        }
+
+        function replaceSessionAuthoritative(session) {
+          if (!session || typeof session.id !== "string") {
+            return;
+          }
+          const index = chatsRef.value.findIndex((entry) => entry.id === session.id);
+          if (index === -1) {
+            chatsRef.value.push(session);
+            return;
+          }
+          chatsRef.value[index] = session;
+        }
+
         function formatRelativeTime(iso) {
-          const ts = Date.parse(String(iso || ""));
+          const ts = parseTimestampMs(iso);
           if (!Number.isFinite(ts)) {
             return "just now";
           }
-          const diffMs = Date.now() - ts;
+          const diffMs = Math.max(0, Date.now() - ts);
           if (diffMs < 60_000) {
             return "just now";
           }
@@ -1405,7 +1513,7 @@ export function renderChatPage(): string {
             download_url: typeof raw.download_url === "string" ? raw.download_url : null,
             exec_brief_html: typeof raw.exec_brief_html === "string" ? raw.exec_brief_html : null,
             prepared_payloads: Array.isArray(raw.prepared_payloads) ? raw.prepared_payloads : null,
-            at: typeof raw.at === "string" ? raw.at : nowIso()
+            at: normalizeTimestamp(raw.at, nowIso())
           };
         }
 
@@ -1449,8 +1557,8 @@ export function renderChatPage(): string {
             title: sanitizeTitle(raw.title),
             title_auto: raw.title_auto !== false,
             naming_in_progress: false,
-            created_at: typeof raw.created_at === "string" ? raw.created_at : nowIso(),
-            updated_at: typeof raw.updated_at === "string" ? raw.updated_at : nowIso(),
+            created_at: normalizeTimestamp(raw.created_at, nowIso()),
+            updated_at: resolveChatUpdatedAt(raw.updated_at, messages, raw.created_at),
             state: rawState,
             user_messages: userMessages,
             db_bootstrapped: typeof raw.db_bootstrapped === "boolean" ? raw.db_bootstrapped : true,
@@ -1527,6 +1635,7 @@ export function renderChatPage(): string {
 
           try {
             const sessions = chatsRef.value.slice(0, MAX_STORED_CHATS);
+            let appliedRemoteState = false;
             for (const session of sessions) {
               const response = await fetch("/api/chat/sessions/" + encodeURIComponent(session.id), {
                 method: "PUT",
@@ -1535,6 +1644,20 @@ export function renderChatPage(): string {
               });
               if (!response.ok) {
                 break;
+              }
+              let payload;
+              try { payload = JSON.parse(await response.text()); } catch { payload = null; }
+              const normalized = payload && payload.session ? normalizeStoredChat(payload.session) : null;
+              if (normalized) {
+                replaceSessionAuthoritative(normalized);
+                appliedRemoteState = true;
+              }
+            }
+            if (appliedRemoteState) {
+              saveChatsToStorage(true);
+              renderHistoryList();
+              if (activeChatIdRef.value) {
+                renderSessionTitle();
               }
             }
           } catch {
@@ -1595,7 +1718,7 @@ export function renderChatPage(): string {
             return;
           }
 
-          const sorted = [...chatsRef.value].sort((a, b) => Date.parse(b.updated_at) - Date.parse(a.updated_at));
+          const sorted = [...chatsRef.value].sort((a, b) => getChatFreshnessMs(b) - getChatFreshnessMs(a));
           for (const chat of sorted) {
             const button = document.createElement("button");
             button.type = "button";
@@ -1616,7 +1739,7 @@ export function renderChatPage(): string {
             titleWrap.appendChild(heading);
 
             const time = document.createElement("time");
-            time.textContent = chat.naming_in_progress ? "naming..." : formatRelativeTime(chat.updated_at);
+            time.textContent = chat.naming_in_progress ? "naming..." : formatRelativeTime(getChatDisplayTimestamp(chat));
             titleWrap.appendChild(time);
 
             const snippet = document.createElement("p");
@@ -3314,13 +3437,11 @@ export function renderChatPage(): string {
             mergedById.set(session.id, session);
           }
           for (const session of local) {
-            if (!mergedById.has(session.id)) {
-              mergedById.set(session.id, session);
-            }
+            mergedById.set(session.id, chooseFresherSession(session, mergedById.get(session.id)));
           }
 
           const merged = Array.from(mergedById.values())
-            .sort((a, b) => Date.parse(b.updated_at) - Date.parse(a.updated_at))
+            .sort((a, b) => getChatFreshnessMs(b) - getChatFreshnessMs(a))
             .slice(0, MAX_STORED_CHATS);
 
           chatsRef.value = merged;

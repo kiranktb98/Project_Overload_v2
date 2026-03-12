@@ -2560,7 +2560,7 @@ export async function handleChatTurn(input: {
         assistant_message:
           candidates.length > 0
             ? formatBusinessCaseCandidateList(candidates)
-            : "No recommendation candidates were generated in this run, so there is nothing to turn into a business case yet.",
+            : "This run does not contain any action recommendation that needs a business case or simulation run yet.",
         state: nextState
       };
     }

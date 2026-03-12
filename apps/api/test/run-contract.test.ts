@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import { LocalStubDataPlane } from "@project-overload/dataplane";
 import type { DataPlane } from "@project-overload/dataplane";
 import {
@@ -787,10 +787,382 @@ describe("run pipeline", () => {
 
     expect(result.prepared_payloads).toHaveLength(1);
     expect(result.prepared_payloads[0].prepared_row_count).toBeGreaterThan(0);
-    expect(result.prepared_payloads[0].validation?.expected_months).toBeNull();
+    expect(result.prepared_payloads[0].validation?.expected_months).toBe(4);
+    expect(result.prepared_payloads[0].validation?.observed_months).toBe(4);
+    expect(result.prepared_payloads[0].validation?.missing_months).toHaveLength(0);
+    expect(result.prepared_payloads[0].validation?.monthly_metric_totals).toHaveLength(0);
+    expect(analyst.calls.length).toBeGreaterThan(0);
+    expect(result.exec_brief.what_changed.join(" ")).not.toMatch(/coverage warning/i);
+  });
+
+  it("passes clean aggregate comparison evidence to the html composer", async () => {
+    const strategist = fixedStrategist([
+      {
+        question: "How do refunds in the most recent 2 months compare to the prior 2 months?",
+        sql: "SELECT month_label, prior_refund_rate, prior_refunded_revenue, prior_total_orders, recent_refund_rate, refunded_rev_delta, recent_refunded_revenue, recent_total_orders, refund_rate_abs_delta, refund_rate_pct_delta FROM public.sales",
+        purpose: "Period-over-period comparison"
+      }
+    ]);
+
+    let capturedAnalysis: CapturedReportAnalysis | null = null;
+    const capturingComposer: ReportComposerClient = {
+      provider: "stub",
+      async composeReport(input) {
+        const first = input.analyses[0];
+        capturedAnalysis = first
+          ? {
+              data_summary: first.data_summary,
+              highlights: [...first.highlights],
+              answer_focus: first.answer_focus,
+              evidence_snapshot: first.evidence_snapshot
+            }
+          : null;
+        return "<html><body><p>ok</p></body></html>";
+      },
+      drainUsageEvents() {
+        return [];
+      }
+    };
+
+    const rows = [
+      {
+        month_label: "Jan-Feb 2001",
+        prior_refund_rate: 21.75,
+        prior_refunded_revenue: 241844.28,
+        prior_total_orders: 446,
+        recent_refund_rate: 20.93,
+        refunded_rev_delta: -4986.48,
+        recent_refunded_revenue: 236857.8,
+        recent_total_orders: 454,
+        refund_rate_abs_delta: -0.82,
+        refund_rate_pct_delta: -3.77
+      }
+    ];
+
+    const result = await runReportContractPipeline({
+      contract: makeContract(),
+      store: new InMemoryMetadataStore(),
+      data_plane: new LocalStubDataPlane({ row_provider: () => rows }),
+      analyst_client: createStubAnalystClient(),
+      query_strategist: strategist,
+      report_composer: capturingComposer,
+      planner_client: createStubPlannerClient(),
+      catalog_summary: "public.sales"
+    });
+
+    expect(result.run.status).toBe("succeeded");
+    expect(capturedAnalysis).not.toBeNull();
+    const analysis = capturedAnalysis!;
+    expect(analysis.data_summary).toContain("Timeline coverage: 4/4 month(s).");
+    expect(analysis.data_summary).not.toContain("2001-02");
+    expect(analysis.data_summary).not.toMatch(/Missing months/i);
+    expect(analysis.data_summary).toContain("Direct answer cue:");
+    expect(analysis.highlights.join(" ")).toContain("Recent refund rate");
+    expect(analysis.highlights.join(" ")).toContain("20.93%");
+    expect(analysis.highlights.join(" ")).toContain("21.75%");
+  });
+
+  it("does not treat period-bucket comparison rows as timeline coverage gaps", async () => {
+    const analyst = spyAnalyst();
+    const strategist = fixedStrategist([
+      {
+        question: "How do refunds in the most recent 2 months compare with the prior 2 months?",
+        sql: "SELECT period, refund_rate, total_orders, total_revenue FROM public.sales",
+        purpose: "Period-over-period comparison"
+      }
+    ]);
+
+    const comparisonRows = [
+      {
+        period: "recent_2_months",
+        refund_rate: 19.62,
+        total_orders: 367,
+        total_revenue: 915019.08
+      },
+      {
+        period: "prior_2_months",
+        refund_rate: 22.51,
+        total_orders: 533,
+        total_revenue: 1328896.92
+      }
+    ];
+
+    const result = await runReportContractPipeline({
+      contract: makeContract(),
+      store: new InMemoryMetadataStore(),
+      data_plane: new LocalStubDataPlane({ row_provider: () => comparisonRows }),
+      analyst_client: analyst.client,
+      query_strategist: strategist,
+      report_composer: createStubReportComposerClient(),
+      planner_client: createStubPlannerClient(),
+      catalog_summary: "public.sales"
+    });
+
+    expect(result.prepared_payloads).toHaveLength(1);
+    expect(result.prepared_payloads[0].validation?.expected_months).toBe(4);
+    expect(result.prepared_payloads[0].validation?.observed_months).toBe(4);
     expect(result.prepared_payloads[0].validation?.missing_months).toHaveLength(0);
     expect(analyst.calls.length).toBeGreaterThan(0);
     expect(result.exec_brief.what_changed.join(" ")).not.toMatch(/coverage warning/i);
+  });
+
+  it("passes period-bucket comparison evidence cleanly to the html composer", async () => {
+    const strategist = fixedStrategist([
+      {
+        question: "How do refunds in the most recent 2 months compare with the prior 2 months?",
+        sql: "SELECT period, refund_rate, total_orders, total_revenue FROM public.sales",
+        purpose: "Period-over-period comparison"
+      }
+    ]);
+
+    let capturedAnalysis: CapturedReportAnalysis | null = null;
+    const capturingComposer: ReportComposerClient = {
+      provider: "stub",
+      async composeReport(input) {
+        const first = input.analyses[0];
+        capturedAnalysis = first
+          ? {
+              data_summary: first.data_summary,
+              highlights: [...first.highlights],
+              answer_focus: first.answer_focus,
+              evidence_snapshot: first.evidence_snapshot
+            }
+          : null;
+        return "<html><body><p>ok</p></body></html>";
+      },
+      drainUsageEvents() {
+        return [];
+      }
+    };
+
+    const rows = [
+      {
+        period: "recent_2_months",
+        refund_rate: 19.62,
+        total_orders: 367,
+        total_revenue: 915019.08
+      },
+      {
+        period: "prior_2_months",
+        refund_rate: 22.51,
+        total_orders: 533,
+        total_revenue: 1328896.92
+      }
+    ];
+
+    const result = await runReportContractPipeline({
+      contract: makeContract(),
+      store: new InMemoryMetadataStore(),
+      data_plane: new LocalStubDataPlane({ row_provider: () => rows }),
+      analyst_client: createStubAnalystClient(),
+      query_strategist: strategist,
+      report_composer: capturingComposer,
+      planner_client: createStubPlannerClient(),
+      catalog_summary: "public.sales"
+    });
+
+    expect(result.run.status).toBe("succeeded");
+    expect(capturedAnalysis).not.toBeNull();
+    const analysis = capturedAnalysis!;
+    expect(analysis.data_summary).toContain("Timeline coverage: 4/4 month(s).");
+    expect(analysis.data_summary).not.toMatch(/Missing months/i);
+    expect(analysis.data_summary).toContain("Comparison windows:");
+    expect(analysis.data_summary).toContain("Direct answer cue:");
+    expect(analysis.highlights.join(" ")).toContain("Recent refund rate");
+    expect(analysis.highlights.join(" ")).toContain("19.62%");
+    expect(analysis.highlights.join(" ")).toContain("22.51%");
+  });
+
+  it("labels generic relative comparison buckets with explicit complete-month windows", async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date("2026-03-12T00:00:00.000Z"));
+
+    try {
+      const strategist = fixedStrategist([
+        {
+          question: "How do refunds in the most recent 2 months compare with the prior 2 months?",
+          sql: "SELECT period, refund_rate, total_orders, total_revenue FROM public.sales",
+          purpose: "Period-over-period comparison"
+        }
+      ]);
+
+      let capturedAnalysis: CapturedReportAnalysis | null = null;
+      const capturingComposer: ReportComposerClient = {
+        provider: "stub",
+        async composeReport(input) {
+          const first = input.analyses[0];
+          capturedAnalysis = first
+            ? {
+                data_summary: first.data_summary,
+                highlights: [...first.highlights],
+                answer_focus: first.answer_focus,
+                evidence_snapshot: first.evidence_snapshot
+              }
+            : null;
+          return "<html><body><p>ok</p></body></html>";
+        },
+        drainUsageEvents() {
+          return [];
+        }
+      };
+
+      const rows = [
+        {
+          period: "recent_2_months",
+          refund_rate: 19.62,
+          total_orders: 367,
+          total_revenue: 915019.08
+        },
+        {
+          period: "prior_2_months",
+          refund_rate: 22.51,
+          total_orders: 533,
+          total_revenue: 1328896.92
+        }
+      ];
+
+      const result = await runReportContractPipeline({
+        contract: makeContract(),
+        store: new InMemoryMetadataStore(),
+        data_plane: new LocalStubDataPlane({ row_provider: () => rows }),
+        analyst_client: createStubAnalystClient(),
+        query_strategist: strategist,
+        report_composer: capturingComposer,
+        planner_client: createStubPlannerClient(),
+        catalog_summary: "public.sales"
+      });
+
+      expect(result.run.status).toBe("succeeded");
+      expect(capturedAnalysis).not.toBeNull();
+      const analysis = capturedAnalysis!;
+      expect(analysis.data_summary).toContain("Comparison windows: Jan-Feb 2026 vs Nov-Dec 2025.");
+      expect(analysis.answer_focus).toContain("Jan-Feb 2026");
+      expect(analysis.answer_focus).toContain("Nov-Dec 2025");
+      expect(analysis.evidence_snapshot).toContain("Comparison windows: Jan-Feb 2026 vs Nov-Dec 2025");
+      expect(analysis.evidence_snapshot).toContain("period=Jan-Feb 2026");
+      expect(analysis.evidence_snapshot).toContain("period=Nov-Dec 2025");
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("handles worded month comparisons for relative bucketed comparison payloads", async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date("2026-03-12T00:00:00.000Z"));
+
+    try {
+      const strategist = fixedStrategist([
+        {
+          question: "How do refunds in the most recent two months compare with the prior two months?",
+          sql: "SELECT period, refund_rate, total_orders, total_revenue FROM public.sales",
+          purpose: "Period-over-period comparison"
+        }
+      ]);
+
+      let capturedAnalysis: CapturedReportAnalysis | null = null;
+      const capturingComposer: ReportComposerClient = {
+        provider: "stub",
+        async composeReport(input) {
+          const first = input.analyses[0];
+          capturedAnalysis = first
+            ? {
+                data_summary: first.data_summary,
+                highlights: [...first.highlights],
+                answer_focus: first.answer_focus,
+                evidence_snapshot: first.evidence_snapshot
+              }
+            : null;
+          return "<html><body><p>ok</p></body></html>";
+        },
+        drainUsageEvents() {
+          return [];
+        }
+      };
+
+      const rows = [
+        { period: "recent_2_months", refund_rate: 19.62, total_orders: 367, total_revenue: 915019.08 },
+        { period: "prior_2_months", refund_rate: 22.51, total_orders: 533, total_revenue: 1328896.92 }
+      ];
+
+      const result = await runReportContractPipeline({
+        contract: makeContract(),
+        store: new InMemoryMetadataStore(),
+        data_plane: new LocalStubDataPlane({ row_provider: () => rows }),
+        analyst_client: createStubAnalystClient(),
+        query_strategist: strategist,
+        report_composer: capturingComposer,
+        planner_client: createStubPlannerClient(),
+        catalog_summary: "public.sales"
+      });
+
+      expect(result.run.status).toBe("succeeded");
+      expect(capturedAnalysis).not.toBeNull();
+      const analysis = capturedAnalysis!;
+      expect(analysis.data_summary).toContain("Comparison windows: Jan-Feb 2026 vs Nov-Dec 2025.");
+      expect(analysis.data_summary).toContain("Direct answer cue:");
+      expect(analysis.answer_focus).toContain("Jan-Feb 2026");
+      expect(analysis.answer_focus).toContain("Nov-Dec 2025");
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("passes canonical comparison windows into analyst context for relative bucketed comparisons", async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date("2026-03-12T00:00:00.000Z"));
+
+    try {
+      const strategist = fixedStrategist([
+        {
+          question: "How do refunds in the most recent 2 months compare with the prior 2 months?",
+          sql: "SELECT period, refund_rate, total_orders, total_revenue FROM public.sales",
+          purpose: "Period-over-period comparison"
+        }
+      ]);
+
+      let capturedDataContext = "";
+      const capturingAnalyst: AnalystClient = {
+        provider: "stub",
+        async analyzeBatch(input) {
+          capturedDataContext = input.data_context ?? "";
+          return {
+            request_id: input.request_id,
+            batch_index: input.batch_index,
+            total_batches: input.total_batches,
+            highlights: ["Comparison analyzed."],
+            risks: [],
+            recommendations: [],
+            confidence_score: 0.6,
+            appendix_refs: [],
+            additional_query_requests: []
+          };
+        },
+        drainUsageEvents() {
+          return [];
+        }
+      };
+
+      const rows = [
+        { period: "recent_2_months", refund_rate: 19.62, total_orders: 367, total_revenue: 915019.08 },
+        { period: "prior_2_months", refund_rate: 22.51, total_orders: 533, total_revenue: 1328896.92 }
+      ];
+
+      await runReportContractPipeline({
+        contract: makeContract(),
+        store: new InMemoryMetadataStore(),
+        data_plane: new LocalStubDataPlane({ row_provider: () => rows }),
+        analyst_client: capturingAnalyst,
+        query_strategist: strategist,
+        report_composer: createStubReportComposerClient(),
+        planner_client: createStubPlannerClient(),
+        catalog_summary: "public.sales"
+      });
+
+      expect(capturedDataContext).toContain("Canonical comparison windows: recent period = Jan-Feb 2026; prior period = Nov-Dec 2025.");
+      expect(capturedDataContext).toContain("interpret them using those canonical month windows");
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   it("anchors expected timeline to requested end month and flags missing February when requested", async () => {

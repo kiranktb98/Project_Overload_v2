@@ -495,7 +495,20 @@ export class PostgresMetadataStore implements MetadataStore {
         user_messages = EXCLUDED.user_messages,
         db_bootstrapped = EXCLUDED.db_bootstrapped,
         messages = EXCLUDED.messages,
-        updated_at = NOW()
+        updated_at = CASE
+          WHEN
+            chat_sessions.tenant_id IS DISTINCT FROM EXCLUDED.tenant_id OR
+            chat_sessions.user_id IS DISTINCT FROM EXCLUDED.user_id OR
+            chat_sessions.title IS DISTINCT FROM EXCLUDED.title OR
+            chat_sessions.title_auto IS DISTINCT FROM EXCLUDED.title_auto OR
+            chat_sessions.naming_in_progress IS DISTINCT FROM EXCLUDED.naming_in_progress OR
+            chat_sessions.state IS DISTINCT FROM EXCLUDED.state OR
+            chat_sessions.user_messages IS DISTINCT FROM EXCLUDED.user_messages OR
+            chat_sessions.db_bootstrapped IS DISTINCT FROM EXCLUDED.db_bootstrapped OR
+            chat_sessions.messages IS DISTINCT FROM EXCLUDED.messages
+          THEN NOW()
+          ELSE chat_sessions.updated_at
+        END
       RETURNING
         id,
         tenant_id,

@@ -10,6 +10,7 @@ import {
   createAnalystClient,
   createAnalystClientFromEnv,
   createBusinessCaseClient,
+  createStubReportClarificationClient,
   createReportComposerClient,
   createStubAnalystClient,
   createStubPlannerClient,
@@ -273,6 +274,52 @@ describe("llm client", () => {
         required_fields: []
       }
     ]);
+  });
+
+  it("grounds report clarification answers from prepared payload evidence when summaries are thin", async () => {
+    const client = createStubReportClarificationClient();
+
+    const result = await client.answerQuestion({
+      report_title: "Refund Report",
+      question: "Which city had the highest refund rate?",
+      report_html: "",
+      exec_brief: {},
+      per_question_summaries: [],
+      analysis_payloads: [],
+      prepared_payloads: [
+        {
+          question_id: "q3",
+          question_number: 3,
+          question: "Which cities had the highest refund rate?",
+          purpose: "Top cities by refund rate over the last 4 complete months.",
+          prepared_row_count: 5,
+          warnings: [],
+          validation: {
+            observed_months: 4,
+            missing_months: [],
+            monthly_row_counts: [],
+            monthly_metric_totals: [],
+            metric_column: "refund_rate"
+          },
+          sample_rows: [
+            { city: "Pune", refund_rate: 24.37 },
+            { city: "Bengaluru", refund_rate: 25.49 }
+          ]
+        }
+      ],
+      metric_definitions: [
+        {
+          metric_key: "refund_rate",
+          display_name: "Refund Rate",
+          definition: "Refunded Revenue / Total Revenue"
+        }
+      ],
+      business_context: "Refund reduction is a core operational priority."
+    });
+
+    expect(result.grounded).toBe(true);
+    expect(result.requires_new_analysis).toBe(false);
+    expect(result.citations).toContain("q3");
   });
 });
 
