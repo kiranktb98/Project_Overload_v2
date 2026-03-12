@@ -299,7 +299,45 @@ export function buildWebApp(options: WebAppDependencies = {}) {
         query_router: queryRouter,
         orchestrator_decision: orchestratorDecision
       });
-      failureStateSnapshot = normalizeWorkflowDecisionState(response.state);
+      const normalizedResponseState = normalizeWorkflowDecisionState(response.state);
+      failureStateSnapshot = normalizedResponseState;
+
+      if (shouldBypassConversationalRewrite(normalizedResponseState, response.assistant_message)) {
+        const nextState = appendConversationTurn(
+          normalizedResponseState,
+          parsed.data.message,
+          response.assistant_message
+        );
+        failureStateSnapshot = nextState;
+        void apiClient
+          .indexRagTurn({
+            session_id: sessionId.length > 0 ? sessionId : null,
+            chunks: [
+              {
+                source: "user_turn",
+                label: "User message",
+                text: parsed.data.message
+              },
+              {
+                source: "assistant_turn",
+                label: "Assistant reply",
+                text: response.assistant_message
+              }
+            ]
+          })
+          .catch((error) => {
+            app.log.warn(
+              { err: error, path: "/api/chat" },
+              "RAG index update failed; chat response already returned."
+            );
+          });
+
+        return reply.code(200).send({
+          ...response,
+          state: nextState,
+          assistant_message: response.assistant_message
+        });
+      }
 
       const catalogCtx = await fetchCatalogContext(apiClient);
       const businessContext =
@@ -311,7 +349,7 @@ export function buildWebApp(options: WebAppDependencies = {}) {
         conversationResponse = await conversationClient.respond({
           user_message: parsed.data.message,
           action_context: response.assistant_message,
-          state: response.state,
+          state: normalizedResponseState,
           history: hydratedState.conversation_history,
           catalog_summary: catalogCtx.catalog_summary,
           business_context: businessContext,
@@ -319,19 +357,19 @@ export function buildWebApp(options: WebAppDependencies = {}) {
         });
       } catch (conversationError) {
         if (isStrictLlmRenderedOutputEnabled()) {
-          failureStateSnapshot = normalizeWorkflowDecisionState(response.state);
+          failureStateSnapshot = normalizedResponseState;
           throw new ChatStageError("conversation_response", conversationError);
         }
-        const normalizedState = normalizeWorkflowDecisionState(response.state);
-        const parsedResponseState = parseChatState(normalizedState);
+        const parsedResponseState = parseChatState(normalizedResponseState);
         const hasAuthoritativeExecutionOutcome =
           isExecutionOutcomeContext(response.assistant_message) ||
+          shouldBypassConversationalRewrite(normalizedResponseState, response.assistant_message) ||
           isDecisionPendingContext(response.assistant_message) ||
           Boolean(parsedResponseState.pending_run_id);
 
         if (hasAuthoritativeExecutionOutcome) {
           const nextState = appendConversationTurn(
-            normalizedState,
+            normalizedResponseState,
             parsed.data.message,
             response.assistant_message
           );
@@ -354,10 +392,10 @@ export function buildWebApp(options: WebAppDependencies = {}) {
       let safeAiMessage = isStrictLlmRenderedOutputEnabled()
         ? conversationResponse.message
         : sanitizeCustomerFacingAssistantMessage(aiMessage);
-      let stateAfterLlm = response.state;
+      let stateAfterLlm = normalizedResponseState;
       if (conversationResponse.draft_updates) {
-        stateAfterLlm = applyLlmDraftUpdates(response.state, conversationResponse.draft_updates, {
-          preserve_prepared_state: hasPendingWorkflowDecision(response.state)
+        stateAfterLlm = applyLlmDraftUpdates(normalizedResponseState, conversationResponse.draft_updates, {
+          preserve_prepared_state: hasPendingWorkflowDecision(normalizedResponseState)
         });
       }
       stateAfterLlm = syncDecisionStateFromAssistantMessage(stateAfterLlm, aiMessage);
@@ -875,6 +913,17 @@ function isDecisionPendingContext(actionContext: string): boolean {
   );
 }
 
+function shouldBypassConversationalRewrite(state: unknown, actionContext: string): boolean {
+  const parsed = parseChatState(state);
+  return (
+    parsed.report_clarification_active === true ||
+    parsed.business_case_active === true ||
+    /^Report clarification mode is on\./i.test(actionContext) ||
+    /^Select a recommendation for business case analysis/i.test(actionContext) ||
+    /^No business case candidates are loaded for this run yet\./i.test(actionContext)
+  );
+}
+
 function enforceExecutionTruth(modelMessage: string, actionContext: string): string {
   const queryExecuted =
     /\bQuery ID:\s*[a-z0-9_-]+\b/i.test(actionContext) ||
@@ -1061,6 +1110,9 @@ function hasPendingWorkflowDecision(state: unknown): boolean {
       parsed.prep_pending ||
       parsed.scope_pending ||
       parsed.scope_clarification_pending ||
+      parsed.post_run_actions_pending ||
+      parsed.report_clarification_active ||
+      parsed.business_case_active ||
       parsed.awaiting_post_run_refinement ||
       parsed.refinement_active ||
       parsed.awaiting_pdf_confirmation ||

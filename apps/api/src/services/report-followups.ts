@@ -105,6 +105,7 @@ export async function answerReportQuestionWithAgent(input: {
       exec_brief: input.run.exec_brief,
       per_question_summaries: parsed.per_question_summaries,
       analysis_payloads: parsed.analysis_payloads,
+      prepared_payloads: parsed.prepared_payloads,
       metric_definitions: parsed.metric_definitions,
       business_context: parsed.business_context
     })
@@ -121,6 +122,9 @@ export function listBusinessCaseCandidates(run: ReportRun): BusinessCaseCandidat
     const prepared = preparedByQuestionId.get(analysis.question_id);
     const summary = summariesByQuestionId.get(analysis.question_id);
     for (const [index, recommendation] of analysis.recommendations.entries()) {
+      if (!isBusinessCaseRecommendation(recommendation)) {
+        continue;
+      }
       candidates.push(
         BusinessCaseCandidateSchema.parse({
           candidate_id: `${analysis.question_id}_r${index + 1}`,
@@ -137,6 +141,60 @@ export function listBusinessCaseCandidates(run: ReportRun): BusinessCaseCandidat
   }
 
   return candidates;
+}
+
+const NON_BUSINESS_CASE_RECOMMENDATION_PATTERNS = [
+  /\bfinal report review\b/i,
+  /\bvalidate key findings\b/i,
+  /\bappendix evidence\b/i,
+  /\bevidence refs?\b/i,
+  /\brefresh source data\b/i,
+  /\badjust scope\b/i,
+  /\bverify source tables?\b/i,
+  /\bre-?run\b/i,
+  /\breview (the )?(report|brief)\b/i,
+  /\bresolve preparation warnings\b/i,
+  /\bvalidate .*metric definition/i
+];
+
+const BUSINESS_CASE_ACTION_PATTERNS = [
+  /\bimplement\b/i,
+  /\bpilot\b/i,
+  /\broll ?out\b/i,
+  /\btighten\b/i,
+  /\brelax\b/i,
+  /\bintroduce\b/i,
+  /\blaunch\b/i,
+  /\bexpand\b/i,
+  /\bconsolidate\b/i,
+  /\boptimi[sz]e\b/i,
+  /\bautomate\b/i,
+  /\bprioriti[sz]e\b/i,
+  /\breduce\b/i,
+  /\bincrease\b/i,
+  /\bshift\b/i,
+  /\bmove\b/i,
+  /\bimprove\b/i,
+  /\bstandardi[sz]e\b/i,
+  /\bchange\b/i,
+  /\bupdate policy\b/i,
+  /\bhire\b/i,
+  /\btrain\b/i,
+  /\binvest\b/i,
+  /\brenegotiat/i
+];
+
+function isBusinessCaseRecommendation(recommendation: string): boolean {
+  const normalized = recommendation.trim();
+  if (normalized.length === 0) {
+    return false;
+  }
+
+  if (NON_BUSINESS_CASE_RECOMMENDATION_PATTERNS.some((pattern) => pattern.test(normalized))) {
+    return false;
+  }
+
+  return BUSINESS_CASE_ACTION_PATTERNS.some((pattern) => pattern.test(normalized));
 }
 
 export async function buildBusinessCaseAnalysis(input: {

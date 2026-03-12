@@ -265,23 +265,85 @@ describe("api semantic and run flow", () => {
     });
     expect(contractCreate.statusCode).toBe(201);
 
-    const runContract = await app.inject({
-      method: "POST",
-      url: "/report-contracts/contract_followups/run"
+    const run_id = "run_followups_manual";
+    await store.createReportRun({
+      id: run_id,
+      tenant_id: "default",
+      contract_id: "contract_followups",
+      status: "succeeded",
+      trigger: "manual",
+      attempt: 1,
+      retry_of_run_id: null,
+      started_at: "2026-03-12T00:00:00.000Z",
+      finished_at: "2026-03-12T00:05:00.000Z",
+      query_plan: {
+        analysis_payloads: [
+          {
+            question_id: "q_1",
+            question: "Where is refund pressure concentrated?",
+            data_summary: "Regional refund pressure is concentrated in a few regions.",
+            highlights: ["Refund pressure is concentrated in a few regions."],
+            risks: ["Margin leakage can persist without intervention."],
+            recommendations: ["Tighten refund review rules in the highest-risk regions."]
+          }
+        ],
+        per_question_summaries: [
+          {
+            question_id: "q_1",
+            question_text: "Where is refund pressure concentrated?",
+            findings: ["Refund pressure is concentrated in a few regions."],
+            drivers: ["Refund review rules are too loose in the highest-risk regions."],
+            anomalies: [],
+            coverage_status: "complete",
+            coverage_notes: [],
+            evidence_refs: ["q_1"],
+            confidence_notes: []
+          }
+        ],
+        prepared_payloads: [
+          {
+            question_id: "q_1",
+            question_number: 1,
+            question: "Where is refund pressure concentrated?",
+            purpose: "Regional refund concentration",
+            prepared_row_count: 3,
+            warnings: [],
+            validation: {
+              expected_months: 4,
+              observed_months: 4,
+              missing_months: [],
+              monthly_row_counts: [],
+              metric_column: "refund_rate",
+              monthly_metric_totals: []
+            },
+            sample_rows: [
+              { region: "NA", refund_rate: 24.1 },
+              { region: "EU", refund_rate: 18.7 }
+            ]
+          }
+        ],
+        metric_definitions: [
+          {
+            metric_key: "refund_rate",
+            display_name: "Refund Rate",
+            definition: "Refunded Rev / Total Rev"
+          }
+        ],
+        business_context: "Refund leakage is materially impacting margin in some regions.",
+        catalog_summary: "analytics.sales"
+      },
+      exec_brief: {
+        what_changed: ["Refund pressure is concentrated in a few regions."],
+        why: ["Regional leakage is materially higher in the highest-risk regions."],
+        so_what: ["A tighter review policy could reduce refund leakage."],
+        what_to_do: ["Tighten refund review rules in the highest-risk regions."],
+        confidence: { score: 0.88, rationale: "Prepared evidence is consistent." },
+        appendix_refs: ["q_1"],
+        deltas_vs_last_run: [],
+        generated_at: "2026-03-12T00:05:00.000Z"
+      },
+      report_html: "<html><body><h1>Follow-up route test</h1><p>Refund pressure is concentrated in a few regions.</p></body></html>"
     });
-    expect(runContract.statusCode).toBe(202);
-    const { run_id } = runContract.json();
-
-    let runReady = false;
-    for (let i = 0; i < 40; i++) {
-      await new Promise((resolve) => setTimeout(resolve, 100));
-      const poll = await app.inject({ method: "GET", url: `/report-runs/${run_id}` });
-      if (poll.json().status === "succeeded") {
-        runReady = true;
-        break;
-      }
-    }
-    expect(runReady).toBe(true);
 
     const reportQa = await app.inject({
       method: "POST",
@@ -325,6 +387,91 @@ describe("api semantic and run flow", () => {
     expect(completed.statusCode).toBe(200);
     expect(completed.json().status).toBe("complete");
     expect(completed.json().timeline_impact).toHaveLength(2);
+
+    await app.close();
+  }, 90_000);
+
+  it("does not expose business case candidates for report-review-only recommendations", async () => {
+    const store = new InMemoryMetadataStore();
+    const dataPlane = new LocalStubDataPlane({
+      row_provider: () =>
+        Array.from({ length: 120 }, (_, index) => ({
+          amount: (index % 25) + 1,
+          region: ["NA", "EU", "APAC"][index % 3],
+          event_time: new Date(Date.UTC(2025, index % 4, 1)).toISOString()
+        }))
+    });
+
+    const app = await buildApiApp({
+      store,
+      data_plane: dataPlane,
+      analyst_client: {
+        provider: "stub",
+        async analyzeBatch(input) {
+          return {
+            request_id: input.request_id,
+            batch_index: input.batch_index,
+            total_batches: input.total_batches,
+            highlights: ["Refund revenue declined in the latest period."],
+            risks: [],
+            recommendations: ["Proceed to final report review and validate key findings against the appendix evidence refs."],
+            confidence_score: 0.86,
+            appendix_refs: [`${input.request_id}:batch-${input.batch_index + 1}`],
+            additional_query_requests: []
+          };
+        }
+      },
+      query_strategist: createStubQueryStrategistClient(),
+      report_composer: createStubReportComposerClient(),
+      planner_client: createStubPlannerClient()
+    });
+
+    const contractCreate = await app.inject({
+      method: "POST",
+      url: "/report-contracts",
+      payload: {
+        id: "contract_no_business_case_candidates",
+        name: "No candidate filter test",
+        audience: "CEO",
+        timezone: "UTC",
+        schedule_cron: null,
+        sql_template: "SELECT * FROM analytics.sales",
+        guardrails: {
+          evidence_row_cap: 200,
+          max_batches: 5,
+          allowed_relations: ["analytics.sales"],
+          allowed_schemas: ["analytics"],
+          timeout_ms: 10000,
+          deny_write: true
+        }
+      }
+    });
+    expect(contractCreate.statusCode).toBe(201);
+
+    const runContract = await app.inject({
+      method: "POST",
+      url: "/report-contracts/contract_no_business_case_candidates/run"
+    });
+    expect(runContract.statusCode).toBe(202);
+    const { run_id } = runContract.json();
+
+    let runReady = false;
+    for (let i = 0; i < 40; i++) {
+      await new Promise((resolve) => setTimeout(resolve, 100));
+      const poll = await app.inject({ method: "GET", url: `/report-runs/${run_id}` });
+      if (poll.json().status === "succeeded") {
+        runReady = true;
+        break;
+      }
+    }
+    expect(runReady).toBe(true);
+
+    const candidates = await app.inject({
+      method: "GET",
+      url: `/report-runs/${run_id}/business-case/candidates`
+    });
+    expect(candidates.statusCode).toBe(200);
+    expect(candidates.json().candidates).toEqual([]);
 
     await app.close();
   }, 90_000);

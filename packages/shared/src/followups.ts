@@ -33,6 +33,43 @@ export const ReportClarificationInputSchema = z.object({
       })
     )
     .default([]),
+  prepared_payloads: z
+    .array(
+      z.object({
+        question_id: z.string().min(1),
+        question_number: z.number().int().min(1),
+        question: z.string().min(1),
+        purpose: z.string().min(1),
+        prepared_row_count: z.number().int().min(0),
+        warnings: z.array(z.string().min(1)).default([]),
+        validation: z
+          .object({
+            expected_months: z.number().int().min(1).nullable().optional(),
+            observed_months: z.number().int().min(0),
+            missing_months: z.array(z.string().min(1)).default([]),
+            monthly_row_counts: z
+              .array(
+                z.object({
+                  month: z.string().min(1),
+                  row_count: z.number().int().min(0)
+                })
+              )
+              .default([]),
+            metric_column: z.string().nullable().optional(),
+            monthly_metric_totals: z
+              .array(
+                z.object({
+                  month: z.string().min(1),
+                  total: z.number()
+                })
+              )
+              .default([])
+          })
+          .optional(),
+        sample_rows: z.array(z.record(z.string(), z.unknown())).max(5).default([])
+      })
+    )
+    .default([]),
   metric_definitions: z
     .array(
       z.object({

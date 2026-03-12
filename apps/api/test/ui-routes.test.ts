@@ -101,6 +101,168 @@ describe("ui auth and chat sessions", () => {
     await app.close();
   }, 30_000);
 
+  it("preserves created_at and advances updated_at when chat sessions are saved again", async () => {
+    process.env.API_AUTH_REQUIRED = "false";
+    delete process.env.API_AUTH_TOKEN;
+
+    const app = await buildApiApp({
+      store: new InMemoryMetadataStore(),
+      analyst_client: createStubAnalystClient()
+    });
+
+    await app.inject({
+      method: "POST",
+      url: "/ui/auth/login",
+      payload: {
+        username: "test123",
+        password: "test123"
+      }
+    });
+
+    const basePayload = {
+      session: {
+        id: "chat_2",
+        title: "Follow-up QA",
+        title_auto: false,
+        naming_in_progress: false,
+        state: {
+          draft: {
+            name: "Follow-up QA"
+          }
+        },
+        user_messages: ["what changed in refunds"],
+        db_bootstrapped: true,
+        messages: [
+          {
+            role: "assistant",
+            text: "Hello",
+            download_url: null,
+            exec_brief_html: null,
+            at: new Date().toISOString()
+          }
+        ]
+      }
+    };
+
+    const first = await app.inject({
+      method: "PUT",
+      url: "/ui/chat-sessions/chat_2",
+      headers: {
+        "x-ui-user": "test123"
+      },
+      payload: basePayload
+    });
+    expect(first.statusCode).toBe(200);
+
+    await new Promise((resolve) => setTimeout(resolve, 10));
+
+    const second = await app.inject({
+      method: "PUT",
+      url: "/ui/chat-sessions/chat_2",
+      headers: {
+        "x-ui-user": "test123"
+      },
+      payload: {
+        session: {
+          ...basePayload.session,
+          title: "Follow-up QA Updated",
+          messages: [
+            ...basePayload.session.messages,
+            {
+              role: "user",
+              text: "what changed in refunds",
+              download_url: null,
+              exec_brief_html: null,
+              at: new Date().toISOString()
+            }
+          ]
+        }
+      }
+    });
+    expect(second.statusCode).toBe(200);
+
+    const firstSession = first.json().session;
+    const secondSession = second.json().session;
+    expect(secondSession.created_at).toBe(firstSession.created_at);
+    expect(Date.parse(secondSession.updated_at)).toBeGreaterThanOrEqual(Date.parse(firstSession.updated_at));
+
+    await app.close();
+  });
+
+  it("preserves updated_at when an identical chat session is saved again", async () => {
+    process.env.API_AUTH_REQUIRED = "false";
+    delete process.env.API_AUTH_TOKEN;
+
+    const app = await buildApiApp({
+      store: new InMemoryMetadataStore(),
+      analyst_client: createStubAnalystClient()
+    });
+
+    await app.inject({
+      method: "POST",
+      url: "/ui/auth/login",
+      payload: {
+        username: "test123",
+        password: "test123"
+      }
+    });
+
+    const messageAt = new Date("2026-03-10T10:00:00.000Z").toISOString();
+    const payload = {
+      session: {
+        id: "chat_2_static",
+        title: "Static session",
+        title_auto: false,
+        naming_in_progress: false,
+        state: {
+          draft: {
+            name: "Static session"
+          }
+        },
+        user_messages: ["show me refunds"],
+        db_bootstrapped: true,
+        messages: [
+          {
+            role: "assistant",
+            text: "Hello",
+            download_url: null,
+            exec_brief_html: null,
+            at: messageAt
+          }
+        ]
+      }
+    };
+
+    const first = await app.inject({
+      method: "PUT",
+      url: "/ui/chat-sessions/chat_2_static",
+      headers: {
+        "x-ui-user": "test123"
+      },
+      payload
+    });
+    expect(first.statusCode).toBe(200);
+
+    await new Promise((resolve) => setTimeout(resolve, 10));
+
+    const second = await app.inject({
+      method: "PUT",
+      url: "/ui/chat-sessions/chat_2_static",
+      headers: {
+        "x-ui-user": "test123"
+      },
+      payload
+    });
+    expect(second.statusCode).toBe(200);
+
+    const firstSession = first.json().session;
+    const secondSession = second.json().session;
+    expect(secondSession.created_at).toBe(firstSession.created_at);
+    expect(secondSession.updated_at).toBe(firstSession.updated_at);
+
+    await app.close();
+  });
+
   it("indexes and searches per-user rag memory chunks", async () => {
     process.env.API_AUTH_REQUIRED = "false";
     process.env.OPENROUTER_API_KEY = "test-key";

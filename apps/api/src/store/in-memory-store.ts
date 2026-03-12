@@ -232,11 +232,21 @@ export class InMemoryMetadataStore implements MetadataStore {
     const sessions = byUser.get(payload.user_id) ?? [];
     const existing = sessions.find((entry) => entry.id === payload.id);
     const nowIso = new Date().toISOString();
+    const changed =
+      !existing ||
+      existing.user_id !== payload.user_id ||
+      existing.title !== payload.title ||
+      existing.title_auto !== payload.title_auto ||
+      existing.naming_in_progress !== payload.naming_in_progress ||
+      JSON.stringify(existing.state) !== JSON.stringify(payload.state) ||
+      JSON.stringify(existing.user_messages) !== JSON.stringify(payload.user_messages) ||
+      existing.db_bootstrapped !== payload.db_bootstrapped ||
+      JSON.stringify(existing.messages) !== JSON.stringify(payload.messages);
     const session: ChatSessionRecord = {
       ...payload,
       tenant_id: tenantId,
       created_at: existing?.created_at ?? nowIso,
-      updated_at: nowIso
+      updated_at: changed ? nowIso : (existing?.updated_at ?? nowIso)
     };
     const next = sessions.filter((entry) => entry.id !== payload.id);
     next.push(session);

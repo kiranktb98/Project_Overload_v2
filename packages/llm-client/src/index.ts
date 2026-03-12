@@ -1919,8 +1919,18 @@ export function createStubReportClarificationClient(): ReportClarificationClient
           ].join(" ").toLowerCase();
           return tokenizeForMatching(query).some((token) => haystack.includes(token));
         }) ?? input.per_question_summaries[0];
+      const matchingPrepared =
+        input.prepared_payloads.find((entry) => {
+          const haystack = [
+            entry.question,
+            entry.purpose,
+            ...entry.warnings,
+            JSON.stringify(entry.sample_rows.slice(0, 3))
+          ].join(" ").toLowerCase();
+          return tokenizeForMatching(query).some((token) => haystack.includes(token));
+        }) ?? null;
 
-      if (!matchingSummary) {
+      if (!matchingSummary && !matchingPrepared) {
         return {
           answer: "I cannot answer that from the generated report alone. It needs new analysis.",
           citations: [],
@@ -1929,15 +1939,25 @@ export function createStubReportClarificationClient(): ReportClarificationClient
         };
       }
 
-      const parts = [
-        matchingSummary.findings[0] ?? `The report section on "${matchingSummary.question_text}" is the closest match.`,
-        matchingSummary.drivers[0] ? `Driver: ${matchingSummary.drivers[0]}` : "",
-        matchingSummary.anomalies[0] ? `Risk: ${matchingSummary.anomalies[0]}` : ""
-      ].filter((value) => value.length > 0);
+      const parts = matchingSummary
+        ? [
+            matchingSummary.findings[0] ?? `The report section on "${matchingSummary.question_text}" is the closest match.`,
+            matchingSummary.drivers[0] ? `Driver: ${matchingSummary.drivers[0]}` : "",
+            matchingSummary.anomalies[0] ? `Risk: ${matchingSummary.anomalies[0]}` : ""
+          ].filter((value) => value.length > 0)
+        : [
+            `Prepared evidence is available for "${matchingPrepared?.question ?? "the closest matching question"}".`,
+            matchingPrepared && matchingPrepared.sample_rows.length > 0
+              ? `Sample rows: ${JSON.stringify(matchingPrepared.sample_rows.slice(0, 2))}`
+              : "",
+            matchingPrepared && matchingPrepared.warnings.length > 0
+              ? `Notes: ${matchingPrepared.warnings.join("; ")}`
+              : ""
+          ].filter((value) => value.length > 0);
 
       return {
         answer: parts.join("\n"),
-        citations: [matchingSummary.question_id],
+        citations: [matchingSummary?.question_id ?? matchingPrepared?.question_id ?? "prepared_payload"],
         grounded: true,
         requires_new_analysis: false
       };
@@ -2557,7 +2577,7 @@ function superSummaryUserPrompt(input: SuperSummaryInput): string {
 function reportClarificationSystemPrompt(): string {
   return [
     "You answer clarification questions about a generated business report.",
-    "Use only the supplied report, executive brief, per-question summaries, metric definitions, and business context.",
+    "Use only the supplied report, executive brief, per-question summaries, prepared payload evidence, metric definitions, and business context.",
     "Do not invent new calculations, fresh analysis, or unsupported numbers.",
     "If the answer cannot be grounded in the supplied report artifacts, set requires_new_analysis=true.",
     "",
@@ -2589,6 +2609,19 @@ function reportClarificationUserPrompt(input: ReportClarificationInput): string 
     ].join("\n"))
     .join("\n\n");
 
+  const preparedPayloads = input.prepared_payloads
+    .map((payload) => [
+      `Q${payload.question_number} (${payload.question_id}): ${payload.question}`,
+      `Purpose: ${payload.purpose}`,
+      `Prepared rows: ${payload.prepared_row_count}`,
+      `Warnings: ${payload.warnings.join("; ") || "None"}`,
+      payload.validation
+        ? `Validation: observed_months=${payload.validation.observed_months}; metric_column=${payload.validation.metric_column || "None"}; missing_months=${payload.validation.missing_months.join(", ") || "None"}`
+        : "Validation: None",
+      `Sample rows: ${JSON.stringify(payload.sample_rows.slice(0, 3))}`
+    ].join("\n"))
+    .join("\n\n");
+
   const metricDefs = input.metric_definitions
     .map((metric) => `${metric.display_name} (${metric.metric_key}): ${metric.definition}`)
     .join("\n");
@@ -2607,6 +2640,9 @@ function reportClarificationUserPrompt(input: ReportClarificationInput): string 
     "",
     "Analysis payloads:",
     analyses || "None",
+    "",
+    "Prepared payload evidence:",
+    preparedPayloads || "None",
     "",
     "Executive brief JSON:",
     JSON.stringify(input.exec_brief),
@@ -2725,6 +2761,7 @@ function reportComposerSystemPrompt(input: ReportComposerInput): string {
     "- QUESTION-FIRST: Answer the exact scoped question before discussing adjacent metrics. If the question asks for refund rate, lead with refund rate. Use revenue, counts, or totals only as supporting context.",
     "- DO NOT SUBSTITUTE METRICS: Never replace the requested metric with a proxy metric. Example: do not turn 'highest refund rate' into 'highest refunded revenue'.",
     "- USE THE PREPARED EVIDENCE: Each analysis includes answer_focus, data_summary, and evidence_snapshot fields. The evidence_snapshot contains the prepared rows to ground tables and charts.",
+    "- PERIOD COMPARISONS: If the evidence already contains prior-period, recent-period, and delta fields in one prepared comparison row, treat that as sufficient evidence for the comparison. Do not reject it just because it is aggregated instead of one row per month.",
     "- VISUAL COVERAGE: If the evidence shows a ranking or grouped breakdown, render a sorted table and bar chart. If the evidence shows a time series, render a line chart plus a summary table.",
     "- NO INTERNAL INFO: Never mention validation, pipeline issues, SQL compilation, or confidence scores.",
     "- Return ONLY the HTML document, no markdown fences."
