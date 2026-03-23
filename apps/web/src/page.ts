@@ -6,21 +6,24 @@ export function renderChatPage(): string {
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <title>Project Overload | Report Contract Chat</title>
     <style>
-      @import url("https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap");
+      @import url("https://fonts.googleapis.com/css2?family=Mona+Sans:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;500&display=swap");
 
       :root {
-        --ink: #e9f1ff;
-        --ink-soft: #6f86b4;
-        --panel: #050f2d;
-        --panel-2: #07143a;
-        --panel-3: #0a1f50;
-        --line: #14386f;
-        --line-soft: #20509d;
-        --accent: #5444ff;
-        --accent-2: #6958ff;
-        --accent-3: #3b88ff;
-        --glow: rgba(85, 72, 255, 0.45);
-        --shadow: 0 18px 48px rgba(1, 8, 32, 0.44);
+        --ink: #edf4ff;
+        --ink-soft: #8ca2cb;
+        --ink-muted: #6076a1;
+        --panel: rgba(6, 16, 42, 0.92);
+        --panel-2: rgba(8, 21, 56, 0.96);
+        --panel-3: rgba(12, 28, 70, 0.94);
+        --line: rgba(104, 137, 206, 0.18);
+        --line-soft: rgba(116, 156, 238, 0.34);
+        --accent: #66a7ff;
+        --accent-2: #6c6cff;
+        --accent-3: #7fd0ff;
+        --accent-soft: rgba(102, 167, 255, 0.18);
+        --glow: rgba(108, 111, 255, 0.36);
+        --shadow: 0 24px 60px rgba(1, 8, 28, 0.44);
+        --shadow-soft: 0 12px 32px rgba(3, 9, 27, 0.26);
       }
 
       * {
@@ -30,12 +33,13 @@ export function renderChatPage(): string {
       body {
         margin: 0;
         min-height: 100vh;
-        font-family: "Space Grotesk", sans-serif;
+        font-family: "Mona Sans", sans-serif;
         color: var(--ink);
         background:
-          radial-gradient(circle at -8% 22%, rgba(80, 110, 255, 0.15), transparent 26%),
-          radial-gradient(circle at 104% -8%, rgba(98, 80, 255, 0.12), transparent 24%),
-          linear-gradient(180deg, #02071b 0%, #030b27 50%, #030d2e 100%);
+          radial-gradient(circle at 14% 10%, rgba(110, 165, 255, 0.17), transparent 24%),
+          radial-gradient(circle at 88% 8%, rgba(104, 92, 255, 0.15), transparent 26%),
+          radial-gradient(circle at 50% 100%, rgba(59, 132, 255, 0.1), transparent 30%),
+          linear-gradient(180deg, #020714 0%, #06112e 44%, #061533 100%);
       }
 
       body::before {
@@ -52,30 +56,62 @@ export function renderChatPage(): string {
         mask-image: radial-gradient(circle at 50% 45%, rgba(0, 0, 0, 0.86), transparent 92%);
       }
 
+      body::after {
+        content: "";
+        position: fixed;
+        inset: 0;
+        pointer-events: none;
+        background:
+          radial-gradient(circle at 18% 22%, rgba(115, 191, 255, 0.12), transparent 20%),
+          radial-gradient(circle at 78% 16%, rgba(120, 102, 255, 0.16), transparent 24%);
+        filter: blur(34px);
+        opacity: 0.9;
+      }
+
       .page {
         width: 100%;
         margin: 0;
+        min-height: 100vh;
         height: 100vh;
         overflow: hidden;
+        padding: 14px;
       }
 
       .layout {
         display: grid;
-        grid-template-columns: 198px 248px 1fr;
-        gap: 0;
-        height: 100vh;
-        min-height: 100vh;
+        grid-template-columns: 212px 272px 1fr;
+        gap: 14px;
+        height: calc(100vh - 28px);
+        min-height: calc(100vh - 28px);
+        transition: grid-template-columns 220ms ease, gap 220ms ease;
+      }
+
+      .layout.history-collapsed {
+        grid-template-columns: 212px 72px 1fr;
       }
 
       .platform-panel {
+        position: relative;
         border: 1px solid var(--line);
-        border-right: 1px solid #112f62;
-        border-radius: 0;
-        background: linear-gradient(180deg, rgba(6, 17, 47, 0.98), rgba(5, 13, 36, 0.98));
+        border-radius: 28px;
+        background:
+          linear-gradient(180deg, rgba(10, 22, 55, 0.98), rgba(5, 14, 36, 0.98)),
+          linear-gradient(180deg, rgba(255, 255, 255, 0.02), transparent);
         box-shadow: var(--shadow);
         display: flex;
         flex-direction: column;
-        padding: 14px 14px 12px;
+        padding: 16px 15px 14px;
+        overflow: hidden;
+      }
+
+      .platform-panel::before {
+        content: "";
+        position: absolute;
+        inset: 0;
+        pointer-events: none;
+        background:
+          radial-gradient(circle at 20% 0%, rgba(118, 171, 255, 0.14), transparent 26%),
+          linear-gradient(180deg, rgba(255, 255, 255, 0.04), transparent 30%);
       }
 
       .platform-brand {
@@ -83,27 +119,29 @@ export function renderChatPage(): string {
         align-items: center;
         gap: 10px;
         padding: 8px 6px 14px;
-        margin-bottom: 6px;
-        border-bottom: 1px solid #173469;
+        margin-bottom: 10px;
+        border-bottom: 1px solid rgba(130, 162, 231, 0.14);
+        position: relative;
+        z-index: 1;
       }
 
       .platform-brand-badge {
-        width: 36px;
-        height: 36px;
-        border-radius: 12px;
+        width: 42px;
+        height: 42px;
+        border-radius: 15px;
         display: grid;
         place-items: center;
-        font-weight: 700;
+        font-weight: 800;
         color: #f3f8ff;
-        background: linear-gradient(135deg, #4e3eff, #6e56ff);
-        box-shadow: 0 12px 20px rgba(82, 73, 255, 0.36);
+        background: linear-gradient(145deg, var(--accent), var(--accent-2) 56%, var(--accent-3));
+        box-shadow: 0 14px 32px rgba(76, 122, 255, 0.34);
       }
 
       .platform-brand strong {
         display: block;
-        font-size: 0.76rem;
+        font-size: 0.78rem;
         line-height: 1.1;
-        letter-spacing: 0.06em;
+        letter-spacing: 0.09em;
         text-transform: uppercase;
       }
 
@@ -111,37 +149,42 @@ export function renderChatPage(): string {
         display: block;
         margin-top: 2px;
         font-family: "JetBrains Mono", monospace;
-        font-size: 0.63rem;
-        letter-spacing: 0.2em;
-        text-transform: uppercase;
-        color: #8199c6;
-      }
-
-      .platform-section {
-        margin: 14px 8px 8px;
         font-size: 0.62rem;
         letter-spacing: 0.24em;
         text-transform: uppercase;
-        color: var(--ink-soft);
+        color: var(--ink-muted);
+      }
+
+      .platform-section {
+        margin: 16px 8px 8px;
+        font-size: 0.58rem;
+        letter-spacing: 0.24em;
+        text-transform: uppercase;
+        color: var(--ink-muted);
+        position: relative;
+        z-index: 1;
       }
 
       .platform-nav {
         display: flex;
         flex-direction: column;
         gap: 6px;
+        position: relative;
+        z-index: 1;
       }
 
       .platform-link {
         display: flex;
         align-items: center;
         gap: 8px;
-        padding: 10px 11px;
-        border-radius: 11px;
-        color: #90a7d8;
+        padding: 11px 12px;
+        border-radius: 14px;
+        color: #9eb3d9;
         text-decoration: none;
-        border: 1px solid transparent;
+        border: 1px solid rgba(117, 148, 214, 0.06);
         font-size: 0.84rem;
-        font-weight: 500;
+        font-weight: 600;
+        transition: transform 140ms ease, border-color 140ms ease, background 140ms ease, color 140ms ease;
       }
 
       .platform-link .link-icon {
@@ -164,15 +207,16 @@ export function renderChatPage(): string {
       }
 
       .platform-link:hover {
-        background: rgba(24, 49, 112, 0.45);
-        border-color: #2f4f9e;
+        transform: translateX(2px);
+        background: rgba(33, 62, 129, 0.36);
+        border-color: rgba(112, 152, 244, 0.26);
       }
 
       .platform-link.active {
-        background: linear-gradient(135deg, #4e3dff, #5d4dff 55%, #6d5dff);
-        border-color: rgba(143, 160, 255, 0.48);
+        background: linear-gradient(135deg, rgba(72, 99, 255, 0.9), rgba(89, 92, 255, 0.92) 54%, rgba(109, 208, 255, 0.82));
+        border-color: rgba(151, 191, 255, 0.4);
         color: #f3f8ff;
-        box-shadow: 0 10px 22px rgba(82, 74, 255, 0.32);
+        box-shadow: 0 14px 28px rgba(67, 93, 222, 0.28);
       }
 
       .platform-link.active .link-icon {
@@ -184,27 +228,30 @@ export function renderChatPage(): string {
         display: flex;
         flex-direction: column;
         gap: 10px;
+        position: relative;
+        z-index: 1;
       }
 
       .platform-user {
         display: flex;
         align-items: center;
         gap: 10px;
-        border: 1px solid #1d366f;
-        border-radius: 12px;
-        padding: 9px 10px;
-        background: rgba(8, 20, 53, 0.92);
+        border: 1px solid rgba(111, 147, 220, 0.14);
+        border-radius: 16px;
+        padding: 11px 12px;
+        background: rgba(10, 24, 58, 0.76);
       }
 
       .platform-user-avatar {
         width: 28px;
         height: 28px;
-        border-radius: 9px;
+        border-radius: 11px;
         display: grid;
         place-items: center;
         border: 1px solid #2f4d95;
         color: #9cb3e3;
-        background: rgba(12, 29, 72, 0.9);
+        background: rgba(13, 31, 78, 0.9);
+        box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.06);
       }
 
       .platform-user small {
@@ -226,10 +273,10 @@ export function renderChatPage(): string {
         align-items: center;
         justify-content: space-between;
         gap: 8px;
-        border: 1px solid #1e366f;
-        border-radius: 12px;
-        padding: 8px 10px 8px 11px;
-        background: rgba(7, 17, 46, 0.9);
+        border: 1px solid rgba(111, 147, 220, 0.14);
+        border-radius: 16px;
+        padding: 9px 11px 9px 12px;
+        background: rgba(7, 18, 45, 0.82);
       }
 
       .platform-support span {
@@ -244,59 +291,116 @@ export function renderChatPage(): string {
       }
 
       .logout-btn {
-        border: 1px solid #2f4e9f;
-        border-radius: 10px;
-        background: rgba(15, 33, 79, 0.92);
+        border: 1px solid rgba(122, 155, 226, 0.22);
+        border-radius: 12px;
+        background: rgba(16, 36, 84, 0.9);
         color: #cfddff;
-        padding: 6px 9px;
+        padding: 7px 10px;
         font-family: "JetBrains Mono", monospace;
         font-size: 0.64rem;
         cursor: pointer;
       }
 
       .history-panel {
+        position: relative;
         border: 1px solid var(--line);
-        border-left: none;
-        border-right: 1px solid #123065;
-        border-radius: 0;
-        background: linear-gradient(180deg, rgba(6, 18, 49, 0.98), rgba(5, 14, 37, 0.98));
+        border-radius: 28px;
+        background: linear-gradient(180deg, rgba(8, 20, 50, 0.98), rgba(5, 15, 38, 0.98));
         box-shadow: var(--shadow);
         backdrop-filter: blur(16px);
         display: flex;
         flex-direction: column;
         gap: 12px;
-        padding: 12px 12px 11px;
-        height: 100vh;
+        padding: 14px 14px 12px;
+        height: calc(100vh - 28px);
         min-height: 0;
         overflow: hidden;
+        transition: width 220ms ease, padding 220ms ease, border-color 220ms ease, box-shadow 220ms ease;
+      }
+
+      .history-panel::before {
+        content: "";
+        position: absolute;
+        inset: 0;
+        pointer-events: none;
+        background:
+          linear-gradient(180deg, rgba(255, 255, 255, 0.04), transparent 24%),
+          radial-gradient(circle at 100% 0%, rgba(102, 167, 255, 0.12), transparent 28%);
       }
 
       .history-title {
         display: flex;
         justify-content: space-between;
         align-items: center;
-        padding: 7px 10px 12px;
+        gap: 10px;
+        padding: 10px 10px 12px;
         margin-bottom: 2px;
-        border-radius: 12px;
-        border-bottom: 1px solid #1a3a75;
+        border-radius: 16px;
+        border-bottom: 1px solid rgba(126, 159, 228, 0.12);
+        position: relative;
+        z-index: 1;
+      }
+
+      .history-title-copy {
+        display: flex;
+        flex-direction: column;
+        gap: 3px;
+        min-width: 0;
+        transition: opacity 180ms ease, transform 180ms ease;
+      }
+
+      .history-kicker {
+        font-size: 0.58rem;
+        letter-spacing: 0.18em;
+        text-transform: uppercase;
+        color: var(--ink-muted);
       }
 
       .history-title strong {
-        font-size: 0.92rem;
+        font-size: 1rem;
         letter-spacing: 0.02em;
       }
 
       .new-chat-btn {
         appearance: none;
-        border: 1px solid #2f4f9d;
+        border: 1px solid rgba(125, 160, 232, 0.18);
         border-radius: 999px;
-        width: 25px;
-        height: 25px;
+        width: 30px;
+        height: 30px;
         font-size: 0.92rem;
         line-height: 1;
         cursor: pointer;
         color: #d7e6ff;
-        background: linear-gradient(135deg, #0f2f7f, #1d4aa8);
+        background: linear-gradient(135deg, rgba(17, 42, 104, 0.96), rgba(39, 90, 180, 0.92));
+        box-shadow: 0 10px 20px rgba(38, 78, 164, 0.2);
+      }
+
+      .history-actions {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        flex-shrink: 0;
+      }
+
+      .history-toggle-btn {
+        appearance: none;
+        border: 1px solid rgba(125, 160, 232, 0.18);
+        border-radius: 999px;
+        width: 30px;
+        height: 30px;
+        font-size: 0.88rem;
+        line-height: 1;
+        cursor: pointer;
+        color: #d7e6ff;
+        background: rgba(12, 31, 78, 0.9);
+        box-shadow: 0 10px 20px rgba(19, 36, 85, 0.18);
+        transition: background 160ms ease, border-color 160ms ease, transform 160ms ease;
+      }
+
+      .history-toggle-btn:hover {
+        transform: translateY(-1px);
+        border-color: rgba(132, 183, 255, 0.3);
+        background: rgba(20, 43, 98, 0.94);
       }
 
       .new-chat-btn:disabled {
@@ -315,6 +419,7 @@ export function renderChatPage(): string {
         scrollbar-gutter: stable;
         scrollbar-width: thin;
         scrollbar-color: #1c3f85 #081b45;
+        transition: opacity 180ms ease, transform 180ms ease;
       }
 
       .history-list::-webkit-scrollbar {
@@ -327,35 +432,38 @@ export function renderChatPage(): string {
       }
 
       .history-empty {
-        border: 1px dashed #2d4d93;
-        border-radius: 12px;
-        padding: 12px;
+        border: 1px dashed rgba(123, 156, 226, 0.26);
+        border-radius: 16px;
+        padding: 14px;
         color: var(--ink-soft);
         font-size: 0.74rem;
-        background: rgba(10, 23, 57, 0.56);
+        background: rgba(10, 23, 57, 0.4);
       }
 
       .history-item {
         width: 100%;
         text-align: left;
-        padding: 10px 11px;
-        border-radius: 12px;
-        border: 1px solid #1f3b77;
-        background: rgba(9, 22, 57, 0.78);
+        padding: 12px 12px 11px;
+        border-radius: 16px;
+        border: 1px solid rgba(115, 145, 213, 0.1);
+        background: linear-gradient(180deg, rgba(10, 24, 58, 0.92), rgba(8, 20, 49, 0.92));
         color: inherit;
         cursor: pointer;
-        transition: border-color 130ms ease, transform 130ms ease, background 130ms ease;
+        transition: border-color 130ms ease, transform 130ms ease, background 130ms ease, box-shadow 130ms ease;
+        box-shadow: var(--shadow-soft);
       }
 
       .history-item.active {
-        border-color: #4f6cff;
-        background: linear-gradient(135deg, rgba(39, 58, 140, 0.82), rgba(18, 36, 94, 0.94));
-        box-shadow: inset 0 0 0 1px rgba(113, 126, 255, 0.2);
+        border-color: rgba(132, 183, 255, 0.34);
+        background: linear-gradient(135deg, rgba(42, 67, 163, 0.92), rgba(19, 38, 102, 0.98));
+        box-shadow:
+          inset 0 0 0 1px rgba(134, 168, 255, 0.14),
+          0 16px 30px rgba(29, 49, 115, 0.34);
       }
 
       .history-item:hover {
         transform: translateY(-1px);
-        border-color: #3156ab;
+        border-color: rgba(105, 154, 255, 0.28);
       }
 
       .history-item-head {
@@ -366,34 +474,97 @@ export function renderChatPage(): string {
 
       .history-item h3 {
         margin: 0;
-        font-size: 0.8rem;
+        font-size: 0.84rem;
         font-weight: 600;
       }
 
       .history-item time {
         font-family: "JetBrains Mono", monospace;
-        color: var(--ink-soft);
+        color: var(--ink-muted);
         font-size: 0.65rem;
       }
 
       .history-item p {
         margin: 6px 0 0;
         color: var(--ink-soft);
-        font-size: 0.71rem;
+        font-size: 0.72rem;
+      }
+
+      .layout.history-collapsed .history-panel {
+        padding: 14px 10px 12px;
+      }
+
+      .layout.history-collapsed .history-title {
+        flex-direction: column;
+        justify-content: flex-start;
+        align-items: center;
+        padding: 10px 4px 6px;
+        border-bottom: none;
+      }
+
+      .layout.history-collapsed .history-title-copy {
+        opacity: 0;
+        transform: translateX(-8px);
+        pointer-events: none;
+        position: absolute;
+      }
+
+      .layout.history-collapsed .history-actions {
+        flex-direction: column;
+        gap: 10px;
+        width: 100%;
+      }
+
+      .layout.history-collapsed .new-chat-btn,
+      .layout.history-collapsed .history-toggle-btn {
+        width: 36px;
+        height: 36px;
+      }
+
+      .layout.history-collapsed .history-list {
+        opacity: 0;
+        transform: translateX(-10px);
+        pointer-events: none;
+      }
+
+      .layout.history-collapsed .history-panel::after {
+        content: "Chats";
+        position: absolute;
+        top: 98px;
+        left: 50%;
+        transform: translateX(-50%) rotate(180deg);
+        writing-mode: vertical-rl;
+        font-family: "JetBrains Mono", monospace;
+        font-size: 0.62rem;
+        letter-spacing: 0.18em;
+        text-transform: uppercase;
+        color: #6f86b8;
       }
 
       .chat-shell {
+        position: relative;
         border: 1px solid var(--line);
-        border-left: none;
-        border-radius: 0;
-        background: linear-gradient(180deg, rgba(4, 11, 33, 0.98), rgba(2, 8, 26, 0.99));
+        border-radius: 32px;
+        background:
+          linear-gradient(180deg, rgba(5, 12, 34, 0.98), rgba(3, 10, 26, 0.99)),
+          radial-gradient(circle at 80% 0%, rgba(113, 122, 255, 0.12), transparent 24%);
         box-shadow: var(--shadow);
         backdrop-filter: blur(16px);
         display: grid;
         grid-template-rows: auto 1fr auto;
-        min-height: 100vh;
+        min-height: calc(100vh - 28px);
         overflow: hidden;
         animation: shell-reveal 360ms ease;
+      }
+
+      .chat-shell::before {
+        content: "";
+        position: absolute;
+        inset: 0;
+        pointer-events: none;
+        background:
+          linear-gradient(180deg, rgba(255, 255, 255, 0.035), transparent 18%),
+          radial-gradient(circle at 100% 0%, rgba(104, 167, 255, 0.12), transparent 26%);
       }
 
       @keyframes shell-reveal {
@@ -411,9 +582,11 @@ export function renderChatPage(): string {
         display: flex;
         justify-content: space-between;
         align-items: center;
-        padding: 11px 18px;
-        border-bottom: 1px solid #173b77;
-        background: linear-gradient(180deg, rgba(8, 19, 48, 0.98), rgba(7, 18, 44, 0.97));
+        padding: 14px 20px;
+        border-bottom: 1px solid rgba(126, 160, 227, 0.12);
+        background: linear-gradient(180deg, rgba(8, 19, 48, 0.94), rgba(7, 18, 44, 0.88));
+        position: relative;
+        z-index: 1;
       }
 
       .chat-head-left {
@@ -423,21 +596,21 @@ export function renderChatPage(): string {
       }
 
       .chat-head-mark {
-        width: 28px;
-        height: 28px;
-        border-radius: 10px;
-        border: 1px solid #3552a9;
-        background: linear-gradient(135deg, #4f3eff, #6557ff);
+        width: 34px;
+        height: 34px;
+        border-radius: 12px;
+        border: 1px solid rgba(127, 171, 255, 0.28);
+        background: linear-gradient(135deg, var(--accent), var(--accent-2) 58%, var(--accent-3));
         display: grid;
         place-items: center;
-        font-weight: 700;
+        font-weight: 800;
         color: #fff;
-        box-shadow: 0 8px 20px rgba(86, 74, 255, 0.34);
+        box-shadow: 0 12px 26px rgba(82, 102, 255, 0.28);
       }
 
       .chat-head-copy strong {
         display: block;
-        font-size: 0.96rem;
+        font-size: 1rem;
         letter-spacing: 0.01em;
       }
 
@@ -480,11 +653,42 @@ export function renderChatPage(): string {
       }
 
       .messages {
-        padding: 16px 22px 14px;
+        padding: 18px 22px 16px;
         overflow-y: auto;
-        max-height: calc(100vh - 178px);
-        background: linear-gradient(180deg, rgba(3, 10, 29, 0.98), rgba(2, 8, 24, 0.99));
+        min-height: 0;
+        background:
+          linear-gradient(180deg, rgba(3, 10, 29, 0.98), rgba(2, 8, 24, 0.99)),
+          radial-gradient(circle at 100% 0%, rgba(91, 118, 255, 0.08), transparent 22%);
       }
+
+        .messages.empty {
+          display: grid;
+          align-content: start;
+        }
+
+        .chat-empty-state {
+          width: min(760px, 100%);
+          padding: 18px 20px;
+          border-radius: 22px;
+          border: 1px solid rgba(118, 152, 226, 0.16);
+          background:
+            linear-gradient(180deg, rgba(10, 24, 58, 0.9), rgba(7, 18, 45, 0.92)),
+            radial-gradient(circle at 0% 0%, rgba(112, 178, 255, 0.1), transparent 28%);
+          box-shadow: var(--shadow-soft);
+        }
+
+        .chat-empty-state strong {
+          display: block;
+          font-size: 1rem;
+          letter-spacing: -0.01em;
+        }
+
+        .chat-empty-state p {
+          margin: 10px 0 0;
+          color: var(--ink-soft);
+          line-height: 1.6;
+          font-size: 0.9rem;
+        }
 
       .messages::-webkit-scrollbar {
         width: 9px;
@@ -497,10 +701,10 @@ export function renderChatPage(): string {
 
       .bubble {
         width: fit-content;
-        max-width: min(86%, 960px);
+        max-width: min(88%, 980px);
         margin-bottom: 13px;
-        padding: 12px 15px;
-        border-radius: 16px;
+        padding: 14px 16px;
+        border-radius: 20px;
         line-height: 1.6;
         word-break: break-word;
         font-size: 0.91rem;
@@ -508,16 +712,19 @@ export function renderChatPage(): string {
 
       .bubble.user {
         margin-left: auto;
-        color: #f7fbff;
-        background: linear-gradient(135deg, #4e40ff 0%, #5f4eff 55%, #6e5dff 100%);
-        border: 1px solid rgba(133, 120, 255, 0.44);
-        box-shadow: 0 12px 24px rgba(84, 73, 255, 0.34);
+        color: #f8fbff;
+        background: #3f63d8;
+        border: 1px solid rgba(153, 184, 255, 0.28);
+        box-shadow:
+          0 14px 30px rgba(36, 56, 128, 0.28),
+          inset 0 1px 0 rgba(255, 255, 255, 0.08);
         white-space: pre-wrap;
+        text-shadow: 0 1px 0 rgba(0, 0, 0, 0.12);
       }
 
       .bubble.assistant {
-        background: linear-gradient(160deg, rgba(8, 22, 56, 0.96), rgba(6, 18, 46, 0.96));
-        border: 1px solid #1f3f82;
+        background: linear-gradient(160deg, rgba(9, 24, 58, 0.96), rgba(6, 18, 46, 0.96));
+        border: 1px solid rgba(122, 156, 225, 0.14);
         box-shadow: 0 9px 22px rgba(1, 8, 26, 0.34);
       }
 
@@ -687,14 +894,22 @@ export function renderChatPage(): string {
 
       .exec-brief-actions {
         margin-top: 8px;
+      }
+
+      .exec-brief-actions,
+      .schedule-footer-actions,
+      .decision-actions {
         display: flex;
-        flex-wrap: wrap;
+        flex-wrap: nowrap;
         gap: 10px;
+        align-items: stretch;
       }
 
       .exec-brief-actions a {
         display: inline-flex;
         align-items: center;
+        justify-content: center;
+        flex: 1 1 0;
         padding: 5px 10px;
         border-radius: 10px;
         border: 1px solid rgba(93, 143, 232, 0.35);
@@ -702,6 +917,9 @@ export function renderChatPage(): string {
         color: #b9d2ff;
         font-size: 0.75rem;
         text-decoration: none;
+        text-align: center;
+        min-height: 40px;
+        width: auto;
       }
 
       .exec-brief-actions a:hover {
@@ -858,20 +1076,22 @@ export function renderChatPage(): string {
       }
 
       .composer {
-        border-top: 1px solid #173b77;
-        padding: 11px 14px 13px;
-        background: linear-gradient(180deg, rgba(6, 17, 44, 0.99), rgba(5, 14, 36, 0.99));
+        border-top: 1px solid rgba(126, 160, 227, 0.1);
+        padding: 16px 20px 20px;
+        background:
+          linear-gradient(180deg, rgba(6, 16, 43, 0.98), rgba(4, 12, 31, 0.99)),
+          radial-gradient(circle at 100% 0%, rgba(94, 129, 255, 0.08), transparent 24%);
       }
 
       .queries-bar-btn {
         display: inline-flex;
         align-items: center;
         gap: 5px;
-        border: 1px solid rgba(93, 143, 232, 0.22);
-        background: rgba(11, 27, 63, 0.7);
-        color: #6b90c4;
-        border-radius: 7px;
-        padding: 4px 11px;
+        border: 1px solid rgba(93, 143, 232, 0.18);
+        background: rgba(11, 27, 63, 0.54);
+        color: #8dafdd;
+        border-radius: 999px;
+        padding: 6px 12px;
         font-family: "JetBrains Mono", monospace;
         font-size: 0.67rem;
         cursor: pointer;
@@ -956,6 +1176,210 @@ export function renderChatPage(): string {
         overflow-y: auto;
         overflow-x: auto;
         padding: 0;
+      }
+
+      .schedule-modal-backdrop {
+        display: none;
+        position: fixed;
+        inset: 0;
+        background: rgba(2, 8, 23, 0.82);
+        z-index: 202;
+      }
+
+      .schedule-modal {
+        display: none;
+        position: fixed;
+        inset: 0;
+        z-index: 203;
+        align-items: center;
+        justify-content: center;
+        padding: 22px;
+      }
+
+      .schedule-modal.open {
+        display: flex;
+      }
+
+      .schedule-modal-panel {
+        width: min(1160px, 96vw);
+        max-height: 88vh;
+        border-radius: 22px;
+        border: 1px solid rgba(67, 110, 208, 0.45);
+        background: linear-gradient(180deg, rgba(7, 19, 49, 0.98), rgba(4, 12, 31, 0.99));
+        box-shadow: 0 32px 70px rgba(0, 0, 0, 0.55);
+        overflow: hidden;
+        display: flex;
+        flex-direction: column;
+      }
+
+      .schedule-modal-header {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 16px;
+        padding: 18px 20px 16px;
+        border-bottom: 1px solid rgba(74, 110, 192, 0.24);
+        background: linear-gradient(180deg, rgba(12, 29, 71, 0.8), rgba(8, 19, 49, 0.7));
+      }
+
+      .schedule-modal-title {
+        display: flex;
+        flex-direction: column;
+        gap: 5px;
+      }
+
+      .schedule-modal-title strong {
+        font-size: 1rem;
+      }
+
+      .schedule-modal-title span {
+        color: var(--ink-soft);
+        font-size: 0.82rem;
+        line-height: 1.5;
+      }
+
+      .schedule-modal-close {
+        border: 1px solid rgba(96, 129, 207, 0.24);
+        border-radius: 12px;
+        background: rgba(17, 37, 84, 0.88);
+        color: #d6e5ff;
+        width: 36px;
+        height: 36px;
+        cursor: pointer;
+      }
+
+      .schedule-modal-body {
+        display: grid;
+        grid-template-columns: minmax(0, 1.05fr) minmax(320px, 0.95fr);
+        gap: 16px;
+        padding: 18px;
+        overflow: auto;
+      }
+
+      .schedule-form-section,
+      .schedule-preview-section {
+        border: 1px solid rgba(85, 121, 203, 0.16);
+        border-radius: 20px;
+        background: rgba(8, 21, 52, 0.78);
+        padding: 16px;
+      }
+
+      .schedule-form-section h3,
+      .schedule-preview-section h3 {
+        margin: 0 0 6px;
+        font-size: 0.95rem;
+      }
+
+      .schedule-form-section p,
+      .schedule-preview-section p {
+        margin: 0 0 14px;
+        color: var(--ink-soft);
+        font-size: 0.82rem;
+        line-height: 1.6;
+      }
+
+      .schedule-grid {
+        display: grid;
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+        gap: 12px;
+        margin-bottom: 14px;
+      }
+
+      .schedule-field {
+        display: flex;
+        flex-direction: column;
+        gap: 7px;
+      }
+
+      .schedule-field label {
+        font-size: 0.68rem;
+        letter-spacing: 0.14em;
+        text-transform: uppercase;
+        color: var(--ink-muted);
+      }
+
+      .schedule-field input,
+      .schedule-field select,
+      .schedule-field textarea {
+        width: 100%;
+        border-radius: 14px;
+        border: 1px solid rgba(88, 125, 210, 0.22);
+        background: rgba(6, 16, 40, 0.94);
+        color: var(--ink);
+        padding: 11px 12px;
+        font: inherit;
+      }
+
+      .schedule-field textarea {
+        min-height: 94px;
+        resize: vertical;
+      }
+
+      .schedule-questions {
+        display: flex;
+        flex-direction: column;
+        gap: 12px;
+      }
+
+      .schedule-question-card,
+      .schedule-preview-card {
+        border-radius: 16px;
+        border: 1px solid rgba(88, 125, 210, 0.16);
+        background: rgba(4, 13, 34, 0.88);
+        padding: 12px 13px;
+      }
+
+      .schedule-question-card strong,
+      .schedule-preview-card strong {
+        display: block;
+        margin-bottom: 7px;
+        font-size: 0.82rem;
+      }
+
+      .schedule-question-card small,
+      .schedule-preview-card small {
+        display: block;
+        margin-bottom: 8px;
+        color: var(--ink-soft);
+        line-height: 1.55;
+        font-size: 0.75rem;
+      }
+
+      .schedule-modal-footer {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 12px;
+        padding: 16px 18px;
+        border-top: 1px solid rgba(74, 110, 192, 0.24);
+        background: rgba(5, 13, 33, 0.92);
+      }
+
+      .schedule-footer-note {
+        color: var(--ink-soft);
+        font-size: 0.78rem;
+      }
+
+      .schedule-btn {
+        border-radius: 14px;
+        padding: 10px 14px;
+        border: 1px solid rgba(88, 125, 210, 0.18);
+        background: rgba(11, 28, 67, 0.82);
+        color: var(--ink);
+        cursor: pointer;
+        font-weight: 700;
+        width: auto;
+        min-height: 46px;
+        flex: 1 1 0;
+      }
+
+      .schedule-btn.primary {
+        border-color: rgba(138, 184, 255, 0.34);
+        background: linear-gradient(135deg, rgba(79, 112, 255, 0.96), rgba(92, 199, 255, 0.88));
+      }
+
+      .schedule-inline-hidden {
+        display: none;
       }
 
       /* Queries table */
@@ -1047,16 +1471,21 @@ export function renderChatPage(): string {
       .composer form {
         display: grid;
         grid-template-columns: 1fr auto;
-        gap: 9px;
+        gap: 12px;
+        padding: 10px;
+        border: 1px solid rgba(126, 160, 227, 0.14);
+        border-radius: 22px;
+        background: rgba(8, 19, 46, 0.78);
+        box-shadow: var(--shadow-soft);
       }
 
       .composer textarea {
         width: 100%;
         border-radius: 16px;
-        border: 1px solid #2f4d95;
-        padding: 14px 16px 13px;
-        min-height: 54px;
-        background: rgba(9, 24, 58, 0.94);
+        border: 1px solid rgba(126, 160, 227, 0.16);
+        padding: 14px 15px 13px;
+        min-height: 52px;
+        background: rgba(6, 18, 46, 0.9);
         font-family: "JetBrains Mono", monospace;
         font-size: 0.8rem;
         color: #edf3ff;
@@ -1071,17 +1500,17 @@ export function renderChatPage(): string {
       }
 
       .composer button {
-        border: 1px solid rgba(128, 144, 255, 0.48);
-        border-radius: 15px;
-        width: 64px;
-        min-height: 54px;
+        border: 1px solid rgba(149, 186, 255, 0.32);
+        border-radius: 16px;
+        width: 70px;
+        min-height: 52px;
         cursor: pointer;
         color: #ffffff;
-        background: linear-gradient(135deg, #4f3eff, #5f4dff 56%, #6c5cff);
-        font-family: "Space Grotesk", sans-serif;
+        background: linear-gradient(135deg, #4f87ff, #595eff 58%, #73cfff);
+        font-family: "Mona Sans", sans-serif;
         font-weight: 700;
         letter-spacing: 0;
-        box-shadow: 0 10px 22px var(--glow);
+        box-shadow: 0 14px 30px var(--glow);
         transition: transform 140ms ease, filter 140ms ease, box-shadow 140ms ease;
       }
 
@@ -1098,10 +1527,11 @@ export function renderChatPage(): string {
 
       .decision-panel {
         margin-bottom: 10px;
-        border: 1px solid #29498f;
-        background: rgba(8, 23, 58, 0.9);
-        border-radius: 14px;
-        padding: 11px 12px;
+        border: 1px solid rgba(126, 160, 227, 0.14);
+        background: rgba(8, 23, 58, 0.74);
+        border-radius: 18px;
+        padding: 13px 14px;
+        box-shadow: var(--shadow-soft);
       }
 
       .decision-panel.hidden {
@@ -1112,12 +1542,6 @@ export function renderChatPage(): string {
         font-size: 0.8rem;
         color: var(--ink-soft);
         margin-bottom: 9px;
-      }
-
-      .decision-actions {
-        display: flex;
-        flex-wrap: wrap;
-        gap: 8px;
       }
 
       .decision-btn {
@@ -1131,6 +1555,13 @@ export function renderChatPage(): string {
         cursor: pointer;
         box-shadow: 0 8px 18px rgba(84, 73, 255, 0.3);
         transition: transform 120ms ease, filter 120ms ease;
+        width: auto;
+        min-height: 54px;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        text-align: center;
+        flex: 1 1 0;
       }
 
       .decision-btn:hover {
@@ -1142,10 +1573,14 @@ export function renderChatPage(): string {
         .page {
           width: 100%;
           margin: 0;
+          padding: 0;
         }
 
         .layout {
           grid-template-columns: 1fr;
+          gap: 0;
+          height: 100vh;
+          min-height: 100vh;
         }
 
         .platform-panel {
@@ -1159,6 +1594,7 @@ export function renderChatPage(): string {
         .chat-shell {
           border-left: 1px solid var(--line);
           border-radius: 0;
+          min-height: 100vh;
         }
       }
 
@@ -1170,7 +1606,7 @@ export function renderChatPage(): string {
 
         .messages {
           padding: 14px;
-          max-height: calc(100vh - 154px);
+          min-height: 0;
         }
 
         .bubble {
@@ -1188,18 +1624,24 @@ export function renderChatPage(): string {
         .composer button {
           width: 100%;
         }
+
+        .exec-brief-actions,
+        .schedule-footer-actions,
+        .decision-actions {
+          flex-direction: column;
+        }
       }
     </style>
   </head>
   <body>
     <div class="page">
-      <div class="layout">
+      <div class="layout" id="workspace-layout">
         <aside class="platform-panel">
           <div class="platform-brand">
             <div class="platform-brand-badge">*</div>
             <div>
               <strong>Project Overload</strong>
-              <span>Enterprise</span>
+              <span>Decision cockpit</span>
             </div>
           </div>
           <div class="platform-section">Core Platform</div>
@@ -1210,6 +1652,7 @@ export function renderChatPage(): string {
           <div class="platform-section">Infrastructure</div>
           <nav class="platform-nav">
             <a class="platform-link" href="/connect"><span class="link-icon"><svg viewBox="0 0 24 24"><ellipse cx="12" cy="5" rx="9" ry="3"/><path d="M21 12c0 1.66-4 3-9 3s-9-1.34-9-3"/><path d="M3 5v14c0 1.66 4 3 9 3s9-1.34 9-3V5"/></svg></span>Data Sources</a>
+            <a class="platform-link" href="/scheduled"><span class="link-icon"><svg viewBox="0 0 24 24"><rect x="3" y="4" width="18" height="18" rx="2"/><path d="M16 2v4"/><path d="M8 2v4"/><path d="M3 10h18"/><path d="M8 14h3"/><path d="M8 18h6"/></svg></span>Scheduled Reports</a>
             <a class="platform-link" href="/config"><span class="link-icon"><svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83-2.83l.06-.06A1.65 1.65 0 0 0 4.68 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 2.83-2.83l.06.06A1.65 1.65 0 0 0 9 4.68a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 2.83l-.06.06A1.65 1.65 0 0 0 19.4 9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg></span>Global Config</a>
           </nav>
           <div class="platform-footer">
@@ -1230,8 +1673,14 @@ export function renderChatPage(): string {
         </aside>
         <aside class="history-panel">
           <div class="history-title">
-            <strong>Chat History</strong>
-            <button id="new-chat-button" class="new-chat-btn" type="button" aria-label="Start new chat">+</button>
+            <div class="history-title-copy">
+              <span class="history-kicker">Live Memory</span>
+              <strong>Chat History</strong>
+            </div>
+            <div class="history-actions">
+              <button id="history-toggle-button" class="history-toggle-btn" type="button" aria-label="Collapse chat history">◀</button>
+              <button id="new-chat-button" class="new-chat-btn" type="button" aria-label="Start new chat">+</button>
+            </div>
           </div>
           <div class="history-list" id="history-list">
             <div class="history-empty">No chats yet. Start a new chat.</div>
@@ -1243,6 +1692,7 @@ export function renderChatPage(): string {
               <div class="chat-head-mark">*</div>
               <div class="chat-head-copy">
                 <strong id="chat-session-title">New Chat</strong>
+                <span class="chat-subtitle">Decision intelligence workspace</span>
               </div>
             </div>
             <div class="chat-head-right">
@@ -1268,6 +1718,86 @@ export function renderChatPage(): string {
               <div class="queries-modal-body" id="queries-modal-body"></div>
             </div>
           </div>
+          <div class="schedule-modal-backdrop" id="schedule-modal-backdrop"></div>
+          <div class="schedule-modal" id="schedule-modal">
+            <div class="schedule-modal-panel">
+              <div class="schedule-modal-header">
+                <div class="schedule-modal-title">
+                  <strong>Schedule this report</strong>
+                  <span id="schedule-modal-subtitle">Capture cadence, rolling-window behavior, and any rerun notes before we save the schedule.</span>
+                </div>
+                <button class="schedule-modal-close" id="schedule-modal-close" type="button">&#x2715;</button>
+              </div>
+              <div class="schedule-modal-body">
+                <section class="schedule-form-section">
+                  <h3>Schedule setup</h3>
+                  <p>Tell us how often this report should run and how each scoped question should move forward over time.</p>
+                  <div class="schedule-grid">
+                    <div class="schedule-field">
+                      <label for="schedule-frequency">Frequency</label>
+                      <select id="schedule-frequency">
+                        <option value="weekly">Weekly</option>
+                        <option value="monthly" selected>Monthly</option>
+                        <option value="quarterly">Quarterly</option>
+                      </select>
+                    </div>
+                    <div class="schedule-field">
+                      <label for="schedule-timezone">Timezone</label>
+                      <input id="schedule-timezone" type="text" value="UTC" />
+                    </div>
+                    <div class="schedule-field" id="schedule-weekday-field">
+                      <label for="schedule-weekday">Weekday</label>
+                      <select id="schedule-weekday">
+                        <option value="1">Monday</option>
+                        <option value="2">Tuesday</option>
+                        <option value="3">Wednesday</option>
+                        <option value="4">Thursday</option>
+                        <option value="5" selected>Friday</option>
+                        <option value="6">Saturday</option>
+                        <option value="0">Sunday</option>
+                      </select>
+                    </div>
+                    <div class="schedule-field schedule-inline-hidden" id="schedule-monthday-field">
+                      <label for="schedule-monthday">Day of month</label>
+                      <input id="schedule-monthday" type="number" min="1" max="28" value="1" />
+                    </div>
+                    <div class="schedule-field">
+                      <label for="schedule-hour">Hour (UTC)</label>
+                      <input id="schedule-hour" type="number" min="0" max="23" value="9" />
+                    </div>
+                    <div class="schedule-field">
+                      <label for="schedule-minute">Minute (UTC)</label>
+                      <input id="schedule-minute" type="number" min="0" max="59" value="0" />
+                    </div>
+                  </div>
+                  <div class="schedule-field">
+                    <label for="schedule-windowing">How should the time windows change on each run?</label>
+                    <textarea id="schedule-windowing">Roll each scoped time window forward to the latest complete reporting period on every scheduled run.</textarea>
+                  </div>
+                  <div class="schedule-field" style="margin-top:14px;">
+                    <label for="schedule-additional">Any other changes you want me to know?</label>
+                    <textarea id="schedule-additional" placeholder="Optional notes for reruns, audience nuances, or delivery caveats."></textarea>
+                  </div>
+                  <div class="schedule-field" style="margin-top:14px;">
+                    <label>Per-question rerun behavior</label>
+                    <div id="schedule-question-list" class="schedule-questions"></div>
+                  </div>
+                </section>
+                <aside class="schedule-preview-section">
+                  <h3>Saved understanding</h3>
+                  <p>This is the exact plan that will be stored with the schedule and used on future reruns.</p>
+                  <div id="schedule-preview-content"></div>
+                </aside>
+              </div>
+              <div class="schedule-modal-footer">
+                <div class="schedule-footer-note" id="schedule-footer-note">We’ll save the cadence, question-level rerun logic, query templates, and the current HTML template snapshot.</div>
+                <div class="schedule-footer-actions">
+                  <button class="schedule-btn" id="schedule-cancel" type="button">Cancel</button>
+                  <button class="schedule-btn primary" id="schedule-save" type="button">Save schedule</button>
+                </div>
+              </div>
+            </div>
+          </div>
         </main>
       </div>
     </div>
@@ -1276,13 +1806,13 @@ export function renderChatPage(): string {
       (() => {
         const CHAT_STORAGE_KEY = "project_overload_chat_sessions_v1";
         const MAX_STORED_CHATS = 30;
+        const HISTORY_COLLAPSED_KEY = "project_overload_chat_history_collapsed_v1";
         const UI_CONTROL_MESSAGE_PATTERN = /^__ui_[a-z0-9_]+__$/i;
-        const INITIAL_ASSISTANT_MESSAGE =
-          "Hey! Tell me what report you'd like to build - **who's the audience** and **what metric matters most**? I'll handle the rest.";
-
-        const stateRef = { value: null };
+          const stateRef = { value: null };
         const chatsRef = { value: [] };
         const activeChatIdRef = { value: null };
+        const historyCollapsedRef = { value: false };
+        const layoutEl = document.getElementById("workspace-layout");
         const messagesEl = document.getElementById("messages");
         const statusEl = document.getElementById("status");
         const inputEl = document.getElementById("composer-input");
@@ -1294,13 +1824,33 @@ export function renderChatPage(): string {
         const queriesModalBackdropEl = document.getElementById("queries-modal-backdrop");
         const queriesModalBodyEl = document.getElementById("queries-modal-body");
         const queriesModalTitleEl = document.getElementById("queries-modal-title");
+        const scheduleModalEl = document.getElementById("schedule-modal");
+        const scheduleModalBackdropEl = document.getElementById("schedule-modal-backdrop");
+        const scheduleModalSubtitleEl = document.getElementById("schedule-modal-subtitle");
+        const scheduleQuestionListEl = document.getElementById("schedule-question-list");
+        const schedulePreviewContentEl = document.getElementById("schedule-preview-content");
+        const scheduleFooterNoteEl = document.getElementById("schedule-footer-note");
+        const scheduleFrequencyEl = document.getElementById("schedule-frequency");
+        const scheduleTimezoneEl = document.getElementById("schedule-timezone");
+        const scheduleWeekdayFieldEl = document.getElementById("schedule-weekday-field");
+        const scheduleWeekdayEl = document.getElementById("schedule-weekday");
+        const scheduleMonthdayFieldEl = document.getElementById("schedule-monthday-field");
+        const scheduleMonthdayEl = document.getElementById("schedule-monthday");
+        const scheduleHourEl = document.getElementById("schedule-hour");
+        const scheduleMinuteEl = document.getElementById("schedule-minute");
+        const scheduleWindowingEl = document.getElementById("schedule-windowing");
+        const scheduleAdditionalEl = document.getElementById("schedule-additional");
+        const scheduleSaveEl = document.getElementById("schedule-save");
+        const scheduleCancelEl = document.getElementById("schedule-cancel");
         const historyListEl = document.getElementById("history-list");
+        const historyToggleButtonEl = document.getElementById("history-toggle-button");
         const newChatButtonEl = document.getElementById("new-chat-button");
         const chatSessionTitleEl = document.getElementById("chat-session-title");
         const runtimeStatusRef = { mode: "checking provider", busy: false };
         const composerStateRef = { busy: false, locked: false };
         const decisionRef = { value: null };
         const serverSyncRef = { timer: null, inFlight: false, queued: false };
+        const scheduleModalStateRef = { runId: null, contractId: null, reportTitle: null, questions: [] };
         let activeRunPollId = null;   // prevents duplicate polling loops for async runs
         const defaultInputPlaceholder =
           "Describe the report you want, e.g. weekly refund analysis by product category";
@@ -1333,6 +1883,51 @@ export function renderChatPage(): string {
             return text;
           }
           return text.slice(0, maxLength - 3).trimEnd() + "...";
+        }
+
+        function loadHistoryCollapsedPreference() {
+          try {
+            historyCollapsedRef.value = localStorage.getItem(HISTORY_COLLAPSED_KEY) === "1";
+          } catch {
+            historyCollapsedRef.value = false;
+          }
+        }
+
+        function saveHistoryCollapsedPreference() {
+          try {
+            localStorage.setItem(HISTORY_COLLAPSED_KEY, historyCollapsedRef.value ? "1" : "0");
+          } catch {
+            // ignore storage write failures
+          }
+        }
+
+        function applyHistoryCollapsedState() {
+          if (layoutEl) {
+            layoutEl.classList.toggle("history-collapsed", historyCollapsedRef.value);
+          }
+          if (historyToggleButtonEl) {
+            historyToggleButtonEl.textContent = historyCollapsedRef.value ? "▶" : "◀";
+            historyToggleButtonEl.setAttribute(
+              "aria-label",
+              historyCollapsedRef.value ? "Expand chat history" : "Collapse chat history"
+            );
+            historyToggleButtonEl.setAttribute("title", historyCollapsedRef.value ? "Expand chat history" : "Collapse chat history");
+          }
+        }
+
+        function toggleHistoryCollapsed() {
+          historyCollapsedRef.value = !historyCollapsedRef.value;
+          applyHistoryCollapsedState();
+          saveHistoryCollapsedPreference();
+        }
+
+        function escapeHtml(value) {
+          return String(value == null ? "" : value)
+            .replace(/&/g, "&amp;")
+            .replace(/</g, "&lt;")
+            .replace(/>/g, "&gt;")
+            .replace(/"/g, "&quot;")
+            .replace(/'/g, "&#39;");
         }
 
         function sanitizeTitle(value) {
@@ -1476,27 +2071,19 @@ export function renderChatPage(): string {
 
         function createEmptyChatSession() {
           const createdAt = nowIso();
-          return {
-            id: createChatId(),
-            title: "New Chat",
-            title_auto: true,
-            naming_in_progress: false,
-            created_at: createdAt,
-            updated_at: createdAt,
-            state: null,
-            user_messages: [],
-            db_bootstrapped: false,
-            messages: [
-              {
-                role: "assistant",
-                text: INITIAL_ASSISTANT_MESSAGE,
-                download_url: null,
-                exec_brief_html: null,
-                at: createdAt
-              }
-            ]
-          };
-        }
+            return {
+              id: createChatId(),
+              title: "New Chat",
+              title_auto: true,
+              naming_in_progress: false,
+              created_at: createdAt,
+              updated_at: createdAt,
+              state: null,
+              user_messages: [],
+              db_bootstrapped: false,
+              messages: []
+            };
+          }
 
         function normalizeStoredMessage(raw) {
           if (!raw || (raw.role !== "user" && raw.role !== "assistant")) {
@@ -1527,16 +2114,6 @@ export function renderChatPage(): string {
             .map((entry) => normalizeStoredMessage(entry))
             .filter((entry) => entry !== null);
 
-          if (messages.length === 0) {
-            messages.push({
-              role: "assistant",
-              text: INITIAL_ASSISTANT_MESSAGE,
-              download_url: null,
-              exec_brief_html: null,
-              at: nowIso()
-            });
-          }
-
           const userMessages = Array.isArray(raw.user_messages)
             ? raw.user_messages
                 .map((entry) => String(entry || "").trim())
@@ -1552,7 +2129,7 @@ export function renderChatPage(): string {
             rawState.pending_run_id = null;
           }
 
-          return {
+          const normalized = {
             id: raw.id,
             title: sanitizeTitle(raw.title),
             title_auto: raw.title_auto !== false,
@@ -1564,6 +2141,10 @@ export function renderChatPage(): string {
             db_bootstrapped: typeof raw.db_bootstrapped === "boolean" ? raw.db_bootstrapped : true,
             messages
           };
+          if (normalized.state) {
+            normalized.state.session_title = normalized.title === "New Chat" ? null : normalized.title;
+          }
+          return normalized;
         }
 
         function loadChatsFromStorage() {
@@ -1675,6 +2256,14 @@ export function renderChatPage(): string {
           chat.updated_at = nowIso();
         }
 
+        function syncChatTitleToState(chat) {
+          if (!chat || !chat.state || typeof chat.state !== "object") {
+            return;
+          }
+          const sanitizedTitle = sanitizeTitle(chat.title);
+          chat.state.session_title = sanitizedTitle === "New Chat" ? null : sanitizedTitle;
+        }
+
         function getChatById(chatId) {
           return chatsRef.value.find((entry) => entry.id === chatId) || null;
         }
@@ -1694,6 +2283,7 @@ export function renderChatPage(): string {
             return;
           }
           chat.state = cloneJson(nextState);
+          syncChatTitleToState(chat);
           touchChat(chat);
           saveChatsToStorage();
           renderHistoryList();
@@ -2063,14 +2653,18 @@ export function renderChatPage(): string {
             state.report_clarification_active === true ||
             state.business_case_active === true
           ) {
+            const options = [
+              { label: "Ask clarifications on the report", command: "__ui_report_clarifications__" },
+              { label: "Ask for business case analysis", command: "__ui_business_case_analysis__" }
+            ];
+            if (state.scheduled_report_view !== true) {
+              options.push({ label: "Schedule this report", command: "__ui_schedule_report_modal__" });
+            }
             return {
               kind: "post-run",
               title: "Analysis is complete.",
               lockPlaceholder: "Ask questions on the report or start business case analysis.",
-              options: [
-                { label: "Ask clarifications on the report", command: "__ui_report_clarifications__" },
-                { label: "Ask for business case analysis", command: "__ui_business_case_analysis__" }
-              ]
+              options
             };
           }
 
@@ -2382,6 +2976,10 @@ export function renderChatPage(): string {
             button.className = "decision-btn";
             button.textContent = option.label;
             button.addEventListener("click", () => {
+              if (option.command === "__ui_schedule_report_modal__") {
+                void openScheduleModal();
+                return;
+              }
               submitMessage(option.command, {
                 displayMessage: option.label,
                 forceWhenLocked: true,
@@ -2662,9 +3260,22 @@ export function renderChatPage(): string {
           messagesEl.innerHTML = "";
           const active = getActiveChat();
           if (!active) {
+            messagesEl.classList.add("empty");
             updateQueriesBtn();
             return;
           }
+          if (!Array.isArray(active.messages) || active.messages.length === 0) {
+            messagesEl.classList.add("empty");
+            const emptyState = document.createElement("div");
+            emptyState.className = "chat-empty-state";
+            emptyState.innerHTML =
+              "<strong>Tell me what report you want to build.</strong>" +
+              "<p>Start with the business question, metric, or decision you care about. If a governed source is already connected, I’ll pick up from there.</p>";
+            messagesEl.appendChild(emptyState);
+            updateQueriesBtn();
+            return;
+          }
+          messagesEl.classList.remove("empty");
           for (const entry of active.messages) {
             renderMessageBubble(entry);
           }
@@ -2703,12 +3314,127 @@ export function renderChatPage(): string {
           }
         }
 
+        function canEditPreparedQueries(chat) {
+          return Boolean(
+            chat &&
+            chat.state &&
+            chat.state.prep_complete === true &&
+            !chat.state.pending_run_id &&
+            !chat.state.last_run_id
+          );
+        }
+
+        async function copyTextToClipboard(text) {
+          const value = String(text || "");
+          try {
+            if (navigator.clipboard && typeof navigator.clipboard.writeText === "function") {
+              await navigator.clipboard.writeText(value);
+              return true;
+            }
+          } catch (_error) {
+            // fall back below
+          }
+          const helper = document.createElement("textarea");
+          helper.value = value;
+          helper.setAttribute("readonly", "readonly");
+          helper.style.position = "fixed";
+          helper.style.opacity = "0";
+          document.body.appendChild(helper);
+          helper.select();
+          var copied = false;
+          try {
+            copied = document.execCommand("copy");
+          } catch (_error) {
+            copied = false;
+          }
+          document.body.removeChild(helper);
+          return copied;
+        }
+
+        function updatePreparedQueryOverride(questionId, questionNumber, sql) {
+          const chat = getActiveChat();
+          if (!chat || !chat.state) { return false; }
+          const normalizedSql = String(sql || "").trim();
+          if (!normalizedSql) { return false; }
+
+          if (!Array.isArray(chat.state.prepared_query_overrides)) {
+            chat.state.prepared_query_overrides = [];
+          }
+          if (Array.isArray(chat.state.prepared_payloads)) {
+            chat.state.prepared_payloads = chat.state.prepared_payloads.map(function (payload) {
+              if (payload && payload.question_id === questionId) {
+                return {
+                  ...payload,
+                  preparation_sqls: [normalizedSql]
+                };
+              }
+              if (
+                payload &&
+                typeof questionNumber === "number" &&
+                payload.question_number === questionNumber
+              ) {
+                return {
+                  ...payload,
+                  preparation_sqls: [normalizedSql]
+                };
+              }
+              return payload;
+            });
+          }
+
+          chat.state.prepared_query_overrides = chat.state.prepared_query_overrides.filter(function (entry) {
+            if (questionId && entry.question_id === questionId) { return false; }
+            if (typeof questionNumber === "number" && entry.question_number === questionNumber) { return false; }
+            return true;
+          });
+          chat.state.prepared_query_overrides.push({
+            question_id: questionId || null,
+            question_number: typeof questionNumber === "number" ? questionNumber : null,
+            sql: normalizedSql
+          });
+
+          chat.messages = chat.messages.map(function (message) {
+            if (!Array.isArray(message.prepared_payloads)) {
+              return message;
+            }
+            return {
+              ...message,
+              prepared_payloads: message.prepared_payloads.map(function (payload) {
+                if (payload && payload.question_id === questionId) {
+                  return {
+                    ...payload,
+                    preparation_sqls: [normalizedSql]
+                  };
+                }
+                if (
+                  payload &&
+                  typeof questionNumber === "number" &&
+                  payload.question_number === questionNumber
+                ) {
+                  return {
+                    ...payload,
+                    preparation_sqls: [normalizedSql]
+                  };
+                }
+                return payload;
+              })
+            };
+          });
+
+          touchChat(chat);
+          saveChatsToStorage();
+          renderHistoryList();
+          renderActiveChat();
+          return true;
+        }
+
         function openQueriesModal() {
           if (!queriesModalBodyEl) { return; }
           queriesModalBodyEl.innerHTML = "";
           const chat = getActiveChat();
           const runs = collectPreparedPayloads(chat);
           const singleQueries = collectSingleQueries(chat);
+          const allowPreparedQueryEdits = canEditPreparedQueries(chat);
           const prepQ = runs.reduce(function (sum, m) { return sum + m.prepared_payloads.length; }, 0);
           const totalQ = prepQ + singleQueries.length;
           if (queriesModalTitleEl) {
@@ -2890,6 +3616,77 @@ export function renderChatPage(): string {
                   pre.className = "qt-sql-code";
                   pre.textContent = sqls[0].trim();
                   tdSql.appendChild(pre);
+                  const actions = document.createElement("div");
+                  actions.style.cssText = "display:flex;gap:8px;flex-wrap:wrap;margin-top:10px;";
+
+                  const copyBtn = document.createElement("button");
+                  copyBtn.type = "button";
+                  copyBtn.textContent = "Copy query";
+                  copyBtn.style.cssText = "padding:7px 10px;border-radius:10px;border:1px solid rgba(108,143,225,0.28);background:rgba(15,30,70,0.92);color:#dbe8ff;font:600 0.74rem/1 'Mona Sans',sans-serif;cursor:pointer;";
+                  copyBtn.addEventListener("click", async function () {
+                    const copied = await copyTextToClipboard(sqls[0].trim());
+                    copyBtn.textContent = copied ? "Copied" : "Copy failed";
+                    window.setTimeout(function () {
+                      copyBtn.textContent = "Copy query";
+                    }, 1200);
+                  });
+                  actions.appendChild(copyBtn);
+
+                  if (allowPreparedQueryEdits) {
+                    const editBtn = document.createElement("button");
+                    editBtn.type = "button";
+                    editBtn.textContent = "Edit query";
+                    editBtn.style.cssText = "padding:7px 10px;border-radius:10px;border:1px solid rgba(115,170,255,0.34);background:rgba(53,86,188,0.2);color:#f5f8ff;font:600 0.74rem/1 'Mona Sans',sans-serif;cursor:pointer;";
+                    actions.appendChild(editBtn);
+
+                    const editorWrap = document.createElement("div");
+                    editorWrap.style.cssText = "display:none;margin-top:10px;";
+                    const editor = document.createElement("textarea");
+                    editor.value = sqls[0].trim();
+                    editor.style.cssText = "width:100%;min-height:140px;padding:12px 13px;border-radius:14px;border:1px solid rgba(94,128,215,0.28);background:rgba(6,16,42,0.96);color:#dfeaff;font:0.8rem/1.55 'JetBrains Mono',monospace;resize:vertical;";
+                    editorWrap.appendChild(editor);
+
+                    const editorActions = document.createElement("div");
+                    editorActions.style.cssText = "display:flex;gap:8px;flex-wrap:wrap;margin-top:10px;";
+
+                    const saveBtn = document.createElement("button");
+                    saveBtn.type = "button";
+                    saveBtn.textContent = "Save query";
+                    saveBtn.style.cssText = "padding:8px 12px;border-radius:10px;border:0;background:linear-gradient(135deg,#5f75ff,#69c2ff);color:#f8fbff;font:700 0.76rem/1 'Mona Sans',sans-serif;cursor:pointer;";
+                    saveBtn.addEventListener("click", function () {
+                      const updated = String(editor.value || "").trim();
+                      if (!updated) {
+                        return;
+                      }
+                      const saved = updatePreparedQueryOverride(p.question_id, p.question_number, updated);
+                      if (!saved) {
+                        return;
+                      }
+                      openQueriesModal();
+                    });
+                    editorActions.appendChild(saveBtn);
+
+                    const cancelBtn = document.createElement("button");
+                    cancelBtn.type = "button";
+                    cancelBtn.textContent = "Cancel";
+                    cancelBtn.style.cssText = "padding:8px 12px;border-radius:10px;border:1px solid rgba(108,143,225,0.28);background:rgba(15,30,70,0.92);color:#dbe8ff;font:600 0.76rem/1 'Mona Sans',sans-serif;cursor:pointer;";
+                    cancelBtn.addEventListener("click", function () {
+                      editorWrap.style.display = "none";
+                      editBtn.style.display = "";
+                    });
+                    editorActions.appendChild(cancelBtn);
+
+                    editorWrap.appendChild(editorActions);
+                    tdSql.appendChild(actions);
+                    tdSql.appendChild(editorWrap);
+
+                    editBtn.addEventListener("click", function () {
+                      editorWrap.style.display = "block";
+                      editBtn.style.display = "none";
+                    });
+                  } else {
+                    tdSql.appendChild(actions);
+                  }
                 } else {
                   tdSql.style.color = "#4a6080";
                   tdSql.textContent = "\u2014";
@@ -2947,6 +3744,363 @@ export function renderChatPage(): string {
         function closeQueriesModal() {
           if (queriesModalEl) { queriesModalEl.classList.remove("open"); }
           if (queriesModalBackdropEl) { queriesModalBackdropEl.style.display = "none"; }
+        }
+
+        function formatScheduleFrequencyLabel(value) {
+          if (value === "weekly") return "Weekly";
+          if (value === "monthly") return "Monthly";
+          if (value === "quarterly") return "Quarterly";
+          return "Scheduled";
+        }
+
+        function formatScheduleWeekday(value) {
+          const numeric = Number(value);
+          const labels = ["Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"];
+          return Number.isInteger(numeric) && numeric >= 0 && numeric < labels.length ? labels[numeric] : "Not set";
+        }
+
+        function toggleScheduleDayFields() {
+          if (!scheduleFrequencyEl || !scheduleWeekdayFieldEl || !scheduleMonthdayFieldEl) {
+            return;
+          }
+          const frequency = scheduleFrequencyEl.value;
+          const showWeekday = frequency === "weekly";
+          const showMonthday = frequency === "monthly" || frequency === "quarterly";
+          scheduleWeekdayFieldEl.classList.toggle("schedule-inline-hidden", !showWeekday);
+          scheduleMonthdayFieldEl.classList.toggle("schedule-inline-hidden", !showMonthday);
+        }
+
+        function getScheduleQuestionPlan() {
+          const questions = Array.isArray(scheduleModalStateRef.questions) ? scheduleModalStateRef.questions : [];
+          return questions.map(function (entry) {
+            const input = document.getElementById("schedule-question-" + entry.question_number);
+            const nextRunBehavior =
+              input && typeof input.value === "string" && input.value.trim().length > 0
+                ? input.value.trim()
+                : entry.suggested_next_run_behavior;
+            return {
+              question_number: entry.question_number,
+              question_text: entry.question_text,
+              current_scope_summary: entry.current_scope_summary,
+              next_run_behavior: nextRunBehavior
+            };
+          });
+        }
+
+        function renderSchedulePreview() {
+          if (!schedulePreviewContentEl || !scheduleFooterNoteEl) {
+            return;
+          }
+          const runId = scheduleModalStateRef.runId;
+          if (!runId) {
+            schedulePreviewContentEl.innerHTML = "";
+            return;
+          }
+          const frequency = scheduleFrequencyEl ? scheduleFrequencyEl.value : "monthly";
+          const timezone = scheduleTimezoneEl && scheduleTimezoneEl.value.trim().length > 0 ? scheduleTimezoneEl.value.trim() : "UTC";
+          const hour = scheduleHourEl ? Math.max(0, Math.min(23, Number(scheduleHourEl.value) || 0)) : 0;
+          const minute = scheduleMinuteEl ? Math.max(0, Math.min(59, Number(scheduleMinuteEl.value) || 0)) : 0;
+          const questionPlan = getScheduleQuestionPlan();
+          const cadenceBits = [formatScheduleFrequencyLabel(frequency), "at " + String(hour).padStart(2, "0") + ":" + String(minute).padStart(2, "0") + " UTC"];
+          if (frequency === "weekly") {
+            cadenceBits.push("on " + formatScheduleWeekday(scheduleWeekdayEl ? scheduleWeekdayEl.value : ""));
+          } else if (frequency === "monthly" || frequency === "quarterly") {
+            cadenceBits.push("on day " + String(scheduleMonthdayEl ? scheduleMonthdayEl.value : "1"));
+          }
+          schedulePreviewContentEl.innerHTML =
+            '<div class="schedule-preview-card">' +
+              "<strong>" + escapeHtml(scheduleModalStateRef.reportTitle || "Scheduled report") + "</strong>" +
+              "<small>" + escapeHtml(cadenceBits.join(" ")) + " in " + escapeHtml(timezone) + "</small>" +
+            "</div>" +
+            '<div class="schedule-preview-card">' +
+              "<strong>Windowing</strong>" +
+              "<small>" + escapeHtml((scheduleWindowingEl && scheduleWindowingEl.value.trim()) || "Roll forward to the latest complete reporting period on each run.") + "</small>" +
+            "</div>" +
+            questionPlan.map(function (entry) {
+              return (
+                '<div class="schedule-preview-card">' +
+                  "<strong>Q" + escapeHtml(entry.question_number) + ": " + escapeHtml(entry.question_text) + "</strong>" +
+                  "<small>Current scope: " + escapeHtml(entry.current_scope_summary) + "</small>" +
+                  '<small style="margin-top:8px;display:block;">Next run: ' + escapeHtml(entry.next_run_behavior) + "</small>" +
+                "</div>"
+              );
+            }).join("");
+          scheduleFooterNoteEl.textContent =
+            "We will save the cadence, question rerun plan, query templates, and the current HTML template snapshot for this report.";
+        }
+
+        function renderScheduleQuestionList() {
+          if (!scheduleQuestionListEl) {
+            return;
+          }
+          scheduleQuestionListEl.innerHTML = "";
+          const questions = Array.isArray(scheduleModalStateRef.questions) ? scheduleModalStateRef.questions : [];
+          for (const entry of questions) {
+            const card = document.createElement("div");
+            card.className = "schedule-question-card";
+            const heading = document.createElement("strong");
+            heading.textContent = "Q" + entry.question_number + ": " + entry.question_text;
+            card.appendChild(heading);
+            const scope = document.createElement("small");
+            scope.textContent = "Current scope: " + entry.current_scope_summary;
+            card.appendChild(scope);
+            const label = document.createElement("label");
+            label.textContent = "How should this question run next time?";
+            label.style.display = "block";
+            label.style.marginTop = "10px";
+            label.style.marginBottom = "6px";
+            label.style.color = "var(--ink-soft)";
+            label.style.fontSize = "0.74rem";
+            card.appendChild(label);
+            const input = document.createElement("textarea");
+            input.id = "schedule-question-" + entry.question_number;
+            input.value = entry.suggested_next_run_behavior;
+            input.rows = 3;
+            input.style.width = "100%";
+            input.addEventListener("input", renderSchedulePreview);
+            card.appendChild(input);
+            scheduleQuestionListEl.appendChild(card);
+          }
+        }
+
+        function closeScheduleModal() {
+          if (scheduleModalEl) {
+            scheduleModalEl.classList.remove("open");
+          }
+          if (scheduleModalBackdropEl) {
+            scheduleModalBackdropEl.style.display = "none";
+          }
+        }
+
+        function buildScheduleSavedMessage(understanding) {
+          const questions = Array.isArray(understanding && understanding.questions) ? understanding.questions : [];
+          const lines = [
+            "Scheduled report saved.",
+            "",
+            "Cadence: " + formatScheduleFrequencyLabel((understanding && understanding.frequency) || "monthly") + " in " + ((understanding && understanding.timezone) || "UTC"),
+            "Cron: " + ((understanding && understanding.schedule_cron) || "-")
+          ];
+          if (questions.length > 0) {
+            lines.push("");
+            lines.push("Saved question plan:");
+            for (const entry of questions) {
+              lines.push(
+                "- Q" + entry.question_number + ": " + entry.question_text
+              );
+              lines.push(
+                "  Next run: " + entry.next_run_behavior
+              );
+            }
+          }
+          lines.push("");
+          lines.push("You can now manage this report from Scheduled Reports in the sidebar.");
+          return lines.join("\\n");
+        }
+
+        async function openScheduleModal() {
+          if (!stateRef.value || !stateRef.value.last_run_id) {
+            appendMessage("assistant", "No completed report is available to schedule yet.", null, null, { trackForNaming: false });
+            return;
+          }
+          if (!scheduleModalEl || !scheduleModalBackdropEl || !scheduleFooterNoteEl || !scheduleQuestionListEl) {
+            return;
+          }
+          scheduleFooterNoteEl.textContent = "Loading schedule draft...";
+          scheduleQuestionListEl.innerHTML = '<div class="schedule-preview-card"><small>Loading the saved scope and rerun questions...</small></div>';
+          schedulePreviewContentEl.innerHTML = "";
+          scheduleModalSubtitleEl.textContent = "Capture cadence, rolling-window behavior, and any rerun notes before we save the schedule.";
+          scheduleModalEl.classList.add("open");
+          scheduleModalBackdropEl.style.display = "block";
+          try {
+            const response = await fetch("/api/runs/" + encodeURIComponent(stateRef.value.last_run_id) + "/schedule-draft");
+            const payload = await response.json();
+            if (!response.ok) {
+              throw new Error(payload && payload.message ? payload.message : "Unable to load schedule draft.");
+            }
+            const questions = Array.isArray(payload.questions) ? payload.questions : [];
+            scheduleModalStateRef.runId = payload.run_id || stateRef.value.last_run_id;
+            scheduleModalStateRef.contractId = payload.contract_id || stateRef.value.contract_id || null;
+            scheduleModalStateRef.reportTitle = payload.report_title || "Scheduled report";
+            scheduleModalStateRef.questions = questions.map(function (entry) {
+              return {
+                question_number: entry.question_number,
+                question_id: entry.question_id || null,
+                question_text: entry.question_text,
+                current_scope_summary: entry.current_scope_summary,
+                suggested_next_run_behavior: entry.suggested_next_run_behavior
+              };
+            });
+            if (scheduleFrequencyEl) {
+              scheduleFrequencyEl.value = (payload.defaults && payload.defaults.frequency) || "monthly";
+            }
+            if (scheduleTimezoneEl) {
+              scheduleTimezoneEl.value = payload.timezone || (payload.defaults && payload.defaults.timezone) || "UTC";
+            }
+            if (scheduleHourEl) {
+              scheduleHourEl.value = String((payload.defaults && payload.defaults.hour_utc) ?? 9);
+            }
+            if (scheduleMinuteEl) {
+              scheduleMinuteEl.value = String((payload.defaults && payload.defaults.minute_utc) ?? 0);
+            }
+            if (scheduleWeekdayEl) {
+              scheduleWeekdayEl.value = "1";
+            }
+            if (scheduleMonthdayEl) {
+              scheduleMonthdayEl.value = "1";
+            }
+            if (scheduleWindowingEl && (!scheduleWindowingEl.value || /Roll each scoped time window forward/i.test(scheduleWindowingEl.value))) {
+              scheduleWindowingEl.value = "Roll each scoped time window forward to the latest complete reporting period on every scheduled run.";
+            }
+            if (scheduleAdditionalEl) {
+              scheduleAdditionalEl.value = "";
+            }
+            scheduleModalSubtitleEl.textContent =
+              "Save how " + (scheduleModalStateRef.reportTitle || "this report") + " should rerun over time. We will keep the question set fixed unless you explicitly rescope it later.";
+            toggleScheduleDayFields();
+            renderScheduleQuestionList();
+            renderSchedulePreview();
+            if (scheduleFrequencyEl) {
+              scheduleFrequencyEl.focus();
+            }
+          } catch (error) {
+            scheduleFooterNoteEl.textContent = error instanceof Error ? error.message : "Unable to load schedule draft.";
+          }
+        }
+
+        async function saveScheduleProfile() {
+          if (!scheduleModalStateRef.runId || !scheduleSaveEl || !scheduleFooterNoteEl) {
+            return;
+          }
+          const frequency = scheduleFrequencyEl ? scheduleFrequencyEl.value : "monthly";
+          const timezone = scheduleTimezoneEl && scheduleTimezoneEl.value.trim().length > 0 ? scheduleTimezoneEl.value.trim() : "UTC";
+          const questionPlan = getScheduleQuestionPlan();
+          const missing = questionPlan.find(function (entry) {
+            return !entry.next_run_behavior || entry.next_run_behavior.trim().length === 0;
+          });
+          if (missing) {
+            scheduleFooterNoteEl.textContent = "Please confirm how Q" + missing.question_number + " should rerun before saving.";
+            return;
+          }
+          const payload = {
+            frequency,
+            timezone,
+            hour_utc: scheduleHourEl ? Math.max(0, Math.min(23, Number(scheduleHourEl.value) || 0)) : 0,
+            minute_utc: scheduleMinuteEl ? Math.max(0, Math.min(59, Number(scheduleMinuteEl.value) || 0)) : 0,
+            windowing_instructions:
+              scheduleWindowingEl && scheduleWindowingEl.value.trim().length > 0
+                ? scheduleWindowingEl.value.trim()
+                : "Roll each scoped time window forward to the latest complete reporting period on every scheduled run.",
+            additional_instructions:
+              scheduleAdditionalEl && scheduleAdditionalEl.value.trim().length > 0
+                ? scheduleAdditionalEl.value.trim()
+                : "",
+            question_execution_plan: questionPlan.map(function (entry) {
+              return {
+                question_number: entry.question_number,
+                next_run_behavior: entry.next_run_behavior
+              };
+            })
+          };
+          if (frequency === "weekly") {
+            payload.day_of_week = scheduleWeekdayEl ? Number(scheduleWeekdayEl.value) : 1;
+          }
+          if (frequency === "monthly" || frequency === "quarterly") {
+            payload.day_of_month = scheduleMonthdayEl ? Number(scheduleMonthdayEl.value) : 1;
+          }
+
+          scheduleSaveEl.disabled = true;
+          scheduleFooterNoteEl.textContent = "Saving schedule...";
+          try {
+            const response = await fetch("/api/runs/" + encodeURIComponent(scheduleModalStateRef.runId) + "/schedule-profile", {
+              method: "POST",
+              headers: { "content-type": "application/json" },
+              body: JSON.stringify(payload)
+            });
+            const result = await response.json();
+            if (!response.ok) {
+              throw new Error(result && result.message ? result.message : "Unable to save schedule.");
+            }
+            closeScheduleModal();
+            appendMessage(
+              "assistant",
+              buildScheduleSavedMessage(result.understanding || result.profile || {}),
+              null,
+              null,
+              { trackForNaming: false }
+            );
+          } catch (error) {
+            scheduleFooterNoteEl.textContent = error instanceof Error ? error.message : "Unable to save schedule.";
+          } finally {
+            scheduleSaveEl.disabled = false;
+          }
+        }
+
+        async function bootstrapScheduledRunFromUrl() {
+          const params = new URLSearchParams(window.location.search);
+          const runId = params.get("scheduled_run_id");
+          if (!runId) {
+            return;
+          }
+
+          try {
+            const existing = chatsRef.value.find(function (entry) {
+              return entry && entry.state && entry.state.last_run_id === runId && entry.state.scheduled_report_view === true;
+            });
+            if (existing) {
+              activateChat(existing.id);
+              window.history.replaceState({}, "", "/");
+              return;
+            }
+
+            const response = await fetch("/api/run-status/" + encodeURIComponent(runId), { method: "GET" });
+            const payload = await response.json();
+            if (!response.ok || !payload || payload.status !== "succeeded") {
+              throw new Error(payload && payload.message ? payload.message : "Unable to load scheduled run.");
+            }
+
+            const createdAt = nowIso();
+            const session = createEmptyChatSession();
+            const baseState = createStateFromDbContext({ allowed_relations: [], allowed_schemas: [] });
+            session.title = sanitizeTitle("Scheduled report");
+            session.title_auto = false;
+            session.db_bootstrapped = true;
+            session.created_at = createdAt;
+            session.updated_at = createdAt;
+            session.state = Object.assign({}, baseState, {
+              last_run_id: runId,
+              last_exec_brief: payload.exec_brief || null,
+              prepared_payloads: Array.isArray(payload.prepared_payloads) ? payload.prepared_payloads : [],
+              post_run_actions_pending: true,
+              scheduled_report_view: true,
+              report_clarification_active: false,
+              business_case_active: false,
+              business_case_candidates: [],
+              business_case_selected_candidate_id: null,
+              business_case_assumption_notes: [],
+              business_case_pending_clarification: null
+            });
+            syncChatTitleToState(session);
+            session.messages = [
+              {
+                role: "assistant",
+                text: "Scheduled report loaded. You can ask clarifications on the report or run a business case from this report.",
+                download_url: payload.pdf_path ? "/api/runs/" + runId + "/pdf" : null,
+                exec_brief_html: typeof payload.exec_brief_html === "string" ? payload.exec_brief_html : null,
+                prepared_payloads: Array.isArray(payload.prepared_payloads) ? payload.prepared_payloads : null,
+                at: createdAt
+              }
+            ];
+            chatsRef.value.unshift(session);
+            if (chatsRef.value.length > MAX_STORED_CHATS) {
+              chatsRef.value = chatsRef.value.slice(0, MAX_STORED_CHATS);
+            }
+            saveChatsToStorage();
+            activateChat(session.id);
+          } catch (error) {
+            appendMessage("assistant", error instanceof Error ? error.message : "Unable to load scheduled run.", null, null, { trackForNaming: false });
+          } finally {
+            window.history.replaceState({}, "", "/");
+          }
         }
 
         function buildQueryCard(payload) {
@@ -3116,6 +4270,7 @@ export function renderChatPage(): string {
             trackForNaming: opts.trackForNaming !== false,
             rawUserMessage: value
           });
+          syncChatTitleToState(targetChat);
           const requestStateSnapshot = cloneJson(targetChat.state);
           setBusy(true);
           const isRunConfirm = /^(confirm|yes|go ahead|proceed|looks good|lgtm|run it|do it|execute|approved|ok|okay|sure|start)\\b/i.test(value);
@@ -3222,6 +4377,7 @@ export function renderChatPage(): string {
               allowed_schemas: allowedSchemas,
               insight_mode: "business"
             },
+            session_title: null,
             contract_id: null,
             last_run_id: null,
             last_query_id: null,
@@ -3246,7 +4402,9 @@ export function renderChatPage(): string {
             planner_summary: null,
             preparation_summary: null,
             prepared_payloads: [],
+            prepared_query_overrides: [],
             post_run_actions_pending: false,
+            scheduled_report_view: false,
             report_clarification_active: false,
             business_case_active: false,
             business_case_candidates: [],
@@ -3280,6 +4438,7 @@ export function renderChatPage(): string {
             try { payload = JSON.parse(await response.text()); } catch { return; }
             if (response.ok && payload && payload.connected === true) {
               chat.state = createStateFromDbContext(payload);
+              syncChatTitleToState(chat);
               if (chat.messages.length <= 1) {
                 appendMessage(
                   "assistant",
@@ -3366,6 +4525,7 @@ export function renderChatPage(): string {
             }
             target.title = sanitizeTitle(payload.title);
             target.title_auto = false;
+            syncChatTitleToState(target);
             touchChat(target);
           } catch {
             // keep fallback title
@@ -3463,8 +4623,48 @@ export function renderChatPage(): string {
         if (queriesModalCloseEl) {
           queriesModalCloseEl.addEventListener("click", closeQueriesModal);
         }
+        if (scheduleModalBackdropEl) {
+          scheduleModalBackdropEl.addEventListener("click", closeScheduleModal);
+        }
+        var scheduleModalCloseEl = document.getElementById("schedule-modal-close");
+        if (scheduleModalCloseEl) {
+          scheduleModalCloseEl.addEventListener("click", closeScheduleModal);
+        }
+        if (scheduleCancelEl) {
+          scheduleCancelEl.addEventListener("click", closeScheduleModal);
+        }
+        if (scheduleSaveEl) {
+          scheduleSaveEl.addEventListener("click", function () {
+            void saveScheduleProfile();
+          });
+        }
+        [
+          scheduleFrequencyEl,
+          scheduleTimezoneEl,
+          scheduleWeekdayEl,
+          scheduleMonthdayEl,
+          scheduleHourEl,
+          scheduleMinuteEl,
+          scheduleWindowingEl,
+          scheduleAdditionalEl
+        ].forEach(function (element) {
+          if (!element) {
+            return;
+          }
+          element.addEventListener("input", function () {
+            toggleScheduleDayFields();
+            renderSchedulePreview();
+          });
+          element.addEventListener("change", function () {
+            toggleScheduleDayFields();
+            renderSchedulePreview();
+          });
+        });
         document.addEventListener("keydown", function (e) {
-          if (e.key === "Escape") { closeQueriesModal(); }
+          if (e.key === "Escape") {
+            closeQueriesModal();
+            closeScheduleModal();
+          }
         });
 
         /* â”€â”€ Init â”€â”€ */
@@ -3493,8 +4693,22 @@ export function renderChatPage(): string {
           });
         }
 
+        if (historyToggleButtonEl) {
+          historyToggleButtonEl.addEventListener("click", function () {
+            toggleHistoryCollapsed();
+          });
+        }
+
+        loadHistoryCollapsedPreference();
+        applyHistoryCollapsedState();
         initializeSessions();
-        void hydrateSessionsFromServer();
+        void hydrateSessionsFromServer()
+          .catch(function () {
+            return null;
+          })
+          .finally(function () {
+            void bootstrapScheduledRunFromUrl();
+          });
         refreshDecisionFromState(stateRef.value);
 
         // Refresh history list timestamps every 30 seconds so "just now" ages properly

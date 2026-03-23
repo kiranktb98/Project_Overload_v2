@@ -17,6 +17,30 @@ afterEach(() => {
 });
 
 describe("ui auth and chat sessions", () => {
+  it("authenticates krypton123 with the shared demo password", async () => {
+    process.env.API_AUTH_REQUIRED = "false";
+    delete process.env.API_AUTH_TOKEN;
+
+    const app = await buildApiApp({
+      store: new InMemoryMetadataStore(),
+      analyst_client: createStubAnalystClient()
+    });
+
+    const login = await app.inject({
+      method: "POST",
+      url: "/ui/auth/login",
+      payload: {
+        username: "krypton123",
+        password: "test123"
+      }
+    });
+
+    expect(login.statusCode).toBe(200);
+    expect(login.json().user.username).toBe("krypton123");
+
+    await app.close();
+  });
+
   it("authenticates test123 and persists chat sessions", async () => {
     process.env.API_AUTH_REQUIRED = "false";
     delete process.env.API_AUTH_TOKEN;

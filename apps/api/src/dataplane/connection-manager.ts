@@ -1,7 +1,13 @@
 import { createCipheriv, createDecipheriv, createHash, randomBytes, randomUUID } from "node:crypto";
 import * as tls from "node:tls";
+import { BigQuery, type BigQueryOptions } from "@google-cloud/bigquery";
 import mysql, { type Pool as MySqlPool } from "mysql2/promise";
 import { Pool, type PoolClient } from "pg";
+import snowflakeSdk, {
+  type Connection as SnowflakeConnection,
+  type ConnectionOptions as SnowflakeConnectionOptions,
+  type StatementOption as SnowflakeStatementOption
+} from "snowflake-sdk";
 import {
   assertAllowlistedRelations,
   assertAllowlistedSchemas,
@@ -38,7 +44,8 @@ export type ConnectionProvider = "postgres" | "supabase" | "neon" | "mysql" | "s
 
 const POSTGRES_COMPATIBLE_PROVIDERS = new Set<ConnectionProvider>(["postgres", "supabase", "neon"]);
 const MYSQL_COMPATIBLE_PROVIDERS = new Set<ConnectionProvider>(["mysql"]);
-const UNSUPPORTED_PROVIDERS = new Set<ConnectionProvider>(["snowflake", "bigquery"]);
+const SNOWFLAKE_COMPATIBLE_PROVIDERS = new Set<ConnectionProvider>(["snowflake"]);
+const BIGQUERY_COMPATIBLE_PROVIDERS = new Set<ConnectionProvider>(["bigquery"]);
 
 export type RelationHealthStatus = "OK" | "NO_SELECT_GRANT" | "RLS_NO_POLICY";
 
@@ -135,6 +142,8 @@ export type ConnectionManagerOptions = {
   app_encryption_key?: string;
   state_store?: Pick<MetadataStore, "setSystemState" | "getSystemState" | "appendAuditLog">;
   tenant_id?: string;
+  snowflake_connection_factory?: (options: SnowflakeConnectionOptions) => SnowflakeConnection;
+  bigquery_client_factory?: (options: BigQueryOptions) => BigQuery;
 };
 
 export type TableColumnInfo = {
@@ -192,12 +201,13 @@ type ActiveConnection = {
   encrypted_connection_string: string;
   encrypted_iv: string;
   encrypted_tag: string;
-  pool: Pool | MySqlPool;
+  pool: Pool | MySqlPool | SnowflakeConnection | BigQuery;
   connected_at: string;
   allowed_relations: string[];
   relations_health: RelationHealth[];
   source: "runtime" | "env";
   catalog: DataCatalog | null;
+  query_location: string | null;
 };
 
 type LastTestSnapshot = {
@@ -218,6 +228,28 @@ type NormalizedConnection = {
   recommendations: string[];
 };
 
+type SnowflakeRuntimeConfig = {
+  account: string;
+  username: string;
+  password: string;
+  database: string;
+  schema: string;
+  warehouse?: string;
+  role?: string;
+};
+
+type BigQueryRuntimeConfig = {
+  project_id: string;
+  dataset: string;
+  location?: string;
+  credentials?: {
+    client_email?: string;
+    private_key?: string;
+    [key: string]: unknown;
+  };
+  key_filename?: string;
+};
+
 const CONNECTION_STATE_KEY = "runtime_connection_v1";
 const DEFAULT_TENANT_ID = "default";
 
@@ -228,6 +260,8 @@ export class RuntimeConnectionManager {
   private readonly defaultTimeoutMs: number;
   private readonly defaultLimit: number;
   private readonly encryptionKey: Buffer;
+  private readonly snowflakeConnectionFactory: (options: SnowflakeConnectionOptions) => SnowflakeConnection;
+  private readonly bigQueryClientFactory: (options: BigQueryOptions) => BigQuery;
   private readonly queryLogs: QueryAuditLog[] = [];
   private lastTest: LastTestSnapshot | null = null;
   private readonly stateStore: Pick<MetadataStore, "setSystemState" | "getSystemState" | "appendAuditLog"> | null;
@@ -239,6 +273,10 @@ export class RuntimeConnectionManager {
     this.defaultTimeoutMs = options.default_timeout_ms ?? 900000;
     this.defaultLimit = options.default_limit ?? 200;
     this.encryptionKey = deriveEncryptionKey(options.app_encryption_key ?? process.env.APP_ENCRYPTION_KEY);
+    this.snowflakeConnectionFactory =
+      options.snowflake_connection_factory ?? ((connectionOptions) => snowflakeSdk.createConnection(connectionOptions));
+    this.bigQueryClientFactory =
+      options.bigquery_client_factory ?? ((clientOptions) => new BigQuery(clientOptions));
     this.stateStore = options.state_store ?? null;
     this.tenantId = options.tenant_id?.trim() || DEFAULT_TENANT_ID;
   }
@@ -278,6 +316,103 @@ export class RuntimeConnectionManager {
 
     const warnings = [...normalized.warnings];
     const recommendations = [...normalized.recommendations];
+
+    if (isSnowflakeProvider(normalized.provider)) {
+      const config = parseSnowflakeConnectionString(normalized.normalized_connection_string);
+      const connection = this.snowflakeConnectionFactory(createSnowflakeConnectionOptions(config));
+      try {
+        await connectSnowflake(connection);
+        const metadata = await readSnowflakeConnectionMetadata(connection, config);
+        const relations = await listSnowflakeRelationHealth(connection, config.database);
+        const recommendedAllowlist = selectRecommendedAllowlist(relations);
+        const permissionsMissing = relations.length === 0;
+
+        const result: ConnectionTestResult = {
+          ok: true,
+          provider: normalized.provider,
+          metadata,
+          relations,
+          recommended_allowlist: recommendedAllowlist,
+          warnings,
+          recommendations,
+          permissions_missing: permissionsMissing,
+          setup_script:
+            permissionsMissing || relations.some((entry) => entry.status !== "OK")
+              ? this.generateSnowflakeFixScriptInternal({
+                  allowlisted_relations:
+                    recommendedAllowlist.length > 0
+                      ? recommendedAllowlist
+                      : relations.map((entry) => entry.qualified_name)
+                }, metadata.current_database)
+              : null
+        };
+
+        this.lastTest = {
+          provider: normalized.provider,
+          tested_at: new Date().toISOString(),
+          metadata,
+          relations,
+          recommended_allowlist: recommendedAllowlist,
+          warnings,
+          recommendations,
+          permissions_missing: permissionsMissing
+        };
+
+        return result;
+      } catch (error) {
+        throw new Error(formatConnectionError(error, parsed, normalized.provider));
+      } finally {
+        await closeProviderPool(normalized.provider, connection);
+      }
+    }
+
+    if (isBigQueryProvider(normalized.provider)) {
+      const config = parseBigQueryConnectionString(normalized.normalized_connection_string);
+      const client = this.bigQueryClientFactory(createBigQueryClientOptions(config));
+      try {
+        const metadata = await readBigQueryConnectionMetadata(client, config);
+        const relations = await listBigQueryRelationHealth(client, config);
+        const recommendedAllowlist = selectRecommendedAllowlist(relations);
+        const permissionsMissing = relations.length === 0;
+
+        const result: ConnectionTestResult = {
+          ok: true,
+          provider: normalized.provider,
+          metadata,
+          relations,
+          recommended_allowlist: recommendedAllowlist,
+          warnings,
+          recommendations,
+          permissions_missing: permissionsMissing,
+          setup_script:
+            permissionsMissing || relations.some((entry) => entry.status !== "OK")
+              ? this.generateBigQueryFixScriptInternal({
+                  allowlisted_relations:
+                    recommendedAllowlist.length > 0
+                      ? recommendedAllowlist
+                      : relations.map((entry) => entry.qualified_name)
+                }, config)
+              : null
+        };
+
+        this.lastTest = {
+          provider: normalized.provider,
+          tested_at: new Date().toISOString(),
+          metadata,
+          relations,
+          recommended_allowlist: recommendedAllowlist,
+          warnings,
+          recommendations,
+          permissions_missing: permissionsMissing
+        };
+
+        return result;
+      } catch (error) {
+        throw new Error(formatConnectionError(error, parsed, normalized.provider));
+      } finally {
+        await closeProviderPool(normalized.provider, client);
+      }
+    }
 
     if (isMySqlProvider(normalized.provider)) {
       const pool = createMySqlPool(normalized.normalized_connection_string, tlsCaPem, 2);
@@ -399,26 +534,48 @@ export class RuntimeConnectionManager {
   async connect(input: ConnectInput, source: "runtime" | "env" = "runtime"): Promise<ConnectionContext> {
     const normalized = normalizeConnectionString(input.connection_string, input.provider);
     const parsed = safeParseDbUrl(normalized.normalized_connection_string);
+    const snowflakeConfig = isSnowflakeProvider(normalized.provider)
+      ? parseSnowflakeConnectionString(normalized.normalized_connection_string)
+      : null;
+    const bigQueryConfig = isBigQueryProvider(normalized.provider)
+      ? parseBigQueryConnectionString(normalized.normalized_connection_string)
+      : null;
     const pool = isMySqlProvider(normalized.provider)
       ? createMySqlPool(normalized.normalized_connection_string, input.tls_ca_pem, 5)
-      : new Pool({
-          connectionString: normalized.normalized_connection_string,
-          max: 5,
-          ssl: buildPostgresSslOptions(normalized.normalized_connection_string, input.tls_ca_pem)
-        });
+      : isSnowflakeProvider(normalized.provider)
+        ? this.snowflakeConnectionFactory(createSnowflakeConnectionOptions(snowflakeConfig as SnowflakeRuntimeConfig))
+        : isBigQueryProvider(normalized.provider)
+          ? this.bigQueryClientFactory(createBigQueryClientOptions(bigQueryConfig as BigQueryRuntimeConfig))
+          : new Pool({
+              connectionString: normalized.normalized_connection_string,
+              max: 5,
+              ssl: buildPostgresSslOptions(normalized.normalized_connection_string, input.tls_ca_pem)
+            });
 
     try {
       if (isMySqlProvider(normalized.provider)) {
         await (pool as MySqlPool).query("select 1 as ok");
+      } else if (isSnowflakeProvider(normalized.provider)) {
+        await connectSnowflake(pool as SnowflakeConnection);
+      } else if (isBigQueryProvider(normalized.provider)) {
+        await readBigQueryConnectionMetadata(pool as BigQuery, bigQueryConfig as BigQueryRuntimeConfig);
       } else {
         await (pool as Pool).query("select 1 as ok");
       }
       const metadata = isMySqlProvider(normalized.provider)
         ? await readMySqlConnectionMetadata(pool as MySqlPool)
-        : await readConnectionMetadata(pool as Pool);
+        : isSnowflakeProvider(normalized.provider)
+          ? await readSnowflakeConnectionMetadata(pool as SnowflakeConnection, snowflakeConfig as SnowflakeRuntimeConfig)
+          : isBigQueryProvider(normalized.provider)
+            ? await readBigQueryConnectionMetadata(pool as BigQuery, bigQueryConfig as BigQueryRuntimeConfig)
+            : await readConnectionMetadata(pool as Pool);
       const relations = isMySqlProvider(normalized.provider)
         ? await listMySqlRelationHealth(pool as MySqlPool, metadata.current_database)
-        : await listRelationHealth(pool as Pool);
+        : isSnowflakeProvider(normalized.provider)
+          ? await listSnowflakeRelationHealth(pool as SnowflakeConnection, (snowflakeConfig as SnowflakeRuntimeConfig).database)
+          : isBigQueryProvider(normalized.provider)
+            ? await listBigQueryRelationHealth(pool as BigQuery, bigQueryConfig as BigQueryRuntimeConfig)
+            : await listRelationHealth(pool as Pool);
       const availableRelations = relations.map((entry) => entry.qualified_name);
       const recommendedAllowlist = selectRecommendedAllowlist(relations);
 
@@ -447,12 +604,13 @@ export class RuntimeConnectionManager {
         encrypted_connection_string: encrypted.payload,
         encrypted_iv: encrypted.iv,
         encrypted_tag: encrypted.tag,
-        pool: pool as Pool | MySqlPool,
+        pool: pool as Pool | MySqlPool | SnowflakeConnection | BigQuery,
         connected_at: new Date().toISOString(),
         allowed_relations: allowed,
         relations_health: relations,
         source,
-        catalog: null
+        catalog: null,
+        query_location: bigQueryConfig?.location ?? null
       };
 
       // Auto-catalog: sample rows and column info for allowed tables
@@ -465,6 +623,24 @@ export class RuntimeConnectionManager {
               relations,
               input.business_context ?? ""
             )
+          : isSnowflakeProvider(normalized.provider)
+            ? await buildDataCatalogSnowflake(
+                pool as SnowflakeConnection,
+                businessId,
+                allowed,
+                relations,
+                input.business_context ?? "",
+                snowflakeConfig as SnowflakeRuntimeConfig
+              )
+          : isBigQueryProvider(normalized.provider)
+            ? await buildDataCatalogBigQuery(
+                pool as BigQuery,
+                businessId,
+                allowed,
+                relations,
+                input.business_context ?? "",
+                bigQueryConfig as BigQueryRuntimeConfig
+              )
           : await buildDataCatalog(
               pool as Pool,
               businessId,
@@ -485,7 +661,7 @@ export class RuntimeConnectionManager {
 
       return this.getContext();
     } catch (error) {
-      await closeProviderPool(normalized.provider, pool as Pool | MySqlPool);
+      await closeProviderPool(normalized.provider, pool as Pool | MySqlPool | SnowflakeConnection | BigQuery);
       throw new Error(formatConnectionError(error, parsed, normalized.provider));
     }
   }
@@ -570,6 +746,26 @@ export class RuntimeConnectionManager {
     if (!this.active) {
       throw new Error("No active database connection.");
     }
+    const bigQueryConfig = isBigQueryProvider(this.active.provider)
+      ? parseBigQueryConnectionString(
+          decryptConnectionString(
+            this.active.encrypted_connection_string,
+            this.active.encrypted_iv,
+            this.active.encrypted_tag,
+            this.encryptionKey
+          )
+        )
+      : null;
+    const snowflakeConfig = isSnowflakeProvider(this.active.provider)
+      ? parseSnowflakeConnectionString(
+          decryptConnectionString(
+            this.active.encrypted_connection_string,
+            this.active.encrypted_iv,
+            this.active.encrypted_tag,
+            this.encryptionKey
+          )
+        )
+      : null;
     const catalog = isMySqlProvider(this.active.provider)
       ? await buildDataCatalogMySql(
           this.active.pool as MySqlPool,
@@ -578,6 +774,24 @@ export class RuntimeConnectionManager {
           this.active.relations_health,
           this.active.catalog?.business_context ?? ""
         )
+      : isSnowflakeProvider(this.active.provider)
+        ? await buildDataCatalogSnowflake(
+            this.active.pool as SnowflakeConnection,
+            this.active.business_id,
+            this.active.allowed_relations,
+            this.active.relations_health,
+            this.active.catalog?.business_context ?? "",
+            snowflakeConfig as SnowflakeRuntimeConfig
+          )
+      : isBigQueryProvider(this.active.provider)
+        ? await buildDataCatalogBigQuery(
+            this.active.pool as BigQuery,
+            this.active.business_id,
+            this.active.allowed_relations,
+            this.active.relations_health,
+            this.active.catalog?.business_context ?? "",
+            bigQueryConfig as BigQueryRuntimeConfig
+          )
       : await buildDataCatalog(
           this.active.pool as Pool,
           this.active.business_id,
@@ -620,6 +834,39 @@ export class RuntimeConnectionManager {
 
     if (isMySqlProvider(this.active.provider)) {
       return validateAllowlistAccessMySql(this.active.pool as MySqlPool, this.active.allowed_relations);
+    }
+
+    if (isSnowflakeProvider(this.active.provider)) {
+      const config = parseSnowflakeConnectionString(
+        decryptConnectionString(
+          this.active.encrypted_connection_string,
+          this.active.encrypted_iv,
+          this.active.encrypted_tag,
+          this.encryptionKey
+        )
+      );
+      return validateAllowlistAccessSnowflake(
+        this.active.pool as SnowflakeConnection,
+        this.active.allowed_relations,
+        config
+      );
+    }
+
+    if (isBigQueryProvider(this.active.provider)) {
+      const config = parseBigQueryConnectionString(
+        decryptConnectionString(
+          this.active.encrypted_connection_string,
+          this.active.encrypted_iv,
+          this.active.encrypted_tag,
+          this.encryptionKey
+        )
+      );
+      return validateAllowlistAccessBigQuery(
+        this.active.pool as BigQuery,
+        this.active.allowed_relations,
+        config,
+        this.defaultTimeoutMs
+      );
     }
 
     const pool = this.active.pool as Pool;
@@ -689,6 +936,27 @@ export class RuntimeConnectionManager {
       return this.generateMySqlFixScriptInternal(input, databaseName);
     }
 
+    if (isSnowflakeProvider(provider)) {
+      const databaseName = this.active?.database ?? this.lastTest?.metadata.current_database ?? "YOUR_DATABASE";
+      return this.generateSnowflakeFixScriptInternal(input, databaseName);
+    }
+
+    if (isBigQueryProvider(provider)) {
+      const config = parseBigQueryConnectionString(
+        this.active
+          ? decryptConnectionString(
+              this.active.encrypted_connection_string,
+              this.active.encrypted_iv,
+              this.active.encrypted_tag,
+              this.encryptionKey
+            )
+          : this.lastTest?.metadata.current_database?.includes(".")
+            ? `bigquery://${this.lastTest.metadata.current_database.replace(".", "/")}`
+            : "bigquery://your-project/your_dataset"
+      );
+      return this.generateBigQueryFixScriptInternal(input, config);
+    }
+
     const metadata = this.active
       ? { current_database: this.active.database }
       : this.lastTest
@@ -717,10 +985,26 @@ export class RuntimeConnectionManager {
       assertAllowlistedRelations(governedSql, allowedRelations);
       assertAllowlistedSchemas(governedSql, allowedSchemas);
 
-      const pgClient = isMySqlProvider(this.active.provider) ? null : await (this.active.pool as Pool).connect();
+      const pgClient =
+        isMySqlProvider(this.active.provider) || isSnowflakeProvider(this.active.provider) || isBigQueryProvider(this.active.provider)
+          ? null
+          : await (this.active.pool as Pool).connect();
       try {
         const rows = isMySqlProvider(this.active.provider)
           ? await executeReadOnlyQueryMySql(this.active.pool as MySqlPool, governedSql, this.defaultTimeoutMs)
+          : isSnowflakeProvider(this.active.provider)
+            ? await executeReadOnlyQuerySnowflake(
+                this.active.pool as SnowflakeConnection,
+                governedSql,
+                this.defaultTimeoutMs
+              )
+          : isBigQueryProvider(this.active.provider)
+            ? await executeReadOnlyQueryBigQuery(
+                this.active.pool as BigQuery,
+                governedSql,
+                this.defaultTimeoutMs,
+                this.active.query_location ?? undefined
+              )
           : await executeReadOnlyQuery(pgClient as PoolClient, governedSql, this.defaultTimeoutMs);
         const executionMs = Date.now() - started;
         this.appendQueryLog({
@@ -798,6 +1082,19 @@ export class RuntimeConnectionManager {
             .query(sql)
             .then(([rows]) => rows as Record<string, unknown>[]),
           this.defaultTimeoutMs
+        );
+      }
+
+      if (isSnowflakeProvider(this.active.provider)) {
+        return executeReadOnlyQuerySnowflake(this.active.pool as SnowflakeConnection, sql, this.defaultTimeoutMs);
+      }
+
+      if (isBigQueryProvider(this.active.provider)) {
+        return executeReadOnlyQueryBigQuery(
+          this.active.pool as BigQuery,
+          sql,
+          this.defaultTimeoutMs,
+          this.active.query_location ?? undefined
         );
       }
 
@@ -1058,6 +1355,75 @@ export class RuntimeConnectionManager {
       `-- Connection string user should be: ${role}`
     ].join("\n");
   }
+
+  private generateSnowflakeFixScriptInternal(input: FixScriptInput, databaseName: string): string {
+    const allowlisted = dedupeLower(input.allowlisted_relations);
+    const role = sanitizeRoleName(input.reader_role ?? "OVERLOAD_READER").toUpperCase();
+    const user = sanitizeRoleName(input.reader_role ?? "overload_reader_user").toUpperCase();
+    const password = input.reader_password?.trim().length
+      ? input.reader_password.trim()
+      : generateReaderPassword();
+    const schemas = dedupeLower(
+      allowlisted
+        .map((entry) => entry.split(".")[0])
+        .filter((value): value is string => Boolean(value))
+    );
+
+    const schemaUsageSql = schemas.length > 0
+      ? schemas
+          .map(
+            (schema) =>
+              `GRANT USAGE ON SCHEMA ${quoteSnowflakePath(databaseName, schema)} TO ROLE ${quoteSnowflakeIdentifier(role)};`
+          )
+          .join("\n")
+      : `-- Grant USAGE on the required schemas in ${databaseName}.`;
+
+    const relationGrantSql = allowlisted.length > 0
+      ? allowlisted
+          .map((entry) => {
+            const [schema, table] = entry.includes(".")
+              ? entry.split(".", 2)
+              : ["PUBLIC", entry];
+            return `GRANT SELECT ON ${quoteSnowflakePath(databaseName, schema, table)} TO ROLE ${quoteSnowflakeIdentifier(role)};`;
+          })
+          .join("\n")
+      : `-- Grant SELECT on the required tables/views in ${databaseName}.`;
+
+    return [
+      "-- Project Overload Fix-it Script (Snowflake, MVP)",
+      "-- Creates a read-only role/user and grants SELECT on the selected allowlist.",
+      "",
+      `CREATE ROLE IF NOT EXISTS ${quoteSnowflakeIdentifier(role)};`,
+      `CREATE USER IF NOT EXISTS ${quoteSnowflakeIdentifier(user)} PASSWORD = ${quoteLiteral(password)} DEFAULT_ROLE = ${quoteLiteral(role)};`,
+      `ALTER USER ${quoteSnowflakeIdentifier(user)} SET PASSWORD = ${quoteLiteral(password)};`,
+      `GRANT ROLE ${quoteSnowflakeIdentifier(role)} TO USER ${quoteSnowflakeIdentifier(user)};`,
+      `GRANT USAGE ON DATABASE ${quoteSnowflakeIdentifier(databaseName)} TO ROLE ${quoteSnowflakeIdentifier(role)};`,
+      schemaUsageSql,
+      relationGrantSql,
+      "",
+      `-- Connection string user should be: ${user}`
+    ].join("\n");
+  }
+
+  private generateBigQueryFixScriptInternal(input: FixScriptInput, config: BigQueryRuntimeConfig): string {
+    const principal = (input.reader_role ?? "reader@example.com").trim();
+    const datasetRef = `${config.project_id}.${config.dataset}`;
+    const allowlisted = dedupeLower(input.allowlisted_relations);
+    const tableComments = allowlisted.length > 0
+      ? allowlisted.map((entry) => `-- Allowlisted relation: ${entry}`).join("\n")
+      : "-- Allowlisted relations will inherit dataset-level viewer access.";
+
+    return [
+      "-- Project Overload Fix-it Script (BigQuery, MVP)",
+      "-- BigQuery access is governed through IAM. Grant read access on the dataset and job execution on the project.",
+      tableComments,
+      "",
+      `GRANT \`roles/bigquery.dataViewer\` ON SCHEMA \`${datasetRef}\` TO ${quoteBigQueryPrincipal(principal)};`,
+      `GRANT \`roles/bigquery.jobUser\` ON PROJECT \`${config.project_id}\` TO ${quoteBigQueryPrincipal(principal)};`,
+      "",
+      `-- Reader principal should be: ${principal}`
+    ].join("\n");
+  }
 }
 
 function normalizeConnectionString(
@@ -1065,16 +1431,13 @@ function normalizeConnectionString(
   providerInput: ConnectionProvider | undefined
 ): NormalizedConnection {
   const provider = parseProvider(providerInput);
-  if (UNSUPPORTED_PROVIDERS.has(provider)) {
-    throw new Error(
-      `${formatProviderLabel(provider)} connector is not enabled in this runtime yet. ` +
-        "Use Postgres, Supabase, or Neon for now."
-    );
-  }
-  if (!POSTGRES_COMPATIBLE_PROVIDERS.has(provider)) {
-    if (!MYSQL_COMPATIBLE_PROVIDERS.has(provider)) {
-      throw new Error(`${formatProviderLabel(provider)} is not supported by the current connection runtime.`);
-    }
+  if (
+    !POSTGRES_COMPATIBLE_PROVIDERS.has(provider) &&
+    !MYSQL_COMPATIBLE_PROVIDERS.has(provider) &&
+    !SNOWFLAKE_COMPATIBLE_PROVIDERS.has(provider) &&
+    !BIGQUERY_COMPATIBLE_PROVIDERS.has(provider)
+  ) {
+    throw new Error(`${formatProviderLabel(provider)} is not supported by the current connection runtime.`);
   }
 
   const raw = rawConnectionString.trim();
@@ -1088,6 +1451,14 @@ function normalizeConnectionString(
       ? raw.startsWith("mysql://")
         ? raw
         : `mysql://${raw}`
+      : isSnowflakeProvider(provider)
+        ? raw.startsWith("snowflake://")
+          ? raw
+          : `snowflake://${raw}`
+      : isBigQueryProvider(provider)
+        ? raw.startsWith("bigquery://")
+          ? raw
+          : `bigquery://${raw}`
       : raw.startsWith("postgres://") || raw.startsWith("postgresql://")
         ? raw
         : `postgresql://${raw}`;
@@ -1100,6 +1471,14 @@ function normalizeConnectionString(
     if (url.protocol !== "mysql:") {
       throw new Error("Connection string must use mysql://");
     }
+  } else if (isSnowflakeProvider(provider)) {
+    if (url.protocol !== "snowflake:") {
+      throw new Error("Connection string must use snowflake://");
+    }
+  } else if (isBigQueryProvider(provider)) {
+    if (url.protocol !== "bigquery:") {
+      throw new Error("Connection string must use bigquery://");
+    }
   } else if (!["postgres:", "postgresql:"].includes(url.protocol)) {
     throw new Error("Connection string must use postgres:// or postgresql://");
   }
@@ -1107,12 +1486,7 @@ function normalizeConnectionString(
   const warnings: string[] = [];
   const recommendations: string[] = [];
 
-  if (!url.searchParams.get("sslmode")) {
-    url.searchParams.set("sslmode", "require");
-    warnings.push("sslmode was missing. Added sslmode=require.");
-  }
-
-  if (provider === "mysql" && !url.searchParams.get("sslmode")) {
+  if (!isBigQueryProvider(provider) && !url.searchParams.get("sslmode")) {
     url.searchParams.set("sslmode", "require");
     warnings.push("sslmode was missing. Added sslmode=require.");
   }
@@ -1129,6 +1503,14 @@ function normalizeConnectionString(
 
   if (provider === "mysql") {
     recommendations.push("MySQL detected: use a read-only user and prefer TLS with CA validation.");
+  }
+
+  if (provider === "snowflake") {
+    recommendations.push("Snowflake detected: include warehouse and schema in the connection string for governed testing and activation.");
+  }
+
+  if (provider === "bigquery") {
+    recommendations.push("BigQuery detected: include dataset in the connection string path and credentials_json, credentials_base64, or ADC for authentication.");
   }
 
   if (url.hostname.endsWith(".pooler.supabase.com") && url.port !== "6543") {
@@ -1437,6 +1819,40 @@ function quoteMySqlLiteral(value: string): string {
   return `'${value.replace(/'/g, "''")}'`;
 }
 
+function quoteSnowflakeIdentifier(identifier: string): string {
+  return `"${identifier.replace(/"/g, "\"\"")}"`;
+}
+
+function quoteSnowflakePath(database: string, schema: string, table?: string): string {
+  return [database, schema, table]
+    .filter((value): value is string => typeof value === "string" && value.length > 0)
+    .map((value) => quoteSnowflakeIdentifier(value))
+    .join(".");
+}
+
+function quoteBigQueryIdentifier(identifier: string): string {
+  return `\`${identifier.replace(/`/g, "\\`")}\``;
+}
+
+function quoteBigQueryTable(projectId: string, dataset: string, table: string): string {
+  return quoteBigQueryIdentifier(`${projectId}.${dataset}.${table}`);
+}
+
+function quoteBigQueryInformationSchema(projectId: string, dataset: string, viewName: string): string {
+  return quoteBigQueryIdentifier(`${projectId}.${dataset}.INFORMATION_SCHEMA.${viewName}`);
+}
+
+function quoteBigQueryPrincipal(principal: string): string {
+  const trimmed = principal.trim();
+  if (trimmed.startsWith('"') && trimmed.endsWith('"')) {
+    return trimmed;
+  }
+  if (trimmed.includes(":")) {
+    return `"${trimmed}"`;
+  }
+  return `"user:${trimmed}"`;
+}
+
 function parseProvider(value: unknown): ConnectionProvider {
   if (typeof value !== "string") {
     return "postgres";
@@ -1459,6 +1875,14 @@ function parseProvider(value: unknown): ConnectionProvider {
 
 function isMySqlProvider(provider: ConnectionProvider): boolean {
   return MYSQL_COMPATIBLE_PROVIDERS.has(provider);
+}
+
+function isSnowflakeProvider(provider: ConnectionProvider): boolean {
+  return SNOWFLAKE_COMPATIBLE_PROVIDERS.has(provider);
+}
+
+function isBigQueryProvider(provider: ConnectionProvider): boolean {
+  return BIGQUERY_COMPATIBLE_PROVIDERS.has(provider);
 }
 
 function formatProviderLabel(provider: ConnectionProvider): string {
@@ -1598,7 +2022,27 @@ function formatConnectionError(
   return rawMessage;
 }
 
-async function closeProviderPool(provider: ConnectionProvider, pool: Pool | MySqlPool): Promise<void> {
+async function closeProviderPool(
+  provider: ConnectionProvider,
+  pool: Pool | MySqlPool | SnowflakeConnection | BigQuery
+): Promise<void> {
+  if (isBigQueryProvider(provider)) {
+    return;
+  }
+
+  if (isSnowflakeProvider(provider)) {
+    await new Promise<void>((resolve, reject) => {
+      (pool as SnowflakeConnection).destroy((error) => {
+        if (error) {
+          reject(error);
+          return;
+        }
+        resolve();
+      });
+    });
+    return;
+  }
+
   if (isMySqlProvider(provider)) {
     await (pool as MySqlPool).end();
     return;
@@ -1811,6 +2255,458 @@ async function validateAllowlistAccessMySql(
       }
     } catch (err) {
       tableVal.error = `Table accessible but column introspection failed: ${err instanceof Error ? err.message : "unknown"}`;
+    }
+
+    tables.push(tableVal);
+  }
+
+  const ok = tablesOk === allowed.length && colsOk === totalCols;
+  const summary = `${tablesOk}/${allowed.length} tables OK, ${colsOk}/${totalCols} columns accessible`;
+  return { ok, tables, summary };
+}
+
+function parseSnowflakeConnectionString(connectionString: string): SnowflakeRuntimeConfig {
+  let url: URL;
+  try {
+    url = new URL(connectionString);
+  } catch {
+    throw new Error("Invalid Snowflake connection string.");
+  }
+
+  const account = (url.searchParams.get("account") || url.hostname || "").replace(/\.snowflakecomputing\.com$/i, "");
+  const pathParts = url.pathname
+    .split("/")
+    .map((entry) => entry.trim())
+    .filter((entry) => entry.length > 0);
+  const database = pathParts[0] || url.searchParams.get("database") || "";
+  const schema = pathParts[1] || url.searchParams.get("schema") || "PUBLIC";
+  const username = decodeURIComponent(url.username || "");
+  const password = decodeURIComponent(url.password || "");
+  const warehouse = url.searchParams.get("warehouse") || undefined;
+  const role = url.searchParams.get("role") || undefined;
+
+  if (!account) {
+    throw new Error("Snowflake connection string must include an account host.");
+  }
+  if (!username || !password) {
+    throw new Error("Snowflake connection string must include username and password.");
+  }
+  if (!database) {
+    throw new Error("Snowflake connection string must include database in the path.");
+  }
+
+  return {
+    account,
+    username,
+    password,
+    database,
+    schema,
+    warehouse,
+    role
+  };
+}
+
+function createSnowflakeConnectionOptions(config: SnowflakeRuntimeConfig): SnowflakeConnectionOptions {
+  return {
+    account: config.account,
+    username: config.username,
+    password: config.password,
+    database: config.database,
+    schema: config.schema,
+    warehouse: config.warehouse,
+    role: config.role
+  };
+}
+
+function connectSnowflake(connection: SnowflakeConnection): Promise<void> {
+  return new Promise((resolve, reject) => {
+    connection.connect((error) => {
+      if (error) {
+        reject(error);
+        return;
+      }
+      resolve();
+    });
+  });
+}
+
+function executeSnowflakeStatement(
+  connection: SnowflakeConnection,
+  sqlText: string
+): Promise<Record<string, unknown>[]> {
+  return new Promise((resolve, reject) => {
+    const options: SnowflakeStatementOption = {
+      sqlText,
+      complete: (error, _statement, rows) => {
+        if (error) {
+          reject(error);
+          return;
+        }
+        resolve(normalizeObjectRows(Array.isArray(rows) ? rows : []));
+      }
+    };
+    connection.execute(options);
+  });
+}
+
+async function executeReadOnlyQuerySnowflake(
+  connection: SnowflakeConnection,
+  sql: string,
+  timeoutMs: number
+): Promise<Record<string, unknown>[]> {
+  return withTimeout(executeSnowflakeStatement(connection, sql), timeoutMs);
+}
+
+async function readSnowflakeConnectionMetadata(
+  connection: SnowflakeConnection,
+  config: SnowflakeRuntimeConfig
+): Promise<ConnectionMetadata> {
+  const rows = await executeSnowflakeStatement(
+    connection,
+    "SELECT CURRENT_USER() AS current_user, CURRENT_DATABASE() AS current_database, CURRENT_VERSION() AS version"
+  );
+  const row = rows[0] ?? {};
+  return {
+    current_user: String(row.current_user ?? config.username),
+    current_database: String(row.current_database ?? config.database),
+    version: String(row.version ?? "Snowflake")
+  };
+}
+
+async function listSnowflakeRelationHealth(
+  connection: SnowflakeConnection,
+  database: string
+): Promise<RelationHealth[]> {
+  const rows = await executeSnowflakeStatement(
+    connection,
+    [
+      "SELECT",
+      "  TABLE_SCHEMA AS schema_name,",
+      "  TABLE_NAME AS relation_name,",
+      "  TABLE_TYPE AS relation_type",
+      `FROM ${quoteSnowflakeIdentifier(database)}.INFORMATION_SCHEMA.TABLES`,
+      "WHERE TABLE_SCHEMA <> 'INFORMATION_SCHEMA'",
+      "ORDER BY TABLE_SCHEMA, TABLE_NAME"
+    ].join("\n")
+  );
+
+  return rows
+    .map((row) => {
+      const schemaName = String(row.schema_name ?? "");
+      const relationName = String(row.relation_name ?? "");
+      const tableType = String(row.relation_type ?? "BASE TABLE").toUpperCase();
+      const relationType: RelationHealth["relation_type"] =
+        tableType.includes("VIEW") ? (tableType.includes("MATERIALIZED") ? "MATERIALIZED VIEW" : "VIEW") : "TABLE";
+      return {
+        schema_name: schemaName,
+        relation_name: relationName,
+        relation_type: relationType,
+        qualified_name: `${schemaName}.${relationName}`,
+        has_select_privilege: true,
+        has_rls: false,
+        force_rls: false,
+        rls_active_for_me: false,
+        policies_count_for_me: 0,
+        status: "OK" as const,
+        status_label: "OK" as const
+      };
+    })
+    .filter((relation) => relation.schema_name.length > 0 && relation.relation_name.length > 0);
+}
+
+async function validateAllowlistAccessSnowflake(
+  connection: SnowflakeConnection,
+  allowed: string[],
+  config: SnowflakeRuntimeConfig
+): Promise<AllowlistValidationResult> {
+  const tables: TableValidation[] = [];
+  let tablesOk = 0;
+  let totalCols = 0;
+  let colsOk = 0;
+
+  for (const qualifiedName of allowed) {
+    const parts = qualifiedName.split(".");
+    if (parts.length !== 2) {
+      tables.push({ name: qualifiedName, accessible: false, error: "Invalid qualified name", columns: [] });
+      continue;
+    }
+
+    const [schema, table] = parts;
+    const tableVal: TableValidation = { name: qualifiedName, accessible: false, columns: [] };
+
+    try {
+      await executeSnowflakeStatement(
+        connection,
+        `SELECT * FROM ${quoteSnowflakePath(config.database, schema, table)} LIMIT 0`
+      );
+      tableVal.accessible = true;
+      tablesOk++;
+    } catch (error) {
+      tableVal.error = error instanceof Error ? error.message : "SELECT failed";
+      tables.push(tableVal);
+      continue;
+    }
+
+    try {
+      const columns = await executeSnowflakeStatement(
+        connection,
+        [
+          "SELECT COLUMN_NAME AS column_name, DATA_TYPE AS data_type, IS_NULLABLE AS is_nullable",
+          `FROM ${quoteSnowflakeIdentifier(config.database)}.INFORMATION_SCHEMA.COLUMNS`,
+          `WHERE TABLE_SCHEMA = ${quoteLiteral(schema)}`,
+          `  AND TABLE_NAME = ${quoteLiteral(table)}`,
+          "ORDER BY ORDINAL_POSITION"
+        ].join("\n")
+      );
+
+      for (const column of columns) {
+        totalCols++;
+        const columnName = String(column.column_name ?? "");
+        const dataType = String(column.data_type ?? "unknown");
+        const columnValidation: ColumnValidation = {
+          name: columnName,
+          data_type: dataType,
+          accessible: false
+        };
+
+        try {
+          await executeSnowflakeStatement(
+            connection,
+            `SELECT ${quoteSnowflakeIdentifier(columnName)} FROM ${quoteSnowflakePath(config.database, schema, table)} LIMIT 1`
+          );
+          columnValidation.accessible = true;
+          colsOk++;
+        } catch (error) {
+          columnValidation.error = error instanceof Error ? error.message : "Column SELECT failed";
+        }
+
+        tableVal.columns.push(columnValidation);
+      }
+    } catch (error) {
+      tableVal.error = `Table accessible but column introspection failed: ${error instanceof Error ? error.message : "unknown"}`;
+    }
+
+    tables.push(tableVal);
+  }
+
+  const ok = tablesOk === allowed.length && colsOk === totalCols;
+  const summary = `${tablesOk}/${allowed.length} tables OK, ${colsOk}/${totalCols} columns accessible`;
+  return { ok, tables, summary };
+}
+
+function parseBigQueryConnectionString(connectionString: string): BigQueryRuntimeConfig {
+  let url: URL;
+  try {
+    url = new URL(connectionString);
+  } catch {
+    throw new Error("Invalid BigQuery connection string.");
+  }
+
+  const projectId = url.hostname.trim() || url.searchParams.get("project_id")?.trim() || "";
+  const dataset = url.pathname
+    .split("/")
+    .map((entry) => entry.trim())
+    .filter((entry) => entry.length > 0)[0] || url.searchParams.get("dataset")?.trim() || "";
+  const location = url.searchParams.get("location")?.trim() || undefined;
+  const keyFilename = url.searchParams.get("key_filename")?.trim() || undefined;
+
+  let credentials: BigQueryRuntimeConfig["credentials"] | undefined;
+  const credentialsJson = url.searchParams.get("credentials_json");
+  const credentialsBase64 = url.searchParams.get("credentials_base64");
+  if (credentialsJson) {
+    credentials = parseBigQueryCredentials(credentialsJson);
+  } else if (credentialsBase64) {
+    credentials = parseBigQueryCredentials(Buffer.from(credentialsBase64, "base64").toString("utf8"));
+  }
+
+  if (!projectId) {
+    throw new Error("BigQuery connection string must include project id in the host.");
+  }
+  if (!dataset) {
+    throw new Error("BigQuery connection string must include dataset in the path.");
+  }
+
+  return {
+    project_id: projectId,
+    dataset,
+    location,
+    credentials,
+    key_filename: keyFilename
+  };
+}
+
+function parseBigQueryCredentials(raw: string): BigQueryRuntimeConfig["credentials"] {
+  try {
+    return JSON.parse(raw) as BigQueryRuntimeConfig["credentials"];
+  } catch {
+    throw new Error("BigQuery credentials_json must be valid JSON.");
+  }
+}
+
+function createBigQueryClientOptions(config: BigQueryRuntimeConfig): BigQueryOptions {
+  return {
+    projectId: config.project_id,
+    location: config.location,
+    credentials: config.credentials,
+    keyFilename: config.key_filename
+  };
+}
+
+async function executeReadOnlyQueryBigQuery(
+  client: BigQuery,
+  sql: string,
+  timeoutMs: number,
+  location?: string
+): Promise<Record<string, unknown>[]> {
+  const [rows] = await withTimeout(
+    client.query({
+      query: sql,
+      location,
+      useLegacySql: false,
+      jobTimeoutMs: timeoutMs > 0 ? Math.max(1000, Math.trunc(timeoutMs)) : undefined
+    }),
+    timeoutMs
+  );
+
+  return normalizeObjectRows(Array.isArray(rows) ? rows : []);
+}
+
+async function readBigQueryConnectionMetadata(
+  client: BigQuery,
+  config: BigQueryRuntimeConfig
+): Promise<ConnectionMetadata> {
+  const rows = await executeReadOnlyQueryBigQuery(
+    client,
+    "SELECT SESSION_USER() AS current_user",
+    60_000,
+    config.location
+  );
+  const row = rows[0] ?? {};
+  return {
+    current_user: String(row.current_user ?? "unknown"),
+    current_database: `${config.project_id}.${config.dataset}`,
+    version: "BigQuery Standard SQL"
+  };
+}
+
+async function listBigQueryRelationHealth(
+  client: BigQuery,
+  config: BigQueryRuntimeConfig
+): Promise<RelationHealth[]> {
+  const rows = await executeReadOnlyQueryBigQuery(
+    client,
+    [
+      "SELECT",
+      "  table_schema AS schema_name,",
+      "  table_name AS relation_name,",
+      "  table_type AS relation_type",
+      `FROM ${quoteBigQueryInformationSchema(config.project_id, config.dataset, "TABLES")}`,
+      "ORDER BY table_name"
+    ].join("\n"),
+    60_000,
+    config.location
+  );
+
+  return rows
+    .map((row) => {
+      const schemaName = String(row.schema_name ?? config.dataset);
+      const relationName = String(row.relation_name ?? "");
+      const tableType = String(row.relation_type ?? "BASE TABLE").toUpperCase();
+      const relationType: RelationHealth["relation_type"] =
+        tableType.includes("VIEW") ? (tableType.includes("MATERIALIZED") ? "MATERIALIZED VIEW" : "VIEW") : "TABLE";
+      return {
+        schema_name: schemaName,
+        relation_name: relationName,
+        relation_type: relationType,
+        qualified_name: `${schemaName}.${relationName}`,
+        has_select_privilege: true,
+        has_rls: false,
+        force_rls: false,
+        rls_active_for_me: false,
+        policies_count_for_me: 0,
+        status: "OK" as const,
+        status_label: "OK" as const
+      };
+    })
+    .filter((relation) => relation.relation_name.length > 0);
+}
+
+async function validateAllowlistAccessBigQuery(
+  client: BigQuery,
+  allowed: string[],
+  config: BigQueryRuntimeConfig,
+  timeoutMs: number
+): Promise<AllowlistValidationResult> {
+  const tables: TableValidation[] = [];
+  let tablesOk = 0;
+  let totalCols = 0;
+  let colsOk = 0;
+
+  for (const qualifiedName of allowed) {
+    const parts = qualifiedName.split(".");
+    if (parts.length !== 2) {
+      tables.push({ name: qualifiedName, accessible: false, error: "Invalid qualified name", columns: [] });
+      continue;
+    }
+
+    const [dataset, table] = parts;
+    const tableVal: TableValidation = { name: qualifiedName, accessible: false, columns: [] };
+
+    try {
+      await executeReadOnlyQueryBigQuery(
+        client,
+        `SELECT * FROM ${quoteBigQueryTable(config.project_id, dataset, table)} LIMIT 0`,
+        timeoutMs,
+        config.location
+      );
+      tableVal.accessible = true;
+      tablesOk++;
+    } catch (error) {
+      tableVal.error = error instanceof Error ? error.message : "SELECT failed";
+      tables.push(tableVal);
+      continue;
+    }
+
+    try {
+      const columns = await executeReadOnlyQueryBigQuery(
+        client,
+        [
+          "SELECT column_name, data_type, is_nullable",
+          `FROM ${quoteBigQueryInformationSchema(config.project_id, dataset, "COLUMNS")}`,
+          `WHERE table_name = ${quoteLiteral(table)}`,
+          "ORDER BY ordinal_position"
+        ].join("\n"),
+        timeoutMs,
+        config.location
+      );
+
+      for (const column of columns) {
+        totalCols++;
+        const columnName = String(column.column_name ?? "");
+        const dataType = String(column.data_type ?? "unknown");
+        const columnValidation: ColumnValidation = {
+          name: columnName,
+          data_type: dataType,
+          accessible: false
+        };
+
+        try {
+          await executeReadOnlyQueryBigQuery(
+            client,
+            `SELECT ${quoteBigQueryIdentifier(columnName)} FROM ${quoteBigQueryTable(config.project_id, dataset, table)} LIMIT 1`,
+            timeoutMs,
+            config.location
+          );
+          columnValidation.accessible = true;
+          colsOk++;
+        } catch (error) {
+          columnValidation.error = error instanceof Error ? error.message : "Column SELECT failed";
+        }
+
+        tableVal.columns.push(columnValidation);
+      }
+    } catch (error) {
+      tableVal.error = `Table accessible but column introspection failed: ${error instanceof Error ? error.message : "unknown"}`;
     }
 
     tables.push(tableVal);
@@ -2107,6 +3003,185 @@ async function buildDataCatalogMySql(
   };
 }
 
+async function buildDataCatalogSnowflake(
+  connection: SnowflakeConnection,
+  businessId: string,
+  allowedRelations: string[],
+  relationsHealth: RelationHealth[],
+  businessContext: string,
+  config: SnowflakeRuntimeConfig
+): Promise<DataCatalog> {
+  const tables: TableCatalogEntry[] = [];
+
+  for (const qualifiedName of allowedRelations.slice(0, 30)) {
+    const health = relationsHealth.find((relation) => relation.qualified_name === qualifiedName);
+    if (!health || !health.has_select_privilege) {
+      continue;
+    }
+
+    const [schema, table] = qualifiedName.includes(".")
+      ? qualifiedName.split(".", 2)
+      : [config.schema, qualifiedName];
+
+    if (!schema || !table) {
+      continue;
+    }
+
+    try {
+      const columnRows = await executeSnowflakeStatement(
+        connection,
+        [
+          "SELECT COLUMN_NAME AS column_name, DATA_TYPE AS data_type, IS_NULLABLE AS is_nullable",
+          `FROM ${quoteSnowflakeIdentifier(config.database)}.INFORMATION_SCHEMA.COLUMNS`,
+          `WHERE TABLE_SCHEMA = ${quoteLiteral(schema)}`,
+          `  AND TABLE_NAME = ${quoteLiteral(table)}`,
+          "ORDER BY ORDINAL_POSITION"
+        ].join("\n")
+      );
+
+      const columns: TableColumnInfo[] = columnRows.map((row) => ({
+        column_name: String(row.column_name ?? ""),
+        data_type: String(row.data_type ?? "unknown"),
+        is_nullable: String(row.is_nullable ?? "").toUpperCase() === "YES"
+      }));
+
+      let sampleRows: Record<string, unknown>[] = [];
+      try {
+        sampleRows = await executeSnowflakeStatement(
+          connection,
+          `SELECT * FROM ${quoteSnowflakePath(config.database, schema, table)} LIMIT 5`
+        );
+      } catch {
+        // Some relations may not permit sampling.
+      }
+
+      const lowCardinalityColumns = await readLowCardinalityColumnsSnowflake(connection, config, schema, table, columns);
+
+      const tableIndex = catalogAgentIndexTable({
+        business_id: businessId,
+        qualified_name: qualifiedName,
+        columns: columns.map((column) => ({
+          column_name: column.column_name,
+          data_type: column.data_type
+        })),
+        sample_rows: sampleRows,
+        low_cardinality_columns: lowCardinalityColumns
+      });
+
+      tables.push({
+        table_id: tableIndex.table_id,
+        qualified_name: qualifiedName,
+        relation_type: health.relation_type,
+        summary: tableIndex.summary,
+        columns,
+        low_cardinality_columns: lowCardinalityColumns,
+        sample_rows: sampleRows,
+        row_count_estimate: 0
+      });
+    } catch {
+      // Skip relations we can't introspect.
+    }
+  }
+
+  return {
+    business_id: businessId,
+    tables,
+    business_context: businessContext,
+    cataloged_at: new Date().toISOString()
+  };
+}
+
+async function buildDataCatalogBigQuery(
+  client: BigQuery,
+  businessId: string,
+  allowedRelations: string[],
+  relationsHealth: RelationHealth[],
+  businessContext: string,
+  config: BigQueryRuntimeConfig
+): Promise<DataCatalog> {
+  const tables: TableCatalogEntry[] = [];
+
+  for (const qualifiedName of allowedRelations.slice(0, 30)) {
+    const health = relationsHealth.find((relation) => relation.qualified_name === qualifiedName);
+    if (!health || !health.has_select_privilege) {
+      continue;
+    }
+
+    const [dataset, table] = qualifiedName.includes(".")
+      ? qualifiedName.split(".", 2)
+      : [config.dataset, qualifiedName];
+
+    if (!dataset || !table) {
+      continue;
+    }
+
+    try {
+      const columnRows = await executeReadOnlyQueryBigQuery(
+        client,
+        [
+          "SELECT column_name, data_type, is_nullable",
+          `FROM ${quoteBigQueryInformationSchema(config.project_id, dataset, "COLUMNS")}`,
+          `WHERE table_name = ${quoteLiteral(table)}`,
+          "ORDER BY ordinal_position"
+        ].join("\n"),
+        60_000,
+        config.location
+      );
+
+      const columns: TableColumnInfo[] = columnRows.map((row) => ({
+        column_name: String(row.column_name ?? ""),
+        data_type: String(row.data_type ?? "unknown"),
+        is_nullable: String(row.is_nullable ?? "").toUpperCase() === "YES"
+      }));
+
+      let sampleRows: Record<string, unknown>[] = [];
+      try {
+        sampleRows = await executeReadOnlyQueryBigQuery(
+          client,
+          `SELECT * FROM ${quoteBigQueryTable(config.project_id, dataset, table)} LIMIT 5`,
+          60_000,
+          config.location
+        );
+      } catch {
+        // Some relations may not permit sampling.
+      }
+
+      const lowCardinalityColumns = await readLowCardinalityColumnsBigQuery(client, config, dataset, table, columns);
+
+      const tableIndex = catalogAgentIndexTable({
+        business_id: businessId,
+        qualified_name: qualifiedName,
+        columns: columns.map((column) => ({
+          column_name: column.column_name,
+          data_type: column.data_type
+        })),
+        sample_rows: sampleRows,
+        low_cardinality_columns: lowCardinalityColumns
+      });
+
+      tables.push({
+        table_id: tableIndex.table_id,
+        qualified_name: qualifiedName,
+        relation_type: health.relation_type,
+        summary: tableIndex.summary,
+        columns,
+        low_cardinality_columns: lowCardinalityColumns,
+        sample_rows: sampleRows,
+        row_count_estimate: 0
+      });
+    } catch {
+      // Skip relations we can't introspect.
+    }
+  }
+
+  return {
+    business_id: businessId,
+    tables,
+    business_context: businessContext,
+    cataloged_at: new Date().toISOString()
+  };
+}
+
 const LOW_CARDINALITY_LIMIT = 20;
 const MAX_PROFILED_COLUMNS_PER_TABLE = 40;
 
@@ -2205,6 +3280,106 @@ async function readLowCardinalityColumnsMySql(
   return profiles;
 }
 
+async function readLowCardinalityColumnsSnowflake(
+  connection: SnowflakeConnection,
+  config: SnowflakeRuntimeConfig,
+  schema: string,
+  table: string,
+  columns: TableColumnInfo[]
+): Promise<LowCardinalityColumn[]> {
+  const profiles: LowCardinalityColumn[] = [];
+
+  for (const column of columns.slice(0, MAX_PROFILED_COLUMNS_PER_TABLE)) {
+    if (!isLowCardinalityCandidateType(column.data_type)) {
+      continue;
+    }
+
+    try {
+      const rows = await executeSnowflakeStatement(
+        connection,
+        [
+          `SELECT DISTINCT CAST(${quoteSnowflakeIdentifier(column.column_name)} AS VARCHAR) AS value`,
+          `FROM ${quoteSnowflakePath(config.database, schema, table)}`,
+          `WHERE ${quoteSnowflakeIdentifier(column.column_name)} IS NOT NULL`,
+          `LIMIT ${LOW_CARDINALITY_LIMIT + 1}`
+        ].join("\n")
+      );
+
+      if (rows.length === 0 || rows.length > LOW_CARDINALITY_LIMIT) {
+        continue;
+      }
+
+      const distinctValues = rows
+        .map((row) => sanitizeDistinctValue(String(row.value ?? "")))
+        .filter((value): value is string => value.length > 0);
+
+      if (distinctValues.length === 0) {
+        continue;
+      }
+
+      profiles.push({
+        column_name: column.column_name,
+        distinct_values: distinctValues
+      });
+    } catch {
+      // Skip columns where distinct profiling fails.
+    }
+  }
+
+  return profiles;
+}
+
+async function readLowCardinalityColumnsBigQuery(
+  client: BigQuery,
+  config: BigQueryRuntimeConfig,
+  dataset: string,
+  table: string,
+  columns: TableColumnInfo[]
+): Promise<LowCardinalityColumn[]> {
+  const profiles: LowCardinalityColumn[] = [];
+
+  for (const column of columns.slice(0, MAX_PROFILED_COLUMNS_PER_TABLE)) {
+    if (!isLowCardinalityCandidateType(column.data_type)) {
+      continue;
+    }
+
+    try {
+      const rows = await executeReadOnlyQueryBigQuery(
+        client,
+        [
+          `SELECT DISTINCT CAST(${quoteBigQueryIdentifier(column.column_name)} AS STRING) AS value`,
+          `FROM ${quoteBigQueryTable(config.project_id, dataset, table)}`,
+          `WHERE ${quoteBigQueryIdentifier(column.column_name)} IS NOT NULL`,
+          `LIMIT ${LOW_CARDINALITY_LIMIT + 1}`
+        ].join("\n"),
+        60_000,
+        config.location
+      );
+
+      if (rows.length === 0 || rows.length > LOW_CARDINALITY_LIMIT) {
+        continue;
+      }
+
+      const distinctValues = rows
+        .map((row) => sanitizeDistinctValue(String(row.value ?? "")))
+        .filter((value): value is string => value.length > 0);
+
+      if (distinctValues.length === 0) {
+        continue;
+      }
+
+      profiles.push({
+        column_name: column.column_name,
+        distinct_values: distinctValues
+      });
+    } catch {
+      // Skip columns where distinct profiling fails.
+    }
+  }
+
+  return profiles;
+}
+
 function isLowCardinalityCandidateType(dataType: string): boolean {
   const normalized = dataType.toLowerCase();
   if (
@@ -2242,6 +3417,10 @@ function toObjectRows(value: unknown): Record<string, unknown>[] {
     (row): row is Record<string, unknown> =>
       typeof row === "object" && row !== null && !Array.isArray(row)
   );
+}
+
+function normalizeObjectRows(value: unknown): Record<string, unknown>[] {
+  return toObjectRows(value);
 }
 
 function quoteIdent(identifier: string): string {

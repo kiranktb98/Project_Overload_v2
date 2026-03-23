@@ -1605,6 +1605,7 @@ function createTitleStateSkeleton() {
       allowed_schemas: ["analytics"],
       insight_mode: "business" as const
     },
+    session_title: null,
     contract_id: null,
     last_run_id: null,
     last_query_id: null,
@@ -1632,7 +1633,9 @@ function createTitleStateSkeleton() {
     planner_summary: null,
     preparation_summary: null,
     prepared_payloads: [],
+    prepared_query_overrides: [],
     post_run_actions_pending: false,
+    scheduled_report_view: false,
     report_clarification_active: false,
     business_case_active: false,
     business_case_candidates: [],

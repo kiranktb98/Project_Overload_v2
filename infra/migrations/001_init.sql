@@ -73,6 +73,19 @@ CREATE TABLE IF NOT EXISTS system_state (
   PRIMARY KEY (state_key, tenant_id)
 );
 
+CREATE TABLE IF NOT EXISTS scheduled_report_profiles (
+  id TEXT PRIMARY KEY,
+  contract_id TEXT NOT NULL,
+  tenant_id TEXT NOT NULL DEFAULT 'default',
+  payload JSONB NOT NULL,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  UNIQUE (contract_id, tenant_id)
+);
+
+CREATE INDEX IF NOT EXISTS scheduled_report_profiles_updated_idx
+  ON scheduled_report_profiles(tenant_id, updated_at DESC, created_at DESC);
+
 CREATE TABLE IF NOT EXISTS platform_users (
   id TEXT PRIMARY KEY,
   tenant_id TEXT NOT NULL DEFAULT 'default',

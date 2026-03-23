@@ -1,0 +1,445 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <title>Project Overload DB Connection Guide</title>
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <style>
+      :root {
+        --bg: #08142f;
+        --bg-2: #0d2148;
+        --card: #102754;
+        --card-2: #0f234d;
+        --text: #e8eefc;
+        --muted: #b7c5ea;
+        --accent: #6d7dff;
+        --accent-2: #78b4ff;
+        --good: #73e2a7;
+        --warn: #ffd166;
+        --border: rgba(140, 173, 255, 0.22);
+      }
+
+      * { box-sizing: border-box; }
+      body {
+        margin: 0;
+        font-family: "Segoe UI", Arial, sans-serif;
+        background:
+          radial-gradient(circle at top right, rgba(109, 125, 255, 0.24), transparent 28%),
+          radial-gradient(circle at top left, rgba(120, 180, 255, 0.18), transparent 24%),
+          linear-gradient(180deg, var(--bg), #071126 68%);
+        color: var(--text);
+        line-height: 1.55;
+      }
+
+      .page {
+        max-width: 980px;
+        margin: 0 auto;
+        padding: 44px 40px 56px;
+      }
+
+      .hero {
+        padding: 28px 30px;
+        border: 1px solid var(--border);
+        border-radius: 24px;
+        background: linear-gradient(145deg, rgba(16, 39, 84, 0.96), rgba(12, 28, 63, 0.94));
+        box-shadow: 0 20px 48px rgba(0, 0, 0, 0.24);
+        margin-bottom: 28px;
+      }
+
+      h1, h2, h3 {
+        margin: 0 0 12px;
+        line-height: 1.2;
+      }
+
+      h1 { font-size: 34px; }
+      h2 {
+        font-size: 24px;
+        margin-top: 34px;
+      }
+      h3 {
+        font-size: 18px;
+        margin-top: 22px;
+      }
+
+      p, li { color: var(--muted); }
+      strong { color: var(--text); }
+      code {
+        font-family: Consolas, "Courier New", monospace;
+        background: rgba(4, 13, 33, 0.55);
+        border: 1px solid rgba(120, 180, 255, 0.18);
+        border-radius: 8px;
+        padding: 2px 7px;
+        color: #f3f7ff;
+      }
+
+      pre {
+        margin: 14px 0 0;
+        padding: 16px;
+        background: rgba(5, 14, 35, 0.78);
+        border: 1px solid rgba(120, 180, 255, 0.18);
+        border-radius: 16px;
+        overflow-x: auto;
+        color: #f2f6ff;
+      }
+
+      .grid {
+        display: grid;
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+        gap: 18px;
+        margin-top: 18px;
+      }
+
+      .card {
+        background: linear-gradient(160deg, var(--card), var(--card-2));
+        border: 1px solid var(--border);
+        border-radius: 20px;
+        padding: 18px 18px 16px;
+        break-inside: avoid;
+      }
+
+      .pill {
+        display: inline-block;
+        padding: 6px 10px;
+        border-radius: 999px;
+        margin-bottom: 10px;
+        background: rgba(109, 125, 255, 0.16);
+        color: #dce4ff;
+        font-size: 12px;
+        font-weight: 700;
+        text-transform: uppercase;
+        letter-spacing: 0.08em;
+      }
+
+      .status {
+        margin-top: 12px;
+        padding: 12px 14px;
+        border-radius: 14px;
+        border: 1px solid rgba(115, 226, 167, 0.24);
+        background: rgba(115, 226, 167, 0.08);
+        color: #dff7ea;
+      }
+
+      .note {
+        margin-top: 12px;
+        padding: 12px 14px;
+        border-radius: 14px;
+        border: 1px solid rgba(255, 209, 102, 0.28);
+        background: rgba(255, 209, 102, 0.08);
+        color: #fff1c9;
+      }
+
+      table {
+        width: 100%;
+        border-collapse: collapse;
+        margin-top: 14px;
+        font-size: 14px;
+      }
+
+      th, td {
+        text-align: left;
+        vertical-align: top;
+        border-bottom: 1px solid rgba(140, 173, 255, 0.12);
+        padding: 10px 10px;
+      }
+
+      th {
+        color: var(--text);
+        background: rgba(255, 255, 255, 0.03);
+      }
+
+      ol, ul {
+        margin: 10px 0 0 20px;
+        padding: 0;
+      }
+
+      .footer {
+        margin-top: 34px;
+        padding-top: 18px;
+        border-top: 1px solid rgba(140, 173, 255, 0.16);
+        font-size: 13px;
+        color: #c9d5f7;
+      }
+
+      @media print {
+        body {
+          background: #ffffff;
+          color: #111827;
+        }
+        .hero, .card {
+          color: #111827;
+          background: #ffffff;
+          box-shadow: none;
+          border-color: #d7deee;
+        }
+        p, li, .footer { color: #334155; }
+        strong, h1, h2, h3, th, code { color: #0f172a; }
+        code, pre { border-color: #d7deee; background: #f8fafc; }
+        .status {
+          background: #eefbf3;
+          color: #14532d;
+          border-color: #c8e8d4;
+        }
+        .note {
+          background: #fff8e8;
+          color: #7c5200;
+          border-color: #f3dfab;
+        }
+      }
+    </style>
+  </head>
+  <body>
+    <div class="page">
+      <section class="hero">
+        <div class="pill">Project Overload</div>
+        <h1>Database Connection Guide</h1>
+        <p>
+          This guide covers the four supported source types in the connection wizard:
+          <strong>Postgres</strong>, <strong>MySQL</strong>, <strong>Snowflake</strong>, and <strong>BigQuery</strong>.
+          The same product flow is used for all four: <strong>Source</strong> → <strong>Governance</strong> → <strong>Activate</strong>.
+        </p>
+        <div class="status">
+          Postgres is live-tested end to end on the local stack. MySQL, Snowflake, and BigQuery are fully wired in code and covered by automated provider tests and UI validation.
+        </div>
+        <div class="note">
+          For Snowflake specifically: the connector support is in place and should work with a valid account, database, schema, warehouse, and read permissions. I have not connected this local machine to a real Snowflake account, so treat it as implemented and test-covered, but not live warehouse-verified from this environment.
+        </div>
+      </section>
+
+      <h2>Connection Flow</h2>
+      <table>
+        <thead>
+          <tr>
+            <th>Step</th>
+            <th>What you do</th>
+            <th>What Project Overload does</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr>
+            <td><strong>Source</strong></td>
+            <td>Choose the database type, enter the connection string, test it, then connect.</td>
+            <td>Validates the connector, inspects visible relations, and prepares governance.</td>
+          </tr>
+          <tr>
+            <td><strong>Governance</strong></td>
+            <td>Select the tables to allowlist and click <strong>Save allowlist</strong>.</td>
+            <td>Validates access and builds the governed catalog used by chat, planning, and reports.</td>
+          </tr>
+          <tr>
+            <td><strong>Activate</strong></td>
+            <td>Run a safe query, confirm results, and submit the connection.</td>
+            <td>Enforces read-only, SELECT-only execution and makes the source available to the product.</td>
+          </tr>
+        </tbody>
+      </table>
+
+      <h2>Provider Setup</h2>
+      <div class="grid">
+        <section class="card">
+          <div class="pill">Postgres</div>
+          <h3>Expected connection string</h3>
+          <pre>postgresql://user:password@host:5432/database?sslmode=require</pre>
+          <h3>Notes</h3>
+          <ul>
+            <li>Also applies to Neon and similar Postgres-compatible read replicas.</li>
+            <li>If your server is local or non-SSL, use <code>?sslmode=disable</code>.</li>
+            <li>If your TLS chain is custom, paste the CA certificate in <strong>Advanced TLS</strong>.</li>
+          </ul>
+          <h3>Minimum access</h3>
+          <ul>
+            <li>Read-only user</li>
+            <li><code>SELECT</code> on the allowlisted tables/views</li>
+          </ul>
+        </section>
+
+        <section class="card">
+          <div class="pill">MySQL</div>
+          <h3>Expected connection string</h3>
+          <pre>mysql://user:password@host:3306/database?sslmode=require</pre>
+          <h3>Notes</h3>
+          <ul>
+            <li>Use a dedicated read-only MySQL user if possible.</li>
+            <li>The product validates access first, then moves into governance and activation.</li>
+            <li>Prefer TLS with CA validation for production sources.</li>
+          </ul>
+          <h3>Minimum access</h3>
+          <ul>
+            <li>Read-only user</li>
+            <li><code>SELECT</code> on the allowlisted tables/views</li>
+          </ul>
+        </section>
+
+        <section class="card">
+          <div class="pill">Snowflake</div>
+          <h3>Expected connection string</h3>
+          <pre>snowflake://user:password@account/database/schema?warehouse=COMPUTE_WH</pre>
+          <h3>Required parts</h3>
+          <ul>
+            <li><strong>Account</strong> in the host position</li>
+            <li><strong>Database</strong> in the path</li>
+            <li><strong>Schema</strong> in the path or query string</li>
+            <li><strong>Warehouse</strong> in the query string</li>
+          </ul>
+          <h3>Minimum access</h3>
+          <ul>
+            <li>Role can use the warehouse</li>
+            <li>Role can use the database and schema</li>
+            <li>Role has <code>SELECT</code> on the allowlisted tables/views</li>
+          </ul>
+        </section>
+
+        <section class="card">
+          <div class="pill">BigQuery</div>
+          <h3>Expected connection string</h3>
+          <pre>bigquery://project-id/dataset</pre>
+          <h3>Supported auth forms</h3>
+          <ul>
+            <li><code>credentials_json=...</code></li>
+            <li><code>credentials_base64=...</code></li>
+            <li>Application Default Credentials if the runtime already has them</li>
+            <li><code>key_filename=...</code> if configured on the runtime host</li>
+          </ul>
+          <h3>Minimum access</h3>
+          <ul>
+            <li><code>roles/bigquery.dataViewer</code> on the dataset</li>
+            <li><code>roles/bigquery.jobUser</code> on the project</li>
+          </ul>
+        </section>
+      </div>
+
+      <h2>How To Connect Each Database</h2>
+
+      <h3>Postgres</h3>
+      <ol>
+        <li>Go to <strong>Data Sources</strong> and click <strong>Connect new database</strong>.</li>
+        <li>Select <strong>Postgres</strong>.</li>
+        <li>Paste a Postgres connection string. Example: <code>postgresql://reader:secret@db.company.com:5432/analytics?sslmode=require</code>.</li>
+        <li>Click <strong>Test connection</strong>.</li>
+        <li>If the test passes, click <strong>Connect source</strong>.</li>
+        <li>In Governance, select the tables you want on the allowlist and click <strong>Save allowlist</strong>.</li>
+        <li>When the catalog modal completes, continue to Activate.</li>
+        <li>Run the suggested safe query and then click <strong>Submit connection</strong>.</li>
+      </ol>
+
+      <h3>MySQL</h3>
+      <ol>
+        <li>Select <strong>MySQL</strong> in Step A1.</li>
+        <li>Paste a MySQL connection string. Example: <code>mysql://reader:secret@mysql.company.com:3306/analytics?sslmode=require</code>.</li>
+        <li>Test the connection, then connect it.</li>
+        <li>Choose the governed allowlist, save it, and wait for cataloging.</li>
+        <li>Run a safe query in Activate and submit the source.</li>
+      </ol>
+
+      <h3>Snowflake</h3>
+      <ol>
+        <li>Select <strong>Snowflake</strong> in Step A1.</li>
+        <li>Paste a Snowflake connection string. Example: <code>snowflake://reader:secret@acme/testdb/public?warehouse=COMPUTE_WH</code>.</li>
+        <li>Make sure the user’s role can use the warehouse, database, and schema, and can read the target tables.</li>
+        <li>Test the connection. If it passes, connect the source.</li>
+        <li>Pick the allowlisted tables, save governance, then continue through cataloging and activation.</li>
+        <li>Run a safe query and submit the connection.</li>
+      </ol>
+
+      <h3>BigQuery</h3>
+      <ol>
+        <li>Select <strong>BigQuery</strong> in Step A1.</li>
+        <li>Paste a BigQuery connection string. Example: <code>bigquery://demo-project/analytics</code>.</li>
+        <li>Make sure the runtime has valid credentials and the dataset/project IAM roles needed for reading and query execution. If you need advanced auth fields, use the manual connection string mode in the app.</li>
+        <li>Test the connection, then connect the source.</li>
+        <li>Choose the allowlist, save governance, allow cataloging to finish, then continue to Activate.</li>
+        <li>Run a safe query and submit the source.</li>
+      </ol>
+
+      <h2 id="tls-ca-corporate">Corporate TLS / SSL Inspection Guide</h2>
+      <p>
+        If you are on a corporate network and see TLS errors against a cloud database like Supabase, the most common cause is
+        <strong>SSL inspection</strong>. Your company proxy or security appliance is presenting a corporate certificate to Node,
+        and the API server does not trust that CA yet.
+      </p>
+      <p>You usually do <strong>not</strong> need a special certificate from Supabase. What you need is your <strong>corporate root or intermediate CA</strong>.</p>
+
+      <h3>Fastest path</h3>
+      <ol>
+        <li>Ask IT or your security/network team for the PEM/CRT of the corporate TLS inspection CA.</li>
+        <li>Open the file in a text editor.</li>
+        <li>Copy everything from <code>-----BEGIN CERTIFICATE-----</code> through <code>-----END CERTIFICATE-----</code>.</li>
+        <li>Paste it into <strong>Advanced TLS → Custom CA (PEM)</strong> in the connection wizard.</li>
+        <li>Retry the connection with SSL mode still on <strong>Automatic</strong> or <strong>Require TLS</strong>.</li>
+      </ol>
+
+      <h3>If you need to find it on Windows yourself</h3>
+      <ol>
+        <li>Open <code>certmgr.msc</code> for your user certificates, or <code>certlm.msc</code> for machine certificates.</li>
+        <li>Check:
+          <ul>
+            <li><strong>Trusted Root Certification Authorities → Certificates</strong></li>
+            <li><strong>Intermediate Certification Authorities → Certificates</strong></li>
+          </ul>
+        </li>
+        <li>Look for your company or security vendor name, for example Zscaler, Netskope, Cisco Umbrella, Palo Alto, or your company name.</li>
+        <li>Open the certificate and verify it looks like the corporate inspection/root CA.</li>
+        <li>Export it as <strong>Base-64 encoded X.509 (.CER)</strong>.</li>
+        <li>Open the exported file in Notepad and copy the full certificate block.</li>
+        <li>Paste that into <strong>Advanced TLS → Custom CA (PEM)</strong>.</li>
+      </ol>
+
+      <h3>If you want to trust it for the server instead of per connection</h3>
+      <ol>
+        <li>Save the CA PEM to a file on the API server.</li>
+        <li>Set <code>NODE_EXTRA_CA_CERTS=/path/to/your-corporate-ca.pem</code>.</li>
+        <li>Restart the API server.</li>
+      </ol>
+
+      <div class="note">
+        Use <code>sslmode=no-verify</code> or the UI’s no-verify option only as a temporary dev workaround. The better fix is to trust the correct corporate CA.
+      </div>
+
+      <h2>Troubleshooting</h2>
+      <table>
+        <thead>
+          <tr>
+            <th>Problem</th>
+            <th>Likely cause</th>
+            <th>What to change</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr>
+            <td>SSL error on Postgres or MySQL</td>
+            <td>The server does not support SSL, or your CA chain is custom.</td>
+            <td>Use <code>sslmode=disable</code> for local/non-SSL dev only, or provide the CA certificate in <strong>Advanced TLS</strong>.</td>
+          </tr>
+          <tr>
+            <td>Snowflake says account or warehouse is missing</td>
+            <td>The connection string is missing required Snowflake parts.</td>
+            <td>Include account host, database, schema, and <code>warehouse=...</code>.</td>
+          </tr>
+          <tr>
+            <td>Snowflake authenticates but governance finds nothing</td>
+            <td>The role can connect but cannot see the intended database/schema/tables.</td>
+            <td>Grant usage on warehouse, database, schema, and <code>SELECT</code> on target tables/views.</td>
+          </tr>
+          <tr>
+            <td>BigQuery says dataset is missing</td>
+            <td>The dataset is not included in the path.</td>
+            <td>Use <code>bigquery://project-id/dataset</code> or provide <code>dataset=...</code>.</td>
+          </tr>
+          <tr>
+            <td>BigQuery authentication fails</td>
+            <td>Credentials are missing or malformed.</td>
+            <td>Provide valid <code>credentials_json</code>, <code>credentials_base64</code>, a valid <code>key_filename</code>, or runtime ADC.</td>
+          </tr>
+          <tr>
+            <td>Activation safe query fails</td>
+            <td>The allowlist is too narrow or the source user lacks <code>SELECT</code> on one of the chosen relations.</td>
+            <td>Adjust the allowlist or grants, then save governance again.</td>
+          </tr>
+        </tbody>
+      </table>
+
+      <div class="footer">
+        Generated from the current product behavior and connector code paths in <code>apps/web/src/connect-page.ts</code> and <code>apps/api/src/dataplane/connection-manager.ts</code>.
+      </div>
+    </div>
+  </body>
+</html>

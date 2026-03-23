@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 import { buildWebApp } from "../src/app";
 import { createPassthroughConversationClient } from "../src/conversation";
 import type { QueryRouterClient } from "../src/query-router";
-import { applyLlmDraftUpdates, parseChatState } from "../src/chat";
+import { applyLlmDraftUpdates, createInitialChatState, handleChatTurn, parseChatState } from "../src/chat";
 
 describe("web chat interface", () => {
   const createScopeVerificationFetchImpl = (rowCount: number): typeof fetch => {
@@ -92,7 +92,47 @@ describe("web chat interface", () => {
 
     const connectPage = await app.inject({ method: "GET", url: "/connect" });
     expect(connectPage.statusCode).toBe(200);
-    expect(connectPage.body).toContain("1-Click Database Connection Wizard");
+    expect(connectPage.body).toContain("Data Sources");
+    expect(connectPage.body).toContain("Step A1 - Choose a database type");
+    expect(connectPage.body).toContain("Snowflake");
+    expect(connectPage.body).toContain("BigQuery");
+    expect(connectPage.body).toContain("Guided setup");
+    expect(connectPage.body).toContain("Paste connection string");
+    expect(connectPage.body).toContain("Disable TLS (local/dev)");
+    expect(connectPage.body).toContain("URL-encodes credentials safely");
+    expect(connectPage.body).toContain("Step A2 - Set up your Postgres connection");
+      expect(connectPage.body).toContain("Postgres connection details");
+      expect(connectPage.body).toContain("There is no warehouse for Postgres");
+      expect(connectPage.body).toContain("Test Postgres connection");
+      expect(connectPage.body).toContain("Connect Postgres source");
+      expect(connectPage.body).toContain("For corporate VPN / SSL inspection");
+      expect(connectPage.body).not.toContain("Role (optional)");
+      expect(connectPage.body).not.toContain("Location (optional)");
+      expect(connectPage.body).not.toContain("Credentials JSON (optional)");
+      expect(connectPage.body).toContain("A safe query will be suggested once the governed allowlist is ready.");
+    expect(connectPage.body).toContain('href="/connect/guide"');
+    expect(connectPage.body).toContain("Open the database connection guide");
+    expect(connectPage.body).not.toContain("Open Chat Interface");
+    expect(connectPage.body).not.toContain("SELECT * FROM public.sales LIMIT 50");
+    expect(connectPage.body).not.toContain("Available now");
+    expect(connectPage.body).not.toContain("In rollout");
+
+    const guidePage = await app.inject({ method: "GET", url: "/connect/guide" });
+    expect(guidePage.statusCode).toBe(200);
+    expect(guidePage.body).toContain("Database Connection Guide");
+    expect(guidePage.body).toContain("snowflake://user:password@account/database/schema?warehouse=COMPUTE_WH");
+    expect(guidePage.body).toContain("bigquery://project-id/dataset");
+
+    const scheduledPage = await app.inject({ method: "GET", url: "/scheduled" });
+    expect(scheduledPage.statusCode).toBe(200);
+    expect(scheduledPage.body).toContain("Scheduled Reports");
+    expect(scheduledPage.body).toContain("Decision cockpit");
+    expect(scheduledPage.body).toContain("grid-template-columns:repeat(3, minmax(240px,1fr))");
+    expect(scheduledPage.body).toContain("Open in chat");
+
+    expect(page.body).toContain('id="schedule-modal"');
+    expect(page.body).toContain("Save schedule");
+    expect(page.body).toContain("How should the time windows change on each run?");
 
     await app.close();
   });
@@ -144,6 +184,24 @@ describe("web chat interface", () => {
     expect(body.state.conversation_history).toHaveLength(2);
 
     await app.close();
+  });
+
+  it("uses the chat title for the saved report name when no explicit draft name is set", async () => {
+    const state = createInitialChatState();
+    state.session_title = "Refund Trend Analysis";
+
+    const response = await handleChatTurn({
+      message: "save",
+      state,
+      api_client: {
+        async createContract(payload: { id: string; name: string }) {
+          return payload;
+        }
+      } as any
+    });
+
+    expect(response.assistant_message).toContain('Name: "Refund Trend Analysis"');
+    expect(response.state.contract_id).toMatch(/^contract_/);
   });
 
   it("uses LLM query router for single-query execution when router returns single_query", async () => {
@@ -249,114 +307,138 @@ describe("web chat interface", () => {
     await app.close();
   });
 
-  it("compiles routed SQL to connection dialect before execution", async () => {
-    let executedSql = "";
-    const router: QueryRouterClient = {
-      provider: "openrouter",
-      mode: "provider",
-      async decide() {
-        return {
-          route: "single_query",
-          sql: "SELECT SUM(total_amount) AS total_sales FROM public.demo_orders WHERE order_date >= CURRENT_DATE - INTERVAL '30 days'",
-          reason: "Single metric request can be answered with one aggregate query.",
-          confidence: 0.9
-        };
-      },
-      async compile_sql() {
-        return {
-          sql: "SELECT SUM(total_amount) AS total_sales FROM public.demo_orders WHERE order_date >= DATE_SUB(CURRENT_DATE, INTERVAL 30 DAY)",
-          rationale: "Converted interval syntax for mysql."
-        };
-      }
-    };
+  const singleQueryDialectCases = [
+    {
+      provider: "mysql",
+      expectedSqlFragment: "DATE_SUB(CURRENT_DATE, INTERVAL 30 DAY)",
+      compiledSql:
+        "SELECT SUM(total_amount) AS total_sales FROM `public`.`demo_orders` WHERE order_date >= DATE_SUB(CURRENT_DATE, INTERVAL 30 DAY)"
+    },
+    {
+      provider: "snowflake",
+      expectedSqlFragment: 'DATEADD(day, -30, CURRENT_DATE())',
+      compiledSql:
+        'SELECT SUM(total_amount) AS total_sales FROM "PUBLIC"."DEMO_ORDERS" WHERE order_date >= DATEADD(day, -30, CURRENT_DATE())'
+    },
+    {
+      provider: "bigquery",
+      expectedSqlFragment: "DATE_SUB(CURRENT_DATE(), INTERVAL 30 DAY)",
+      compiledSql:
+        "SELECT SUM(total_amount) AS total_sales FROM `demo-project.public.demo_orders` WHERE order_date >= DATE_SUB(CURRENT_DATE(), INTERVAL 30 DAY)"
+    }
+  ] as const;
 
-    const fetchImpl: typeof fetch = async (input, init) => {
-      const url = typeof input === "string" ? input : input instanceof URL ? input.toString() : input.url;
-      const method = init?.method?.toUpperCase() ?? "GET";
+  for (const testCase of singleQueryDialectCases) {
+    it(`compiles routed SQL to the ${testCase.provider} dialect before single-query execution`, async () => {
+      let executedSql = "";
+      const router: QueryRouterClient = {
+        provider: "openrouter",
+        mode: "provider",
+        async decide() {
+          return {
+            route: "single_query",
+            sql: "SELECT SUM(total_amount) AS total_sales FROM public.demo_orders WHERE order_date >= CURRENT_DATE - INTERVAL '30 days'",
+            reason: "Single metric request can be answered with one aggregate query.",
+            confidence: 0.9
+          };
+        },
+        async compile_sql(input) {
+          expect(input.dialect).toBe(testCase.provider);
+          return {
+            sql: testCase.compiledSql,
+            rationale: `Converted interval syntax for ${testCase.provider}.`
+          };
+        }
+      };
 
-      if (url.endsWith("/connections/active") && method === "GET") {
-        return new Response(
-          JSON.stringify({
-            connected: true,
-            provider: "mysql",
-            name: "mysql",
-            database: "demo",
-            connected_at: "2026-02-01T00:00:00.000Z",
-            allowed_relations: ["public.demo_orders"],
-            allowed_schemas: ["public"],
-            available_relations: ["public.demo_orders"],
-            source: "runtime"
-          }),
-          { status: 200, headers: { "content-type": "application/json" } }
-        );
-      }
+      const fetchImpl: typeof fetch = async (input, init) => {
+        const url = typeof input === "string" ? input : input instanceof URL ? input.toString() : input.url;
+        const method = init?.method?.toUpperCase() ?? "GET";
 
-      if (url.endsWith("/connections/catalog") && method === "GET") {
-        return new Response(
-          JSON.stringify({
-            business_id: "biz_test",
-            business_context: "",
-            cataloged_at: "2026-02-01T00:00:00.000Z",
-            tables: [
-              {
-                table_id: "tbl_orders",
-                qualified_name: "public.demo_orders",
-                relation_type: "TABLE",
-                summary: "Orders and sales",
-                columns: [
-                  { column_name: "order_date", data_type: "timestamp", is_nullable: false },
-                  { column_name: "total_amount", data_type: "decimal", is_nullable: false }
-                ],
-                low_cardinality_columns: [],
-                sample_rows: [],
-                row_count_estimate: 1000
-              }
-            ]
-          }),
-          { status: 200, headers: { "content-type": "application/json" } }
-        );
-      }
+        if (url.endsWith("/connections/active") && method === "GET") {
+          return new Response(
+            JSON.stringify({
+              connected: true,
+              provider: testCase.provider,
+              name: testCase.provider,
+              database: "demo",
+              connected_at: "2026-02-01T00:00:00.000Z",
+              allowed_relations: ["public.demo_orders"],
+              allowed_schemas: ["public"],
+              available_relations: ["public.demo_orders"],
+              source: "runtime"
+            }),
+            { status: 200, headers: { "content-type": "application/json" } }
+          );
+        }
 
-      if (url.endsWith("/connections/query") && method === "POST") {
-        const body = typeof init?.body === "string" ? (JSON.parse(init.body) as { sql?: string }) : {};
-        executedSql = body.sql ?? "";
-        return new Response(
-          JSON.stringify({
-            rows: [{ total_sales: "1200.50" }],
-            row_count: 1,
-            governed_sql: executedSql,
-            warnings: []
-          }),
-          { status: 200, headers: { "content-type": "application/json" } }
-        );
-      }
+        if (url.endsWith("/connections/catalog") && method === "GET") {
+          return new Response(
+            JSON.stringify({
+              business_id: "biz_test",
+              business_context: "",
+              cataloged_at: "2026-02-01T00:00:00.000Z",
+              tables: [
+                {
+                  table_id: "tbl_orders",
+                  qualified_name: "public.demo_orders",
+                  relation_type: "TABLE",
+                  summary: "Orders and sales",
+                  columns: [
+                    { column_name: "order_date", data_type: "timestamp", is_nullable: false },
+                    { column_name: "total_amount", data_type: "decimal", is_nullable: false }
+                  ],
+                  low_cardinality_columns: [],
+                  sample_rows: [],
+                  row_count_estimate: 1000
+                }
+              ]
+            }),
+            { status: 200, headers: { "content-type": "application/json" } }
+          );
+        }
 
-      return new Response(JSON.stringify({ message: `Unhandled request: ${method} ${url}` }), {
-        status: 404,
-        headers: { "content-type": "application/json" }
+        if (url.endsWith("/connections/query") && method === "POST") {
+          const body = typeof init?.body === "string" ? (JSON.parse(init.body) as { sql?: string }) : {};
+          executedSql = body.sql ?? "";
+          return new Response(
+            JSON.stringify({
+              rows: [{ total_sales: "1200.50" }],
+              row_count: 1,
+              governed_sql: executedSql,
+              warnings: []
+            }),
+            { status: 200, headers: { "content-type": "application/json" } }
+          );
+        }
+
+        return new Response(JSON.stringify({ message: `Unhandled request: ${method} ${url}` }), {
+          status: 404,
+          headers: { "content-type": "application/json" }
+        });
+      };
+
+      const app = buildWebApp({
+        api_base_url: "http://api.local",
+        fetch_impl: fetchImpl,
+        query_router: router,
+        conversation_client: createPassthroughConversationClient()
       });
-    };
 
-    const app = buildWebApp({
-      api_base_url: "http://api.local",
-      fetch_impl: fetchImpl,
-      query_router: router,
-      conversation_client: createPassthroughConversationClient()
+      const response = await app.inject({
+        method: "POST",
+        url: "/api/chat",
+        payload: {
+          message: "total sales in last 30 days"
+        }
+      });
+
+      expect(response.statusCode).toBe(200);
+      expect(executedSql).toContain(testCase.expectedSqlFragment);
+
+      await app.close();
     });
-
-    const response = await app.inject({
-      method: "POST",
-      url: "/api/chat",
-      payload: {
-        message: "total sales in last 30 days"
-      }
-    });
-
-    expect(response.statusCode).toBe(200);
-    expect(executedSql).toContain("DATE_SUB(CURRENT_DATE, INTERVAL 30 DAY)");
-
-    await app.close();
-  });
+  }
 
   it("uses LLM narrator for natural single-query explanation when available", async () => {
     const router: QueryRouterClient = {

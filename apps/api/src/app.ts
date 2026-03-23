@@ -25,6 +25,7 @@ import { createLocalRowProviderFromEnv } from "./dataplane/local-row-provider";
 import { registerConnectionRoutes } from "./routes/connections";
 import { registerUiRoutes } from "./routes/ui";
 import { registerConfigRoutes } from "./routes/config";
+import { registerScheduledReportRoutes } from "./routes/scheduled-reports";
 import { RuntimeConnectionManager } from "./dataplane/connection-manager";
 import { UserConnectionRegistry, userContextStorage } from "./dataplane/user-connection-registry";
 import { validateApiAuth } from "./security/request-context";
@@ -169,6 +170,7 @@ export async function buildApiApp(options: Partial<ApiDependencies> = {}) {
   registerConnectionRoutes(app, connectionRegistry);
   registerConfigRoutes(app, store);
   registerUiRoutes(app, store);
+  registerScheduledReportRoutes(app, store);
 
   app.setErrorHandler((error: unknown, _request, reply) => {
     if (error instanceof ZodError) {

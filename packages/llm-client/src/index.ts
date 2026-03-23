@@ -97,9 +97,11 @@ export type ReportComposerInput = {
     data_summary: string;
     answer_focus?: string;
     evidence_snapshot?: string;
+    change_summary?: string[];
   }>;
   catalog_summary: string;
   business_context?: string;
+  template_html?: string;
 };
 
 export interface ReportComposerClient {
@@ -2763,7 +2765,9 @@ function reportComposerSystemPrompt(input: ReportComposerInput): string {
     "- USE THE PREPARED EVIDENCE: Each analysis includes answer_focus, data_summary, and evidence_snapshot fields. The evidence_snapshot contains the prepared rows to ground tables and charts.",
     "- PERIOD COMPARISONS: If the evidence already contains prior-period, recent-period, and delta fields in one prepared comparison row, treat that as sufficient evidence for the comparison. Do not reject it just because it is aggregated instead of one row per month.",
     "- VISUAL COVERAGE: If the evidence shows a ranking or grouped breakdown, render a sorted table and bar chart. If the evidence shows a time series, render a line chart plus a summary table.",
+    "- CHANGE CHECKER: If an analysis includes change_summary lines, add a concise 'What changed since last run' subsection inside that question's section.",
     "- NO INTERNAL INFO: Never mention validation, pipeline issues, SQL compilation, or confidence scores.",
+    "- TEMPLATE REUSE: If template_html is provided, preserve the same broad section order and reporting style while updating all numbers, dates, and narrative to the new run.",
     "- Return ONLY the HTML document, no markdown fences."
   ].join("\n");
 }
@@ -2780,7 +2784,8 @@ function reportComposerUserPrompt(input: ReportComposerInput): string {
     `Risks: ${a.risks.join("; ") || "None"}`,
     `Recommendations: ${a.recommendations.join("; ") || "None"}`,
     `Data summary: ${a.data_summary}`,
-    `Evidence snapshot: ${a.evidence_snapshot ?? "None"}`
+    `Evidence snapshot: ${a.evidence_snapshot ?? "None"}`,
+    `Change summary: ${(a.change_summary ?? []).join("; ") || "None"}`
   ].join("\n")).join("\n\n");
 
   const perQuestionSummaries = (input.per_question_summaries ?? [])
@@ -2810,6 +2815,9 @@ function reportComposerUserPrompt(input: ReportComposerInput): string {
     "METRIC DEFINITIONS:",
     metricDefinitions.length > 0 ? metricDefinitions : "(none provided)",
     "",
+    "HTML TEMPLATE SNAPSHOT:",
+    input.template_html && input.template_html.trim().length > 0 ? input.template_html.trim() : "(none provided)",
+    "",
     "ANALYSIS RESULTS:",
     sections,
     "",
@@ -2833,6 +2841,7 @@ function renderStubReportHtml(input: ReportComposerInput): string {
     const highlights = a.highlights.map((h) => `<li>${escapeHtml(h)}</li>`).join("");
     const risks = a.risks.map((r) => `<li>${escapeHtml(r)}</li>`).join("");
     const recs = a.recommendations.map((r) => `<li>${escapeHtml(r)}</li>`).join("");
+    const changes = (a.change_summary ?? []).map((entry) => `<li>${escapeHtml(entry)}</li>`).join("");
     return `
     <section class="analysis-card">
       <h2>${escapeHtml(a.question)}</h2>
@@ -2840,6 +2849,7 @@ function renderStubReportHtml(input: ReportComposerInput): string {
       ${highlights.length > 0 ? `<h3>Key Findings</h3><ul>${highlights}</ul>` : ""}
       ${risks.length > 0 ? `<h3>Risks</h3><ul>${risks}</ul>` : ""}
       ${recs.length > 0 ? `<h3>Recommendations</h3><ul>${recs}</ul>` : ""}
+      ${changes.length > 0 ? `<h3>What Changed Since Last Run</h3><ul>${changes}</ul>` : ""}
       <p class="data-note">${escapeHtml(a.data_summary)}</p>
       ${a.evidence_snapshot ? `<details class="evidence-note"><summary>Prepared evidence</summary><pre>${escapeHtml(a.evidence_snapshot)}</pre></details>` : ""}
     </section>`;

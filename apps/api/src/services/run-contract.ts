@@ -8,6 +8,7 @@ import {
   ReportRunSchema,
   type ReportContract,
   type ReportRun,
+  type ScheduledReportProfile,
   GlobalConfigSchema,
   GLOBAL_CONFIG_STATE_KEY,
   type MetricDefinition,
@@ -28,6 +29,7 @@ import { extractReferencedRelations } from "@project-overload/sql-guard";
 import type {
   BatchAnalysis,
   KpiWatchlistItem,
+  PlannedQuery,
   PlannerOutput,
   QueryStrategyInput,
   QueryStrategyOutput,
@@ -125,6 +127,12 @@ const PreparedQuestionPayloadSchema = z.object({
   warnings: z.array(z.string().min(1)).default([])
 });
 
+const PreparedQueryOverrideSchema = z.object({
+  question_id: z.string().min(1).nullable().optional(),
+  question_number: z.number().int().min(1).nullable().optional(),
+  sql: z.string().min(1)
+});
+
 const PreparedQuestionPayloadPublicSchema = PreparedQuestionPayloadSchema.omit({
   prepared_rows: true,
   primary_sql: true
@@ -197,6 +205,105 @@ export type RunReportContractResult = {
   token_usage: TokenUsageReport;
 };
 
+type PreparedQueryOverride = z.infer<typeof PreparedQueryOverrideSchema>;
+
+function normalizePreparedQueryOverrides(contract: ReportContract): PreparedQueryOverride[] {
+  const raw = (contract as ReportContract & { prepared_query_overrides?: unknown }).prepared_query_overrides;
+  if (!Array.isArray(raw)) {
+    return [];
+  }
+  return raw
+    .map((entry) => PreparedQueryOverrideSchema.safeParse(entry))
+    .filter((entry): entry is { success: true; data: PreparedQueryOverride } => entry.success)
+    .map((entry) => entry.data)
+    .filter((entry) => entry.sql.trim().length > 0);
+}
+
+async function applyPreparedQueryOverrides(input: {
+  contract: ReportContract;
+  overrides: PreparedQueryOverride[];
+  prepared_payloads: PreparedQuestionPayload[];
+  query_details: DataPreparationResult["query_details"];
+  tenant_id: string;
+  data_plane: DataPlane;
+  store: MetadataStore;
+  sql_dialect: SqlDialect;
+  catalog_model: CatalogModel;
+  query_strategist: QueryStrategistClient;
+  catalog_summary: string;
+}): Promise<DataPreparationResult["query_details"]> {
+  if (input.overrides.length === 0) {
+    return input.query_details;
+  }
+
+  let nextQueryDetails = [...input.query_details];
+
+  for (const override of input.overrides) {
+    const targetIndex = input.prepared_payloads.findIndex((payload) => {
+      if (override.question_id && payload.question_id === override.question_id) {
+        return true;
+      }
+      if (typeof override.question_number === "number" && payload.question_number === override.question_number) {
+        return true;
+      }
+      return false;
+    });
+
+    if (targetIndex < 0) {
+      continue;
+    }
+
+    const existing = input.prepared_payloads[targetIndex]!;
+    const plannedQuery: PlannedQuery = {
+      question: existing.question,
+      sql: override.sql.trim(),
+      purpose: existing.purpose,
+      ...(existing.group_id ? { group_id: existing.group_id } : {})
+    };
+
+    const prepared = await runDataPreparationAgent({
+      tenant_id: input.tenant_id,
+      question_number: existing.question_number,
+      contract: input.contract,
+      data_plane: input.data_plane,
+      store: input.store,
+      planned_queries: [plannedQuery],
+      group_id: existing.group_id,
+      catalog_model: input.catalog_model,
+      query_strategist: input.query_strategist,
+      sql_dialect: input.sql_dialect,
+      catalog_summary: input.catalog_summary
+    });
+
+    input.prepared_payloads[targetIndex] = {
+      ...prepared.payload,
+      question_id: existing.question_id,
+      question_number: existing.question_number,
+      question: existing.question,
+      purpose: existing.purpose,
+      group_id: existing.group_id
+    };
+
+    nextQueryDetails = nextQueryDetails.filter((detail) => {
+      if (detail.question_id === existing.question_id) {
+        return false;
+      }
+      if (detail.question_number === existing.question_number) {
+        return false;
+      }
+      return true;
+    });
+    nextQueryDetails.push(...prepared.query_details.map((detail) => ({
+      ...detail,
+      question_id: existing.question_id,
+      question_number: existing.question_number,
+      question: existing.question
+    })));
+  }
+
+  return nextQueryDetails;
+}
+
 export type RunPayloadQaResult = {
   answer: string;
   citations: string[];
@@ -268,6 +375,91 @@ function resolvePreparationTimeoutMs(rawTimeoutMs: number | undefined): number {
   return Math.max(DEFAULT_PREPARATION_TIMEOUT_MS, Math.min(bounded, MAX_PREPARATION_TIMEOUT_MS));
 }
 
+function buildEffectiveScheduledContract(
+  contract: ReportContract,
+  scheduledProfile: ScheduledReportProfile | null
+): ReportContract {
+  if (!scheduledProfile) {
+    return contract;
+  }
+
+  const byQuestion = new Map(
+    (scheduledProfile.question_execution_plan ?? []).map((entry) => [entry.question_number, entry])
+  );
+
+  return {
+    ...contract,
+    timezone: scheduledProfile.timezone || contract.timezone,
+    schedule_cron: scheduledProfile.schedule_cron || contract.schedule_cron,
+    scope_clarifications: (contract.scope_clarifications ?? []).map((entry) => {
+      const plan = byQuestion.get(entry.question_number);
+      if (!plan) {
+        return entry;
+      }
+
+      const answerParts = [
+        plan.current_scope_summary,
+        `Scheduled rerun behavior: ${plan.next_run_behavior}`,
+        `Windowing instructions: ${scheduledProfile.windowing_instructions}`
+      ];
+
+      if (scheduledProfile.additional_instructions && scheduledProfile.additional_instructions.trim().length > 0) {
+        answerParts.push(`Additional instructions: ${scheduledProfile.additional_instructions.trim()}`);
+      }
+
+      return {
+        ...entry,
+        answer: answerParts.join(" ")
+      };
+    })
+  };
+}
+
+function buildScheduledStrategyContext(scheduledProfile: ScheduledReportProfile | null): string {
+  if (!scheduledProfile) {
+    return "";
+  }
+
+  const planLines = (scheduledProfile.question_execution_plan ?? [])
+    .map((entry) => `Q${entry.question_number}: ${entry.next_run_behavior}`)
+    .join("\n");
+  const queryTemplateLines = (scheduledProfile.query_template_snapshot ?? [])
+    .slice(0, 12)
+    .map((entry) => `Q${entry.question_number} ${entry.purpose}: ${entry.sql}`)
+    .join("\n");
+
+  return [
+    "",
+    "",
+    "SCHEDULED RERUN PROFILE (reuse this plan unless the data forces a safe adjustment):",
+    `- Frequency: ${scheduledProfile.frequency}`,
+    `- Timezone: ${scheduledProfile.timezone}`,
+    `- Windowing instructions: ${scheduledProfile.windowing_instructions}`,
+    scheduledProfile.additional_instructions ? `- Additional instructions: ${scheduledProfile.additional_instructions}` : "",
+    planLines.length > 0 ? "Question rerun plan:\n" + planLines : "",
+    queryTemplateLines.length > 0 ? "Saved query templates from the source run:\n" + queryTemplateLines : ""
+  ]
+    .filter((entry) => entry.length > 0)
+    .join("\n");
+}
+
+async function getPreviousComparableRun(
+  store: MetadataStore,
+  contractId: string,
+  context: { tenant_id: string },
+  currentRunId: string | undefined
+): Promise<ReportRun | null> {
+  const runs = await store.listReportRuns(contractId, context);
+  const comparable = runs
+    .filter((run) => run.status === "succeeded" && run.id !== currentRunId)
+    .sort(
+      (left, right) =>
+        Date.parse(right.finished_at ?? right.started_at) - Date.parse(left.finished_at ?? left.started_at)
+    );
+
+  return comparable[0] ?? null;
+}
+
 function normalizeSqlDialect(value: SqlDialect | string | undefined): SqlDialect {
   if (!value) {
     return DEFAULT_SQL_DIALECT;
@@ -300,10 +492,12 @@ export async function prepareReportContractData(input: {
   planner_client: PlannerClient;
   catalog_summary: string;
   sql_dialect?: SqlDialect;
+  scheduled_profile?: ScheduledReportProfile | null;
 }): Promise<DataPreparationResult> {
   const tenantId = input.tenant_id ?? input.contract.tenant_id ?? "default";
   const tokenUsage = createTokenUsageAccumulator();
-  const insightMode = input.contract.insight_mode ?? "business";
+  const contract = buildEffectiveScheduledContract(input.contract, input.scheduled_profile ?? null);
+  const insightMode = contract.insight_mode ?? "business";
   const sqlDialect = normalizeSqlDialect(input.sql_dialect);
   const catalogModel = parseCatalogSummary(input.catalog_summary);
 
@@ -311,6 +505,7 @@ export async function prepareReportContractData(input: {
   const { plannerContext, plannerSummary } = await runPlannerPhase(
     {
       ...input,
+      contract,
       tenant_id: tenantId,
       sql_dialect: sqlDialect
     },
@@ -320,14 +515,14 @@ export async function prepareReportContractData(input: {
 
   // Load global metric definitions to enrich the query strategist context
   const globalMetricDefs = await loadGlobalMetricDefinitions(input.store, storeContext);
-  const allMetricDefs = buildRunMetricDefinitions(input.contract, globalMetricDefs);
+  const allMetricDefs = buildRunMetricDefinitions(contract, globalMetricDefs);
   const metricDefsContext = allMetricDefs.length > 0
     ? "\nMETRIC DEFINITIONS (use these exact formulas):\n" +
       allMetricDefs.map((m) => `- ${m.display_name} (${m.metric_key}): ${m.definition}`).join("\n")
     : "";
 
   // Build scope clarifications context if available
-  const scopeClarifications = input.contract.scope_clarifications ?? [];
+  const scopeClarifications = contract.scope_clarifications ?? [];
   console.log("[data-prep] scope_clarifications count=%d", scopeClarifications.length);
   if (scopeClarifications.length > 0) {
     for (const sc of scopeClarifications) {
@@ -345,16 +540,16 @@ export async function prepareReportContractData(input: {
   const strategyInput: QueryStrategyInput = {
     catalog_summary: input.catalog_summary || "No catalog available.",
     report_goal: [
-      input.contract.name,
+      contract.name,
       `Mode: ${insightMode}`,
-      `Audience: ${input.contract.audience}`,
-      `Contract SQL: ${input.contract.sql_template}`
-    ].join(" | ") + metricDefsContext + scopeContext,
-    audience: input.contract.audience,
+      `Audience: ${contract.audience}`,
+      `Contract SQL: ${contract.sql_template}`
+    ].join(" | ") + metricDefsContext + scopeContext + buildScheduledStrategyContext(input.scheduled_profile ?? null),
+    audience: contract.audience,
     insight_mode: insightMode,
-    metric_ids: input.contract.metric_ids,
-    dimension_ids: input.contract.dimension_ids,
-    allowed_relations: input.contract.guardrails.allowed_relations,
+    metric_ids: contract.metric_ids,
+    dimension_ids: contract.dimension_ids,
+    allowed_relations: contract.guardrails.allowed_relations,
     planner_context: plannerContext,
     sql_dialect: sqlDialect,
     metric_definitions: allMetricDefs.map((m) => ({
@@ -386,8 +581,9 @@ export async function prepareReportContractData(input: {
   await input.store.appendAuditLog(
     "query_strategy",
     {
-      contract_id: input.contract.id,
-      merged_question_count: mergedPlan.questions.length,
+        contract_id: input.contract.id,
+        scheduled_profile_id: input.scheduled_profile?.id ?? null,
+        merged_question_count: mergedPlan.questions.length,
       merged_group_ids: mergedPlan.questions.map((question) => question.group_id),
       query_count: strategy.queries.length,
       questions: strategy.queries.map((q) => q.question),
@@ -407,7 +603,7 @@ export async function prepareReportContractData(input: {
     const prepared = await runDataPreparationAgent({
       tenant_id: tenantId,
       question_number: grouped.question_number,
-      contract: input.contract,
+      contract,
       data_plane: input.data_plane,
       store: input.store,
       planned_queries: grouped.queries,
@@ -421,11 +617,26 @@ export async function prepareReportContractData(input: {
     queryDetails.push(...prepared.query_details);
   }
 
+  const preparedQueryOverrides = normalizePreparedQueryOverrides(contract);
+  const finalQueryDetails = await applyPreparedQueryOverrides({
+    contract,
+    overrides: preparedQueryOverrides,
+    prepared_payloads: preparedPayloads,
+    query_details: queryDetails,
+    tenant_id: tenantId,
+    data_plane: input.data_plane,
+    store: input.store,
+    sql_dialect: sqlDialect,
+    catalog_model: catalogModel,
+    query_strategist: input.query_strategist,
+    catalog_summary: input.catalog_summary
+  });
+
   return {
     planner_summary: plannerSummary,
     planner_context: plannerContext,
     prepared_payloads: preparedPayloads,
-    query_details: queryDetails,
+    query_details: finalQueryDetails,
     token_usage: tokenUsage.snapshot()
   };
 }
@@ -446,12 +657,14 @@ export async function runReportContractPipeline(input: {
   planner_client: PlannerClient;
   catalog_summary: string;
   sql_dialect?: SqlDialect;
+  scheduled_profile?: ScheduledReportProfile | null;
 }): Promise<RunReportContractResult> {
   const tenantId = input.tenant_id ?? input.contract.tenant_id ?? "default";
   const startedAt = new Date().toISOString();
   const insightMode = input.contract.insight_mode ?? "business";
   const tokenUsage = createTokenUsageAccumulator();
   const storeContext = { tenant_id: tenantId };
+  const scheduledProfile = input.scheduled_profile ?? null;
 
   const preparation = await prepareReportContractData({
     contract: input.contract,
@@ -461,7 +674,8 @@ export async function runReportContractPipeline(input: {
     query_strategist: input.query_strategist,
     planner_client: input.planner_client,
     catalog_summary: input.catalog_summary,
-    sql_dialect: normalizeSqlDialect(input.sql_dialect)
+    sql_dialect: normalizeSqlDialect(input.sql_dialect),
+    scheduled_profile: scheduledProfile
   });
   tokenUsage.addReport(preparation.token_usage);
 
@@ -633,14 +847,18 @@ export async function runReportContractPipeline(input: {
   void analystTriggeredAdditionalQueries;
   console.log("[report-composer] Sending %d analyses and %d per_question_summaries directly to HTML composer", analyses.length, perQuestionSummaries.length);
 
-  const conciseSummary = buildConciseSummary(input.contract.name, analyses);
+  const previousRun = await getPreviousComparableRun(input.store, input.contract.id, storeContext, input.run_id);
+  const analysesWithChanges: ReportComposerInput["analyses"] = analyses.map((analysis) => ({
+    ...analysis,
+    change_summary: buildChangeCheckerNotes(analysis, previousRun)
+  }));
+  const conciseSummary = buildConciseSummary(input.contract.name, analysesWithChanges);
   const metricDefinitions = allMetricDefs;
   const kpiResults = checkKpiWatchlist(
     (input.contract.kpi_watchlist ?? []) as KpiWatchlistItem[],
     preparation.prepared_payloads
   );
-  const previousRun = await input.store.getLatestReportRun(input.contract.id, storeContext);
-  const execBrief = buildExecBrief(analyses, input.contract.name, startedAt, previousRun);
+  const execBrief = buildExecBrief(analysesWithChanges, input.contract.name, startedAt, previousRun);
 
   const composeInput: ReportComposerInput = {
     title: input.contract.name,
@@ -654,9 +872,10 @@ export async function runReportContractPipeline(input: {
       coverage_status: s.coverage_status
     })),
     metric_definitions: metricDefinitions,
-    analyses,
+    analyses: analysesWithChanges,
     catalog_summary: input.catalog_summary || "",
-    business_context: businessContext
+    business_context: businessContext,
+    template_html: scheduledProfile?.report_template_html ?? previousRun?.report_html ?? ""
   };
 
   let html = await composeReportHtmlWithFallback({
@@ -726,6 +945,10 @@ export async function runReportContractPipeline(input: {
       super_summary_context_results: [],
       prepared_payloads: preparation.prepared_payloads.map(toPreparedPayloadPublic),
       analysis_payloads: analysisPayloads,
+      change_checker_notes: analysesWithChanges.map((analysis) => ({
+        question: analysis.question,
+        notes: analysis.change_summary ?? []
+      })),
       per_question_summaries: perQuestionSummaries,
       kpi_results: kpiResults
     },
@@ -4180,6 +4403,59 @@ function escapeHtml(value: string): string {
     .replace(/>/g, "&gt;")
     .replace(/"/g, "&quot;")
     .replace(/'/g, "&#39;");
+}
+
+function buildChangeCheckerNotes(
+  analysis: ReportComposerInput["analyses"][number],
+  previousRun: ReportRun | null
+): string[] {
+  if (!previousRun) {
+    return ["No previous completed run is available for this question yet."];
+  }
+
+  const previousAnalysis = parseAnalysisPayloads(previousRun.query_plan).find((item) => {
+    const currentQuestion = analysis.question.trim().toLowerCase();
+    return (
+      item.question.trim().toLowerCase() === currentQuestion ||
+      currentQuestion.includes(item.question.trim().toLowerCase()) ||
+      item.question.trim().toLowerCase().includes(currentQuestion)
+    );
+  });
+
+  if (!previousAnalysis) {
+    return ["This question did not have a comparable section in the last completed run."];
+  }
+
+  const notes: string[] = [];
+  const previousFinishedAt = previousRun.finished_at ?? previousRun.started_at;
+  if (previousFinishedAt) {
+    notes.push(`Last comparable run finished at ${previousFinishedAt}.`);
+  }
+
+  const currentSignals = analysis.highlights.map(normalizeSignal).filter((entry) => entry.length > 0);
+  const previousSignals = previousAnalysis.highlights.map(normalizeSignal).filter((entry) => entry.length > 0);
+  const newSignals = currentSignals.filter((entry) => !previousSignals.includes(entry));
+  const resolvedSignals = previousSignals.filter((entry) => !currentSignals.includes(entry));
+
+  if (newSignals.length > 0) {
+    notes.push(`New signal: ${analysis.highlights[0]}`);
+  }
+  if (resolvedSignals.length > 0 && previousAnalysis.highlights.length > 0) {
+    notes.push(`No longer highlighted: ${previousAnalysis.highlights[0]}`);
+  }
+
+  const currentRows = extractPreparedRowCount(analysis.data_summary);
+  const previousRows = extractPreparedRowCount(previousAnalysis.data_summary);
+  if (currentRows !== null && previousRows !== null && currentRows !== previousRows) {
+    const direction = currentRows > previousRows ? "up" : "down";
+    notes.push(`Prepared evidence coverage is ${direction} (${previousRows} to ${currentRows} rows).`);
+  }
+
+  if (notes.length === 0) {
+    notes.push("Overall direction is consistent with the last completed run, with refreshed values for the current window.");
+  }
+
+  return notes.slice(0, 3);
 }
 
 function buildExecBrief(

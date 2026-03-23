@@ -200,7 +200,7 @@ function parseQualifiedIdentifier(sql: string, startIndex: number): ParsedQualif
     cursor = nextPart.nextIndex;
   }
 
-  return { parts, nextIndex: cursor };
+  return { parts: normalizeRelationParts(parts), nextIndex: cursor };
 }
 
 function parseIdentifier(sql: string, startIndex: number): ParsedIdentifier | null {
@@ -234,6 +234,23 @@ function parseIdentifier(sql: string, startIndex: number): ParsedIdentifier | nu
     return null;
   }
 
+  if (first === "`") {
+    let index = cursor + 1;
+    let value = "";
+
+    while (index < sql.length) {
+      const current = sql[index];
+      if (current === "`") {
+        return { value, nextIndex: index + 1 };
+      }
+
+      value += current;
+      index += 1;
+    }
+
+    return null;
+  }
+
   if (!/[A-Za-z_]/.test(first)) {
     return null;
   }
@@ -244,6 +261,24 @@ function parseIdentifier(sql: string, startIndex: number): ParsedIdentifier | nu
   }
 
   return { value: sql.slice(cursor, index), nextIndex: index };
+}
+
+function normalizeRelationParts(parts: string[]): string[] {
+  if (parts.length === 1 && parts[0]?.includes(".")) {
+    const inlineParts = parts[0]
+      .split(".")
+      .map((part) => part.trim())
+      .filter((part) => part.length > 0);
+    if (inlineParts.length >= 2) {
+      return inlineParts.slice(-2);
+    }
+  }
+
+  if (parts.length >= 3) {
+    return parts.slice(-2);
+  }
+
+  return parts;
 }
 
 function skipWhitespace(sql: string, index: number): number {

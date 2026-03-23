@@ -6,15 +6,17 @@ export function renderGlobalConfigPage(): string {
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <title>Project Overload | Global Config</title>
     <style>
-      @import url("https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap");
+      @import url("https://fonts.googleapis.com/css2?family=Mona+Sans:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;500&display=swap");
 
       :root {
-        --ink: #e9f1ff;
-        --ink-soft: #6f86b4;
-        --line: #14386f;
-        --line-soft: #20509d;
-        --glow: rgba(85, 72, 255, 0.45);
-        --shadow: 0 18px 48px rgba(1, 8, 32, 0.44);
+        --ink: #edf4ff;
+        --ink-soft: #8ca2cb;
+        --ink-muted: #6076a1;
+        --line: rgba(104, 137, 206, 0.18);
+        --line-soft: rgba(116, 156, 238, 0.34);
+        --glow: rgba(108, 111, 255, 0.36);
+        --shadow: 0 24px 60px rgba(1, 8, 28, 0.44);
+        --shadow-soft: 0 12px 32px rgba(3, 9, 27, 0.26);
       }
 
       * { box-sizing: border-box; }
@@ -22,12 +24,13 @@ export function renderGlobalConfigPage(): string {
       body {
         margin: 0;
         min-height: 100vh;
-        font-family: "Space Grotesk", sans-serif;
+        font-family: "Mona Sans", sans-serif;
         color: var(--ink);
         background:
-          radial-gradient(circle at -8% 22%, rgba(80, 110, 255, 0.15), transparent 26%),
-          radial-gradient(circle at 104% -8%, rgba(98, 80, 255, 0.12), transparent 24%),
-          linear-gradient(180deg, #02071b 0%, #030b27 50%, #030d2e 100%);
+          radial-gradient(circle at 14% 10%, rgba(110, 165, 255, 0.17), transparent 24%),
+          radial-gradient(circle at 88% 8%, rgba(104, 92, 255, 0.15), transparent 26%),
+          radial-gradient(circle at 50% 100%, rgba(59, 132, 255, 0.1), transparent 30%),
+          linear-gradient(180deg, #020714 0%, #06112e 44%, #061533 100%);
       }
 
       body::before {
@@ -40,24 +43,52 @@ export function renderGlobalConfigPage(): string {
         mask-image: radial-gradient(circle at 50% 45%, rgba(0, 0, 0, 0.86), transparent 92%);
       }
 
+      body::after {
+        content: "";
+        position: fixed;
+        inset: 0;
+        pointer-events: none;
+        background:
+          radial-gradient(circle at 18% 22%, rgba(115, 191, 255, 0.12), transparent 20%),
+          radial-gradient(circle at 78% 16%, rgba(120, 102, 255, 0.16), transparent 24%);
+        filter: blur(34px);
+        opacity: 0.9;
+      }
+
       .page {
         width: 100%;
+        padding: 14px;
       }
 
       .layout {
         display: grid;
-        grid-template-columns: 198px 1fr;
-        min-height: 100vh;
+        grid-template-columns: 212px 1fr;
+        min-height: calc(100vh - 28px);
+        gap: 14px;
       }
 
       .platform-panel {
+        position: relative;
         border: 1px solid var(--line);
-        border-right: 1px solid #112f62;
-        background: linear-gradient(180deg, rgba(6, 17, 47, 0.98), rgba(5, 13, 36, 0.98));
+        border-radius: 28px;
+        background:
+          linear-gradient(180deg, rgba(10, 22, 55, 0.98), rgba(5, 14, 36, 0.98)),
+          linear-gradient(180deg, rgba(255, 255, 255, 0.02), transparent);
         box-shadow: var(--shadow);
         display: flex;
         flex-direction: column;
-        padding: 14px 14px 12px;
+        padding: 16px 15px 14px;
+        overflow: hidden;
+      }
+
+      .platform-panel::before {
+        content: "";
+        position: absolute;
+        inset: 0;
+        pointer-events: none;
+        background:
+          radial-gradient(circle at 20% 0%, rgba(118, 171, 255, 0.14), transparent 26%),
+          linear-gradient(180deg, rgba(255, 255, 255, 0.04), transparent 30%);
       }
 
       .platform-brand {
@@ -65,27 +96,29 @@ export function renderGlobalConfigPage(): string {
         align-items: center;
         gap: 10px;
         padding: 8px 6px 14px;
-        margin-bottom: 6px;
-        border-bottom: 1px solid #173469;
+        margin-bottom: 10px;
+        border-bottom: 1px solid rgba(130, 162, 231, 0.14);
+        position: relative;
+        z-index: 1;
       }
 
       .platform-brand-badge {
-        width: 36px;
-        height: 36px;
-        border-radius: 12px;
+        width: 42px;
+        height: 42px;
+        border-radius: 15px;
         display: grid;
         place-items: center;
-        font-weight: 700;
+        font-weight: 800;
         color: #f3f8ff;
-        background: linear-gradient(135deg, #4e3eff, #6e56ff);
-        box-shadow: 0 12px 20px rgba(82, 73, 255, 0.36);
+        background: linear-gradient(145deg, #66a7ff, #6c6cff 56%, #7fd0ff);
+        box-shadow: 0 14px 32px rgba(76, 122, 255, 0.34);
       }
 
       .platform-brand strong {
         display: block;
-        font-size: 0.76rem;
+        font-size: 0.78rem;
         line-height: 1.1;
-        letter-spacing: 0.06em;
+        letter-spacing: 0.09em;
         text-transform: uppercase;
       }
 
@@ -93,37 +126,42 @@ export function renderGlobalConfigPage(): string {
         display: block;
         margin-top: 2px;
         font-family: "JetBrains Mono", monospace;
-        font-size: 0.63rem;
-        letter-spacing: 0.2em;
-        text-transform: uppercase;
-        color: #8199c6;
-      }
-
-      .platform-section {
-        margin: 14px 8px 8px;
         font-size: 0.62rem;
         letter-spacing: 0.24em;
         text-transform: uppercase;
-        color: var(--ink-soft);
+        color: var(--ink-muted);
+      }
+
+      .platform-section {
+        margin: 16px 8px 8px;
+        font-size: 0.58rem;
+        letter-spacing: 0.24em;
+        text-transform: uppercase;
+        color: var(--ink-muted);
+        position: relative;
+        z-index: 1;
       }
 
       .platform-nav {
         display: flex;
         flex-direction: column;
         gap: 6px;
+        position: relative;
+        z-index: 1;
       }
 
       .platform-link {
         display: flex;
         align-items: center;
         gap: 8px;
-        padding: 10px 11px;
-        border-radius: 11px;
-        color: #90a7d8;
+        padding: 11px 12px;
+        border-radius: 14px;
+        color: #9eb3d9;
         text-decoration: none;
-        border: 1px solid transparent;
+        border: 1px solid rgba(117, 148, 214, 0.06);
         font-size: 0.84rem;
-        font-weight: 500;
+        font-weight: 600;
+        transition: transform 140ms ease, border-color 140ms ease, background 140ms ease, color 140ms ease;
       }
 
       .platform-link .link-icon {
@@ -146,15 +184,16 @@ export function renderGlobalConfigPage(): string {
       }
 
       .platform-link:hover {
-        background: rgba(24, 49, 112, 0.45);
-        border-color: #2f4f9e;
+        transform: translateX(2px);
+        background: rgba(33, 62, 129, 0.36);
+        border-color: rgba(112, 152, 244, 0.26);
       }
 
       .platform-link.active {
-        background: linear-gradient(135deg, #4e3dff, #5d4dff 55%, #6d5dff);
-        border-color: rgba(143, 160, 255, 0.48);
+        background: linear-gradient(135deg, rgba(72, 99, 255, 0.9), rgba(89, 92, 255, 0.92) 54%, rgba(109, 208, 255, 0.82));
+        border-color: rgba(151, 191, 255, 0.4);
         color: #f3f8ff;
-        box-shadow: 0 10px 22px rgba(82, 74, 255, 0.32);
+        box-shadow: 0 14px 28px rgba(67, 93, 222, 0.28);
       }
 
       .platform-link.active .link-icon {
@@ -166,27 +205,30 @@ export function renderGlobalConfigPage(): string {
         display: flex;
         flex-direction: column;
         gap: 10px;
+        position: relative;
+        z-index: 1;
       }
 
       .platform-user {
         display: flex;
         align-items: center;
         gap: 10px;
-        border: 1px solid #1d366f;
-        border-radius: 12px;
-        padding: 9px 10px;
-        background: rgba(8, 20, 53, 0.92);
+        border: 1px solid rgba(111, 147, 220, 0.14);
+        border-radius: 16px;
+        padding: 11px 12px;
+        background: rgba(10, 24, 58, 0.76);
       }
 
       .platform-user-avatar {
         width: 28px;
         height: 28px;
-        border-radius: 9px;
+        border-radius: 11px;
         display: grid;
         place-items: center;
         border: 1px solid #2f4d95;
         color: #9cb3e3;
         background: rgba(12, 29, 72, 0.9);
+        box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.06);
       }
 
       .platform-user small {
@@ -208,10 +250,10 @@ export function renderGlobalConfigPage(): string {
         align-items: center;
         justify-content: space-between;
         gap: 8px;
-        border: 1px solid #1e366f;
-        border-radius: 12px;
-        padding: 8px 10px 8px 11px;
-        background: rgba(7, 17, 46, 0.9);
+        border: 1px solid rgba(111, 147, 220, 0.14);
+        border-radius: 16px;
+        padding: 9px 11px 9px 12px;
+        background: rgba(7, 18, 45, 0.82);
       }
 
       .platform-support span {
@@ -226,11 +268,11 @@ export function renderGlobalConfigPage(): string {
       }
 
       .logout-btn {
-        border: 1px solid #2f4e9f;
-        border-radius: 10px;
-        background: rgba(15, 33, 79, 0.92);
+        border: 1px solid rgba(122, 155, 226, 0.22);
+        border-radius: 12px;
+        background: rgba(16, 36, 84, 0.9);
         color: #cfddff;
-        padding: 6px 9px;
+        padding: 7px 10px;
         font-family: "JetBrains Mono", monospace;
         font-size: 0.64rem;
         cursor: pointer;
@@ -238,8 +280,10 @@ export function renderGlobalConfigPage(): string {
 
       .content {
         border: 1px solid var(--line);
-        border-left: none;
-        background: linear-gradient(180deg, rgba(4, 11, 33, 0.98), rgba(2, 8, 26, 0.99));
+        border-radius: 32px;
+        background:
+          linear-gradient(180deg, rgba(5, 12, 34, 0.98), rgba(3, 10, 26, 0.99)),
+          radial-gradient(circle at 100% 0%, rgba(113, 122, 255, 0.12), transparent 24%);
         box-shadow: var(--shadow);
         padding: 16px 20px 20px;
         overflow-y: auto;
@@ -255,7 +299,7 @@ export function renderGlobalConfigPage(): string {
 
       h1 {
         margin: 0;
-        font-size: 1.08rem;
+        font-size: 1.2rem;
       }
 
       h2 {
@@ -264,9 +308,18 @@ export function renderGlobalConfigPage(): string {
       }
 
       .sub {
-        margin: 5px 0 0;
+        margin: 8px 0 0;
         color: var(--ink-soft);
-        font-size: 0.84rem;
+        font-size: 0.88rem;
+      }
+
+      .eyebrow {
+        display: inline-block;
+        margin-bottom: 8px;
+        font-size: 0.62rem;
+        text-transform: uppercase;
+        letter-spacing: 0.22em;
+        color: #7fd0ff;
       }
 
       .badge {
@@ -280,11 +333,12 @@ export function renderGlobalConfigPage(): string {
       }
 
       .section {
-        border: 1px solid #1f3f82;
-        border-radius: 14px;
-        background: linear-gradient(160deg, rgba(8, 22, 56, 0.96), rgba(6, 18, 46, 0.96));
+        border: 1px solid rgba(120, 151, 221, 0.14);
+        border-radius: 18px;
+        background: linear-gradient(160deg, rgba(8, 22, 56, 0.86), rgba(6, 18, 46, 0.9));
         padding: 14px;
         margin-bottom: 16px;
+        box-shadow: var(--shadow-soft);
       }
 
       .section-header {
@@ -340,7 +394,7 @@ export function renderGlobalConfigPage(): string {
         color: #fff;
         cursor: pointer;
         background: linear-gradient(135deg, #4f3eff, #5f4dff 56%, #6c5cff);
-        font-family: "Space Grotesk", sans-serif;
+        font-family: "Mona Sans", sans-serif;
         font-weight: 700;
         box-shadow: 0 10px 22px var(--glow);
         font-size: 0.84rem;
@@ -353,7 +407,7 @@ export function renderGlobalConfigPage(): string {
         color: #cfddff;
         cursor: pointer;
         background: rgba(15, 33, 79, 0.92);
-        font-family: "Space Grotesk", sans-serif;
+        font-family: "Mona Sans", sans-serif;
         font-weight: 600;
         font-size: 0.78rem;
       }
@@ -365,7 +419,7 @@ export function renderGlobalConfigPage(): string {
         color: #ffa0a0;
         cursor: pointer;
         background: rgba(80, 20, 20, 0.8);
-        font-family: "Space Grotesk", sans-serif;
+        font-family: "Mona Sans", sans-serif;
         font-weight: 600;
         font-size: 0.72rem;
       }
@@ -620,9 +674,10 @@ export function renderGlobalConfigPage(): string {
       }
 
       @media (max-width: 1080px) {
-        .layout { grid-template-columns: 1fr; }
+        .page { padding: 0; }
+        .layout { grid-template-columns: 1fr; gap: 0; min-height: 100vh; }
         .platform-panel { display: none; }
-        .content { border-left: 1px solid var(--line); }
+        .content { border-left: 1px solid var(--line); border-radius: 0; }
       }
     </style>
   </head>
@@ -634,7 +689,7 @@ export function renderGlobalConfigPage(): string {
             <div class="platform-brand-badge">*</div>
             <div>
               <strong>Project Overload</strong>
-              <span>Enterprise</span>
+              <span>Decision cockpit</span>
             </div>
           </div>
           <div class="platform-section">Core Platform</div>
@@ -645,6 +700,7 @@ export function renderGlobalConfigPage(): string {
           <div class="platform-section">Infrastructure</div>
           <nav class="platform-nav">
             <a class="platform-link" href="/connect"><span class="link-icon"><svg viewBox="0 0 24 24"><ellipse cx="12" cy="5" rx="9" ry="3"/><path d="M21 12c0 1.66-4 3-9 3s-9-1.34-9-3"/><path d="M3 5v14c0 1.66 4 3 9 3s9-1.34 9-3V5"/></svg></span>Data Sources</a>
+            <a class="platform-link" href="/scheduled"><span class="link-icon"><svg viewBox="0 0 24 24"><rect x="3" y="4" width="18" height="18" rx="2"/><path d="M16 2v4"/><path d="M8 2v4"/><path d="M3 10h18"/><path d="M8 14h3"/><path d="M8 18h6"/></svg></span>Scheduled Reports</a>
             <a class="platform-link active" href="/config"><span class="link-icon"><svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83-2.83l.06-.06A1.65 1.65 0 0 0 4.68 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 2.83-2.83l.06.06A1.65 1.65 0 0 0 9 4.68a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 2.83l-.06.06A1.65 1.65 0 0 0 19.4 9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg></span>Global Config</a>
           </nav>
           <div class="platform-footer">
@@ -667,13 +723,13 @@ export function renderGlobalConfigPage(): string {
         <main class="content">
           <div class="content-head">
             <div>
+              <span class="eyebrow">Control Surface</span>
               <h1>Global Config</h1>
               <p class="sub">Business context and metric definitions used across chat planning and report generation.</p>
             </div>
             <span class="badge">Workspace Config</span>
           </div>
 
-          <!-- Business Context Section -->
           <section class="section">
             <label for="business-context">Business Context</label>
             <textarea id="business-context" placeholder="Describe what this business does, key revenue model, and core operational constraints."></textarea>
@@ -718,7 +774,7 @@ export function renderGlobalConfigPage(): string {
                 </div>
               </div>
               <div class="form-group" style="margin-bottom:10px">
-                <label for="mf-def">Definition (plain English — how to calculate this metric)</label>
+                <label for="mf-def">Definition (plain English - how to calculate this metric)</label>
                 <input type="text" id="mf-def" placeholder="e.g. Refunded Revenue / Total Revenue" />
               </div>
               <div class="form-actions">
@@ -738,7 +794,7 @@ export function renderGlobalConfigPage(): string {
 
     <script>
       (() => {
-        /* ── Business Context ── */
+        /* Business Context */
         const ctxTextarea = document.getElementById("business-context");
         const ctxStatus = document.getElementById("context-status");
         const ctxSaveBtn = document.getElementById("save-context");

@@ -1,4 +1,5 @@
 import { AsyncLocalStorage } from "node:async_hooks";
+import { readFileSync } from "node:fs";
 import Fastify from "fastify";
 import { z } from "zod";
 import {
@@ -26,6 +27,12 @@ import { renderConnectionPage } from "./connect-page";
 import { renderLoginPage } from "./login-page";
 import { renderUsageMetricsPage } from "./usage-page";
 import { renderGlobalConfigPage } from "./config-page";
+import { renderScheduledReportsPage } from "./scheduled-page";
+
+const DB_CONNECTION_GUIDE_HTML = readFileSync(
+  new URL("../../../docs/DB_CONNECTION_GUIDE.html", import.meta.url),
+  "utf8"
+);
 
 export type WebAppDependencies = {
   api_base_url?: string;
@@ -232,6 +239,10 @@ export function buildWebApp(options: WebAppDependencies = {}) {
     return reply.type("text/html; charset=utf-8").send(renderChatPage());
   });
 
+  app.get("/connect/guide", async (_request, reply) => {
+    return reply.type("text/html; charset=utf-8").send(DB_CONNECTION_GUIDE_HTML);
+  });
+
   app.get("/connect", async (_request, reply) => {
     return reply.type("text/html; charset=utf-8").send(renderConnectionPage());
   });
@@ -242,6 +253,10 @@ export function buildWebApp(options: WebAppDependencies = {}) {
 
   app.get("/config", async (_request, reply) => {
     return reply.type("text/html; charset=utf-8").send(renderGlobalConfigPage());
+  });
+
+  app.get("/scheduled", async (_request, reply) => {
+    return reply.type("text/html; charset=utf-8").send(renderScheduledReportsPage());
   });
 
   app.post("/api/chat", async (request, reply) => {
@@ -560,6 +575,58 @@ export function buildWebApp(options: WebAppDependencies = {}) {
         message: error instanceof Error ? error.message : "Unable to fetch HTML report"
       });
     }
+  });
+
+  app.get("/api/runs/:runId/schedule-draft", async (request, reply) => {
+    const username = getAuthenticatedUsername(request.headers.cookie);
+    const { runId } = request.params as { runId: string };
+    return proxyToApi({
+      fetch_impl: options.fetch_impl,
+      api_base_url: apiBaseUrl,
+      method: "GET",
+      path: `/report-runs/${encodeURIComponent(runId)}/schedule-draft`,
+      additional_headers: username ? { "x-ui-user": username } : undefined,
+      reply
+    });
+  });
+
+  app.post("/api/runs/:runId/schedule-profile", async (request, reply) => {
+    const username = getAuthenticatedUsername(request.headers.cookie);
+    const { runId } = request.params as { runId: string };
+    return proxyToApi({
+      fetch_impl: options.fetch_impl,
+      api_base_url: apiBaseUrl,
+      method: "POST",
+      path: `/report-runs/${encodeURIComponent(runId)}/schedule-profile`,
+      body: request.body,
+      additional_headers: username ? { "x-ui-user": username } : undefined,
+      reply
+    });
+  });
+
+  app.get("/api/scheduled-reports", async (request, reply) => {
+    const username = getAuthenticatedUsername(request.headers.cookie);
+    return proxyToApi({
+      fetch_impl: options.fetch_impl,
+      api_base_url: apiBaseUrl,
+      method: "GET",
+      path: "/scheduled-reports",
+      additional_headers: username ? { "x-ui-user": username } : undefined,
+      reply
+    });
+  });
+
+  app.get("/api/scheduled-reports/:contractId", async (request, reply) => {
+    const username = getAuthenticatedUsername(request.headers.cookie);
+    const { contractId } = request.params as { contractId: string };
+    return proxyToApi({
+      fetch_impl: options.fetch_impl,
+      api_base_url: apiBaseUrl,
+      method: "GET",
+      path: `/scheduled-reports/${encodeURIComponent(contractId)}`,
+      additional_headers: username ? { "x-ui-user": username } : undefined,
+      reply
+    });
   });
 
   app.get("/api/db/context", async (request, reply) => {

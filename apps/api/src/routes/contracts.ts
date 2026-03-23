@@ -233,6 +233,10 @@ export function registerContractRoutes(
     const trigger = runInput.success ? runInput.data.trigger : "manual";
     const attempt = runInput.success ? runInput.data.attempt : 1;
     const retryOfRunId = runInput.success ? runInput.data.retry_of_run_id ?? null : null;
+    const scheduledProfile =
+      trigger === "scheduled" || trigger === "retry"
+        ? await store.getScheduledReportProfileByContractId(id, context)
+        : null;
 
     if (trigger !== "manual" && contract.lifecycle_status !== "locked") {
       return reply.code(409).send({
@@ -283,7 +287,8 @@ export function registerContractRoutes(
           report_composer: reportComposer,
           planner_client: plannerClient,
           catalog_summary: catalogSummary,
-          sql_dialect: sqlDialect
+          sql_dialect: sqlDialect,
+          scheduled_profile: scheduledProfile
         });
 
         // Pipeline already upserted the run with status:"succeeded" internally.

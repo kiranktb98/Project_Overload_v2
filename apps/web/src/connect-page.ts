@@ -6,22 +6,24 @@ export function renderConnectionPage(): string {
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <title>Project Overload | Database Connection Wizard</title>
     <style>
-      @import url("https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap");
+      @import url("https://fonts.googleapis.com/css2?family=Mona+Sans:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;500&display=swap");
 
       :root {
-        --ink: #e9f1ff;
-        --ink-soft: #6f86b4;
-        --line: #14386f;
-        --line-soft: rgba(60, 104, 184, 0.42);
-        --surface: rgba(7, 19, 50, 0.98);
+        --ink: #edf4ff;
+        --ink-soft: #8ca2cb;
+        --ink-muted: #6076a1;
+        --line: rgba(104, 137, 206, 0.18);
+        --line-soft: rgba(116, 156, 238, 0.34);
+        --surface: rgba(8, 20, 52, 0.94);
         --surface-strong: rgba(9, 24, 60, 0.98);
-        --primary: #4e3dff;
-        --primary-2: #5f4dff;
-        --primary-3: #6f5fff;
+        --primary: #66a7ff;
+        --primary-2: #6c6cff;
+        --primary-3: #7fd0ff;
         --warn: #f59f0b;
         --danger: #ef4444;
         --ok: #22c55e;
-        --shadow: 0 18px 48px rgba(1, 8, 32, 0.44);
+        --shadow: 0 24px 60px rgba(1, 8, 28, 0.44);
+        --shadow-soft: 0 12px 32px rgba(3, 9, 27, 0.26);
       }
 
       * { box-sizing: border-box; }
@@ -29,12 +31,13 @@ export function renderConnectionPage(): string {
       body {
         margin: 0;
         min-height: 100vh;
-        font-family: "Space Grotesk", sans-serif;
+        font-family: "Mona Sans", sans-serif;
         color: var(--ink);
         background:
-          radial-gradient(circle at -8% 22%, rgba(80, 110, 255, 0.15), transparent 26%),
-          radial-gradient(circle at 104% -8%, rgba(98, 80, 255, 0.12), transparent 24%),
-          linear-gradient(180deg, #02071b 0%, #030b27 50%, #030d2e 100%);
+          radial-gradient(circle at 14% 10%, rgba(110, 165, 255, 0.17), transparent 24%),
+          radial-gradient(circle at 88% 8%, rgba(104, 92, 255, 0.15), transparent 26%),
+          radial-gradient(circle at 50% 100%, rgba(59, 132, 255, 0.1), transparent 30%),
+          linear-gradient(180deg, #020714 0%, #06112e 44%, #061533 100%);
       }
 
       body::before {
@@ -47,28 +50,56 @@ export function renderConnectionPage(): string {
         mask-image: radial-gradient(circle at 50% 45%, rgba(0, 0, 0, 0.86), transparent 92%);
       }
 
+      body::after {
+        content: "";
+        position: fixed;
+        inset: 0;
+        pointer-events: none;
+        background:
+          radial-gradient(circle at 18% 22%, rgba(115, 191, 255, 0.12), transparent 20%),
+          radial-gradient(circle at 78% 16%, rgba(120, 102, 255, 0.16), transparent 24%);
+        filter: blur(34px);
+        opacity: 0.9;
+      }
+
       .page {
         width: 100%;
+        padding: 14px;
       }
 
       .layout {
         display: grid;
-        grid-template-columns: 198px 1fr;
-        min-height: 100vh;
+        grid-template-columns: 212px 1fr;
+        min-height: calc(100vh - 28px);
+        gap: 14px;
       }
 
       .workspace {
-        padding: 16px 18px 18px;
+        padding: 0;
       }
 
       .platform-panel {
+        position: relative;
         border: 1px solid var(--line);
-        border-right: 1px solid #112f62;
-        background: linear-gradient(180deg, rgba(6, 17, 47, 0.98), rgba(5, 13, 36, 0.98));
+        border-radius: 28px;
+        background:
+          linear-gradient(180deg, rgba(10, 22, 55, 0.98), rgba(5, 14, 36, 0.98)),
+          linear-gradient(180deg, rgba(255, 255, 255, 0.02), transparent);
         box-shadow: var(--shadow);
         display: flex;
         flex-direction: column;
-        padding: 14px 14px 12px;
+        padding: 16px 15px 14px;
+        overflow: hidden;
+      }
+
+      .platform-panel::before {
+        content: "";
+        position: absolute;
+        inset: 0;
+        pointer-events: none;
+        background:
+          radial-gradient(circle at 20% 0%, rgba(118, 171, 255, 0.14), transparent 26%),
+          linear-gradient(180deg, rgba(255, 255, 255, 0.04), transparent 30%);
       }
 
       .platform-brand {
@@ -76,27 +107,29 @@ export function renderConnectionPage(): string {
         align-items: center;
         gap: 10px;
         padding: 8px 6px 14px;
-        margin-bottom: 6px;
-        border-bottom: 1px solid #173469;
+        margin-bottom: 10px;
+        border-bottom: 1px solid rgba(130, 162, 231, 0.14);
+        position: relative;
+        z-index: 1;
       }
 
       .platform-brand-badge {
-        width: 36px;
-        height: 36px;
-        border-radius: 12px;
+        width: 42px;
+        height: 42px;
+        border-radius: 15px;
         display: grid;
         place-items: center;
-        font-weight: 700;
+        font-weight: 800;
         color: #f3f8ff;
-        background: linear-gradient(135deg, #4e3eff, #6e56ff);
-        box-shadow: 0 12px 20px rgba(82, 73, 255, 0.36);
+        background: linear-gradient(145deg, var(--primary), var(--primary-2) 56%, var(--primary-3));
+        box-shadow: 0 14px 32px rgba(76, 122, 255, 0.34);
       }
 
       .platform-brand strong {
         display: block;
-        font-size: 0.76rem;
+        font-size: 0.78rem;
         line-height: 1.1;
-        letter-spacing: 0.06em;
+        letter-spacing: 0.09em;
         text-transform: uppercase;
       }
 
@@ -104,37 +137,42 @@ export function renderConnectionPage(): string {
         display: block;
         margin-top: 2px;
         font-family: "JetBrains Mono", monospace;
-        font-size: 0.63rem;
-        letter-spacing: 0.2em;
-        text-transform: uppercase;
-        color: #8199c6;
-      }
-
-      .platform-section {
-        margin: 14px 8px 8px;
         font-size: 0.62rem;
         letter-spacing: 0.24em;
         text-transform: uppercase;
-        color: var(--ink-soft);
+        color: var(--ink-muted);
+      }
+
+      .platform-section {
+        margin: 16px 8px 8px;
+        font-size: 0.58rem;
+        letter-spacing: 0.24em;
+        text-transform: uppercase;
+        color: var(--ink-muted);
+        position: relative;
+        z-index: 1;
       }
 
       .platform-nav {
         display: flex;
         flex-direction: column;
         gap: 6px;
+        position: relative;
+        z-index: 1;
       }
 
       .platform-link {
         display: flex;
         align-items: center;
         gap: 8px;
-        padding: 10px 11px;
-        border-radius: 11px;
-        color: #90a7d8;
+        padding: 11px 12px;
+        border-radius: 14px;
+        color: #9eb3d9;
         text-decoration: none;
-        border: 1px solid transparent;
+        border: 1px solid rgba(117, 148, 214, 0.06);
         font-size: 0.84rem;
-        font-weight: 500;
+        font-weight: 600;
+        transition: transform 140ms ease, border-color 140ms ease, background 140ms ease, color 140ms ease;
       }
 
       .platform-link .link-icon {
@@ -157,15 +195,16 @@ export function renderConnectionPage(): string {
       }
 
       .platform-link:hover {
-        background: rgba(24, 49, 112, 0.45);
-        border-color: #2f4f9e;
+        transform: translateX(2px);
+        background: rgba(33, 62, 129, 0.36);
+        border-color: rgba(112, 152, 244, 0.26);
       }
 
       .platform-link.active {
-        background: linear-gradient(135deg, #4e3dff, #5d4dff 55%, #6d5dff);
-        border-color: rgba(143, 160, 255, 0.48);
+        background: linear-gradient(135deg, rgba(72, 99, 255, 0.9), rgba(89, 92, 255, 0.92) 54%, rgba(109, 208, 255, 0.82));
+        border-color: rgba(151, 191, 255, 0.4);
         color: #f3f8ff;
-        box-shadow: 0 10px 22px rgba(82, 74, 255, 0.32);
+        box-shadow: 0 14px 28px rgba(67, 93, 222, 0.28);
       }
 
       .platform-link.active .link-icon {
@@ -177,27 +216,30 @@ export function renderConnectionPage(): string {
         display: flex;
         flex-direction: column;
         gap: 10px;
+        position: relative;
+        z-index: 1;
       }
 
       .platform-user {
         display: flex;
         align-items: center;
         gap: 10px;
-        border: 1px solid #1d366f;
-        border-radius: 12px;
-        padding: 9px 10px;
-        background: rgba(8, 20, 53, 0.92);
+        border: 1px solid rgba(111, 147, 220, 0.14);
+        border-radius: 16px;
+        padding: 11px 12px;
+        background: rgba(10, 24, 58, 0.76);
       }
 
       .platform-user-avatar {
         width: 28px;
         height: 28px;
-        border-radius: 9px;
+        border-radius: 11px;
         display: grid;
         place-items: center;
         border: 1px solid #2f4d95;
         color: #9cb3e3;
-        background: rgba(12, 29, 72, 0.9);
+        background: rgba(13, 31, 78, 0.9);
+        box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.06);
       }
 
       .platform-user small {
@@ -219,10 +261,10 @@ export function renderConnectionPage(): string {
         align-items: center;
         justify-content: space-between;
         gap: 8px;
-        border: 1px solid #1e366f;
-        border-radius: 12px;
-        padding: 8px 10px 8px 11px;
-        background: rgba(7, 17, 46, 0.9);
+        border: 1px solid rgba(111, 147, 220, 0.14);
+        border-radius: 16px;
+        padding: 9px 11px 9px 12px;
+        background: rgba(7, 18, 45, 0.82);
       }
 
       .platform-support span {
@@ -237,29 +279,70 @@ export function renderConnectionPage(): string {
       }
 
       .logout-btn {
-        border: 1px solid #2f4e9f;
-        border-radius: 10px;
-        background: rgba(15, 33, 79, 0.92);
+        border: 1px solid rgba(122, 155, 226, 0.22);
+        border-radius: 12px;
+        background: rgba(16, 36, 84, 0.9);
         color: #cfddff;
-        padding: 6px 9px;
+        padding: 7px 10px;
         font-family: "JetBrains Mono", monospace;
         font-size: 0.64rem;
         cursor: pointer;
       }
 
       .card {
-        border: 1px solid #1f3f82;
-        border-radius: 14px;
-        background: var(--surface);
+        border: 1px solid var(--line);
+        border-radius: 22px;
+        background:
+          linear-gradient(180deg, rgba(8, 21, 54, 0.96), rgba(7, 18, 43, 0.94)),
+          radial-gradient(circle at 100% 0%, rgba(102, 167, 255, 0.08), transparent 24%);
         box-shadow: var(--shadow);
-        padding: 14px;
-        margin-bottom: 12px;
+        padding: 18px;
+        margin-bottom: 14px;
       }
 
       .top {
         display: flex;
         justify-content: space-between;
-        align-items: center;
+        align-items: flex-start;
+        gap: 18px;
+      }
+
+      .eyebrow {
+        display: inline-block;
+        margin-bottom: 8px;
+        font-size: 0.62rem;
+        text-transform: uppercase;
+        letter-spacing: 0.22em;
+        color: var(--primary-3);
+      }
+
+      .top-copy {
+        max-width: 760px;
+      }
+
+      .top-sub {
+        margin: 10px 0 0;
+        color: var(--ink-soft);
+        font-size: 0.88rem;
+        line-height: 1.55;
+      }
+
+      .top-pills {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 8px;
+        margin-top: 14px;
+      }
+
+      .top-pill {
+        border: 1px solid rgba(131, 170, 241, 0.18);
+        border-radius: 999px;
+        padding: 7px 11px;
+        font-size: 0.68rem;
+        letter-spacing: 0.08em;
+        text-transform: uppercase;
+        color: #d3e7ff;
+        background: rgba(14, 29, 71, 0.78);
       }
 
       .step-track {
@@ -269,11 +352,15 @@ export function renderConnectionPage(): string {
         margin-bottom: 12px;
       }
 
+      .step-track.panel-hidden {
+        display: none;
+      }
+
       .step-pill {
-        border: 1px solid #234785;
-        border-radius: 12px;
-        padding: 9px 10px;
-        background: rgba(8, 23, 58, 0.88);
+        border: 1px solid rgba(120, 151, 221, 0.14);
+        border-radius: 16px;
+        padding: 11px 12px;
+        background: rgba(8, 23, 58, 0.74);
         color: var(--ink-soft);
         font-size: 0.74rem;
         display: flex;
@@ -327,14 +414,21 @@ export function renderConnectionPage(): string {
         gap: 10px;
       }
 
+      .mode-status {
+        margin-top: 12px;
+        color: var(--ink-soft);
+        font-size: 0.75rem;
+      }
+
       .mode-btn {
-        border: 1px solid #2b4f96;
-        border-radius: 12px;
-        padding: 11px;
+        border: 1px solid rgba(120, 151, 221, 0.14);
+        border-radius: 16px;
+        padding: 14px;
         text-align: left;
-        background: rgba(8, 22, 56, 0.9);
+        background: rgba(8, 22, 56, 0.7);
         color: #c8d9ff;
         cursor: pointer;
+        box-shadow: var(--shadow-soft);
       }
 
       .mode-btn strong {
@@ -350,13 +444,330 @@ export function renderConnectionPage(): string {
       }
 
       .mode-btn.active {
-        border-color: rgba(143, 160, 255, 0.48);
-        background: linear-gradient(134deg, var(--primary), var(--primary-2), var(--primary-3));
+        border-color: rgba(151, 191, 255, 0.4);
+        background: linear-gradient(135deg, rgba(72, 99, 255, 0.9), rgba(89, 92, 255, 0.92) 54%, rgba(109, 208, 255, 0.82));
         color: #ffffff;
       }
 
       .mode-btn.active small {
         color: rgba(235, 244, 255, 0.92);
+      }
+
+      .flow-toolbar {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 14px;
+        padding: 14px 16px;
+      }
+
+      .flow-toolbar-left {
+        display: flex;
+        align-items: center;
+        gap: 12px;
+      }
+
+      .flow-kicker {
+        display: inline-block;
+        margin-bottom: 4px;
+        font-size: 0.62rem;
+        text-transform: uppercase;
+        letter-spacing: 0.2em;
+        color: var(--primary-3);
+      }
+
+      .flow-title {
+        display: block;
+        font-size: 0.94rem;
+        color: #f3f8ff;
+      }
+
+      .flow-sub {
+        color: var(--ink-soft);
+        font-size: 0.74rem;
+      }
+
+      .source-grid {
+        display: grid;
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+        gap: 12px;
+        margin-top: 14px;
+      }
+
+      .source-option {
+        position: relative;
+        overflow: hidden;
+        border: 1px solid rgba(120, 151, 221, 0.14);
+        border-radius: 18px;
+        padding: 18px;
+        text-align: left;
+        background:
+          linear-gradient(160deg, rgba(8, 22, 56, 0.78), rgba(6, 18, 46, 0.9)),
+          radial-gradient(circle at 100% 0%, rgba(102, 167, 255, 0.12), transparent 28%);
+        color: #d7e5ff;
+        box-shadow: var(--shadow-soft);
+      }
+
+      .source-option::before {
+        content: "";
+        position: absolute;
+        inset: 0;
+        pointer-events: none;
+        background: radial-gradient(circle at 0% 0%, rgba(122, 179, 255, 0.12), transparent 30%);
+      }
+
+      .source-option.selected {
+        border-color: rgba(151, 191, 255, 0.4);
+        background: linear-gradient(135deg, rgba(72, 99, 255, 0.9), rgba(89, 92, 255, 0.92) 54%, rgba(109, 208, 255, 0.82));
+        color: #ffffff;
+      }
+
+      .source-option strong {
+        display: block;
+        margin: 8px 0 6px;
+        font-size: 0.95rem;
+      }
+
+      .source-option span {
+        display: block;
+        color: var(--ink-soft);
+        font-size: 0.78rem;
+        line-height: 1.55;
+      }
+
+      .source-option.selected span {
+        color: rgba(240, 246, 255, 0.96);
+      }
+
+      .source-option-head {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 10px;
+      }
+
+      .source-option-badge {
+        border-radius: 999px;
+        border: 1px solid rgba(120, 151, 221, 0.2);
+        background: rgba(10, 24, 58, 0.7);
+        padding: 6px 10px;
+        font-size: 0.64rem;
+        letter-spacing: 0.08em;
+        text-transform: uppercase;
+        color: #dbe7ff;
+      }
+
+      .source-option.selected .source-option-badge {
+        background: rgba(255, 255, 255, 0.14);
+        border-color: rgba(255, 255, 255, 0.18);
+      }
+
+      .source-details-head {
+        display: flex;
+        align-items: flex-start;
+        justify-content: space-between;
+        gap: 14px;
+        margin-bottom: 12px;
+      }
+
+      .source-details-card {
+        border: 1px solid rgba(120, 151, 221, 0.14);
+        border-radius: 18px;
+        padding: 14px 16px;
+        background: rgba(9, 24, 58, 0.72);
+        margin-bottom: 10px;
+      }
+
+      .source-provider-label {
+        display: inline-flex;
+        align-items: center;
+        gap: 8px;
+        border-radius: 999px;
+        border: 1px solid rgba(120, 151, 221, 0.2);
+        background: rgba(10, 24, 58, 0.76);
+        padding: 8px 12px;
+        color: #dbe7ff;
+        font-size: 0.74rem;
+        text-transform: uppercase;
+        letter-spacing: 0.12em;
+      }
+
+      .source-provider-label strong {
+        font-size: 0.8rem;
+        letter-spacing: 0;
+        text-transform: none;
+      }
+
+      .source-provider-note {
+        margin: 10px 0 0;
+        color: var(--ink-soft);
+        font-size: 0.78rem;
+        line-height: 1.55;
+      }
+
+      .setup-mode-toggle {
+        display: inline-flex;
+        align-items: center;
+        gap: 8px;
+        margin: 6px 0 10px;
+        padding: 6px;
+        border-radius: 16px;
+        border: 1px solid rgba(120, 151, 221, 0.14);
+        background: rgba(8, 22, 56, 0.66);
+      }
+
+      .setup-mode-toggle .secondary {
+        min-width: 170px;
+      }
+
+      .setup-mode-toggle .secondary.active {
+        border-color: rgba(151, 191, 255, 0.4);
+        background: linear-gradient(135deg, rgba(72, 99, 255, 0.9), rgba(89, 92, 255, 0.92) 54%, rgba(109, 208, 255, 0.82));
+        color: #ffffff;
+      }
+
+      .builder-note {
+        margin: 0 0 12px;
+        color: var(--ink-soft);
+        font-size: 0.75rem;
+        line-height: 1.55;
+      }
+
+      .tls-guidance-kicker {
+        margin: 0 0 6px;
+        color: #d8e5ff;
+        font-size: 0.77rem;
+        font-weight: 700;
+        letter-spacing: 0.01em;
+      }
+
+      .tls-guidance-copy {
+        margin: 0 0 10px;
+        color: var(--ink-soft);
+        font-size: 0.74rem;
+        line-height: 1.55;
+      }
+
+      .guided-section-head {
+        display: flex;
+        flex-direction: column;
+        gap: 5px;
+        margin-bottom: 12px;
+      }
+
+      .guided-section-head strong {
+        color: #f3f8ff;
+        font-size: 0.9rem;
+      }
+
+      .guided-section-head span {
+        color: var(--ink-soft);
+        font-size: 0.74rem;
+        line-height: 1.55;
+      }
+
+      .guided-fields {
+        margin-bottom: 8px;
+      }
+
+      .builder-tip,
+      .builder-hint-card {
+        border: 1px solid rgba(120, 151, 221, 0.16);
+        border-radius: 16px;
+        background: rgba(8, 22, 56, 0.68);
+        color: var(--ink-soft);
+      }
+
+      .builder-tip {
+        padding: 12px 14px;
+        font-size: 0.74rem;
+        line-height: 1.55;
+        margin-bottom: 10px;
+      }
+
+      .builder-hint-card {
+        padding: 12px 14px;
+        display: flex;
+        flex-direction: column;
+        gap: 4px;
+        justify-content: center;
+      }
+
+      .builder-hint-card strong {
+        color: #f3f8ff;
+        font-size: 0.74rem;
+      }
+
+      .builder-hint-card span {
+        font-size: 0.72rem;
+        line-height: 1.5;
+      }
+
+      .wizard-count {
+        display: inline-flex;
+        align-items: center;
+        gap: 8px;
+        margin-bottom: 12px;
+        border-radius: 999px;
+        border: 1px solid rgba(120, 151, 221, 0.18);
+        background: rgba(10, 24, 58, 0.68);
+        padding: 8px 12px;
+        color: #dbe7ff;
+        font-size: 0.72rem;
+      }
+
+      .table-shell {
+        border: 1px solid #2a4b91;
+        border-radius: 16px;
+        overflow: hidden;
+        background: rgba(9, 25, 61, 0.92);
+      }
+
+      .connections-table {
+        width: 100%;
+        border-collapse: collapse;
+      }
+
+      .connections-table th,
+      .connections-table td {
+        padding: 12px 14px;
+        text-align: left;
+        font-size: 0.76rem;
+        border-bottom: 1px solid rgba(120, 151, 221, 0.12);
+      }
+
+      .connections-table th {
+        color: var(--ink-soft);
+        text-transform: uppercase;
+        letter-spacing: 0.1em;
+        font-size: 0.64rem;
+      }
+
+      .connections-table tbody tr {
+        cursor: pointer;
+      }
+
+      .connections-table tbody tr:hover,
+      .connections-table tbody tr.active {
+        background: rgba(39, 71, 140, 0.28);
+      }
+
+      .connections-table-empty {
+        color: var(--ink-soft);
+      }
+
+      .detail-title {
+        display: flex;
+        align-items: flex-start;
+        justify-content: space-between;
+        gap: 12px;
+        margin-bottom: 12px;
+      }
+
+      .detail-meta {
+        margin-top: 6px;
+        color: var(--ink-soft);
+        font-size: 0.74rem;
       }
 
       .panel-hidden {
@@ -389,10 +800,10 @@ export function renderConnectionPage(): string {
       textarea,
       select {
         width: 100%;
-        border-radius: 12px;
-        border: 1px solid #2e4d8f;
+        border-radius: 16px;
+        border: 1px solid rgba(126, 160, 227, 0.16);
         padding: 11px 12px;
-        background: rgba(9, 24, 58, 0.94);
+        background: rgba(6, 18, 46, 0.9);
         color: #edf3ff;
       }
 
@@ -415,6 +826,10 @@ export function renderConnectionPage(): string {
         gap: 10px;
       }
 
+      .row.panel-hidden {
+        display: none;
+      }
+
       .row + .row,
       .row + div,
       div + .row {
@@ -428,7 +843,7 @@ export function renderConnectionPage(): string {
       }
 
       button {
-        border-radius: 11px;
+        border-radius: 14px;
         padding: 10px 14px;
         cursor: pointer;
         font-size: 0.76rem;
@@ -446,7 +861,7 @@ export function renderConnectionPage(): string {
         border: 1px solid rgba(143, 160, 255, 0.48);
         background: linear-gradient(134deg, var(--primary), var(--primary-2), var(--primary-3));
         color: #ffffff;
-        box-shadow: 0 10px 22px rgba(82, 74, 255, 0.32);
+        box-shadow: 0 14px 30px rgba(68, 95, 211, 0.3);
       }
 
       .secondary {
@@ -678,6 +1093,128 @@ export function renderConnectionPage(): string {
         font-size: 0.74rem;
       }
 
+      .catalog-modal-card {
+        width: min(780px, 100%);
+        overflow: hidden;
+      }
+
+      .catalog-hero {
+        position: relative;
+        overflow: hidden;
+        border: 1px solid rgba(120, 151, 221, 0.14);
+        border-radius: 20px;
+        padding: 22px;
+        background:
+          linear-gradient(180deg, rgba(11, 25, 62, 0.98), rgba(7, 18, 45, 0.98)),
+          radial-gradient(circle at 100% 0%, rgba(102, 167, 255, 0.18), transparent 26%);
+      }
+
+      .catalog-hero::before {
+        content: "";
+        position: absolute;
+        inset: 0;
+        pointer-events: none;
+        background: radial-gradient(circle at 0% 0%, rgba(116, 183, 255, 0.16), transparent 28%);
+      }
+
+      .catalog-copy,
+      .catalog-stats,
+      .catalog-actions,
+      .catalog-footnote {
+        position: relative;
+        z-index: 1;
+      }
+
+      .catalog-copy h2 {
+        margin: 0;
+        font-size: 1.04rem;
+        color: #f3f8ff;
+      }
+
+      .catalog-copy p {
+        margin: 10px 0 0;
+        color: var(--ink-soft);
+        font-size: 0.84rem;
+        line-height: 1.65;
+      }
+
+      .catalog-spinner {
+        width: 54px;
+        height: 54px;
+        border-radius: 999px;
+        border: 2px solid rgba(128, 144, 255, 0.18);
+        border-top-color: #7fd0ff;
+        border-right-color: #6c6cff;
+        animation: spin 1.1s linear infinite;
+        box-shadow: 0 0 34px rgba(102, 167, 255, 0.16);
+      }
+
+      .catalog-hero-head {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 16px;
+      }
+
+      .catalog-stats {
+        display: grid;
+        grid-template-columns: repeat(3, minmax(0, 1fr));
+        gap: 10px;
+        margin-top: 18px;
+      }
+
+      .catalog-stat {
+        border: 1px solid rgba(120, 151, 221, 0.14);
+        border-radius: 16px;
+        padding: 14px;
+        background: rgba(10, 24, 58, 0.72);
+      }
+
+      .catalog-stat small {
+        display: block;
+        margin-bottom: 8px;
+        font-size: 0.62rem;
+        letter-spacing: 0.16em;
+        text-transform: uppercase;
+        color: var(--ink-muted);
+      }
+
+      .catalog-stat strong {
+        display: block;
+        font-size: 1.14rem;
+        color: #f3f8ff;
+      }
+
+      .catalog-stat span {
+        display: block;
+        margin-top: 6px;
+        color: var(--ink-soft);
+        font-size: 0.74rem;
+      }
+
+      .catalog-actions {
+        display: flex;
+        justify-content: flex-end;
+        gap: 10px;
+        margin-top: 18px;
+      }
+
+      .catalog-footnote {
+        margin-top: 14px;
+        color: var(--ink-soft);
+        font-size: 0.74rem;
+        line-height: 1.55;
+      }
+
+      .hidden-select {
+        display: none;
+      }
+
+      @keyframes spin {
+        from { transform: rotate(0deg); }
+        to { transform: rotate(360deg); }
+      }
+
       .modal {
         position: fixed;
         inset: 0;
@@ -721,10 +1258,22 @@ export function renderConnectionPage(): string {
       }
 
       @media (max-width: 980px) {
+        .page { padding: 0; }
         .layout { grid-template-columns: 1fr; }
         .platform-panel { display: none; }
         .workspace { padding: 12px; }
         .step-track { grid-template-columns: 1fr; }
+        .source-grid,
+        .catalog-stats {
+          grid-template-columns: 1fr;
+        }
+        .flow-toolbar,
+        .source-details-head,
+        .detail-title,
+        .catalog-hero-head {
+          flex-direction: column;
+          align-items: flex-start;
+        }
 
         .kvs {
           grid-template-columns: 1fr;
@@ -732,6 +1281,10 @@ export function renderConnectionPage(): string {
 
         .row {
           grid-template-columns: 1fr;
+        }
+
+        .connections-table {
+          min-width: 720px;
         }
       }
     </style>
@@ -744,7 +1297,7 @@ export function renderConnectionPage(): string {
             <div class="platform-brand-badge">*</div>
             <div>
               <strong>Project Overload</strong>
-              <span>Enterprise</span>
+              <span>Decision cockpit</span>
             </div>
           </div>
           <div class="platform-section">Core Platform</div>
@@ -755,6 +1308,7 @@ export function renderConnectionPage(): string {
           <div class="platform-section">Infrastructure</div>
           <nav class="platform-nav">
             <a class="platform-link active" href="/connect"><span class="link-icon"><svg viewBox="0 0 24 24"><ellipse cx="12" cy="5" rx="9" ry="3"/><path d="M21 12c0 1.66-4 3-9 3s-9-1.34-9-3"/><path d="M3 5v14c0 1.66 4 3 9 3s9-1.34 9-3V5"/></svg></span>Data Sources</a>
+            <a class="platform-link" href="/scheduled"><span class="link-icon"><svg viewBox="0 0 24 24"><rect x="3" y="4" width="18" height="18" rx="2"/><path d="M16 2v4"/><path d="M8 2v4"/><path d="M3 10h18"/><path d="M8 14h3"/><path d="M8 18h6"/></svg></span>Scheduled Reports</a>
             <a class="platform-link" href="/config"><span class="link-icon"><svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83-2.83l.06-.06A1.65 1.65 0 0 0 4.68 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 2.83-2.83l.06.06A1.65 1.65 0 0 0 9 4.68a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 2.83l-.06.06A1.65 1.65 0 0 0 19.4 9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg></span>Global Config</a>
           </nav>
           <div class="platform-footer">
@@ -774,161 +1328,347 @@ export function renderConnectionPage(): string {
           </div>
         </aside>
         <main class="workspace">
-          <header class="card top">
-            <h1>1-Click Database Connection Wizard</h1>
-            <a href="/">Open Chat Interface</a>
-          </header>
+          <section class="card" id="mode-panel">
+            <h2 style="margin-top: 0;">Data Sources</h2>
+            <div class="mode-grid">
+              <button class="mode-btn" id="mode-edit" type="button">
+                <strong>Edit connected databases</strong>
+                <small>Open the connected-source table, inspect table and column coverage, update allowlists, or disconnect safely.</small>
+              </button>
+              <button class="mode-btn" id="mode-connect" type="button">
+                <strong>Connect new database</strong>
+                <small>Run a guided Source -> Governance -> Activate flow with connection testing and catalog indexing.</small>
+              </button>
+            </div>
+            <div class="mode-status" id="connection-status">No active runtime connection.</div>
+          </section>
 
-          <section class="step-track">
+          <section class="card flow-toolbar panel-hidden" id="flow-toolbar">
+            <div class="flow-toolbar-left">
+              <button class="secondary" id="flow-back" type="button">Go back</button>
+              <div>
+                <span class="flow-kicker" id="flow-kicker">Source</span>
+                <strong class="flow-title" id="flow-title">Choose your source type</strong>
+                <div class="flow-sub" id="flow-sub">Start by picking the database family you want to connect.</div>
+              </div>
+            </div>
+            <div class="status" id="flow-status"></div>
+          </section>
+
+          <section class="step-track panel-hidden" id="step-track">
             <div class="step-pill active" id="step-pill-source"><span class="num">1</span><span>Source</span></div>
             <div class="step-pill" id="step-pill-governance"><span class="num">2</span><span>Governance</span></div>
             <div class="step-pill" id="step-pill-activate"><span class="num">3</span><span>Activate</span></div>
           </section>
 
-      <section class="card">
-        <h2 style="margin-top: 0;">Data Sources</h2>
-        <div class="mode-grid">
-          <button class="mode-btn" id="mode-edit" type="button">
-            <strong>Edit connected databases</strong>
-            <small>View active source details, keep/remove allowlisted tables, and disconnect safely.</small>
-          </button>
-          <button class="mode-btn" id="mode-connect" type="button">
-            <strong>Connect new DB or tables</strong>
-            <small>Run Source -> Governance -> Activate flow with automatic validation and catalog indexing.</small>
-          </button>
-        </div>
-        <div class="status" id="connection-status">No active runtime connection.</div>
-      </section>
-
-      <section class="card panel-hidden" id="edit-panel">
-        <h2 style="margin-top: 0;">Edit Connected Databases</h2>
-        <div id="edit-empty" class="callout panel-hidden"><strong>No active source.</strong> Use <em>Connect new DB or tables</em> to start setup.</div>
-        <div id="edit-content" class="panel-hidden">
-          <div class="kvs">
-            <div class="kv"><span class="k">Connection ID</span><span class="v" id="edit-connection-id">-</span></div>
-            <div class="kv"><span class="k">Provider</span><span class="v" id="edit-provider">-</span></div>
-            <div class="kv"><span class="k">Database</span><span class="v" id="edit-database">-</span></div>
-            <div class="kv"><span class="k">Connected At</span><span class="v" id="edit-connected-at">-</span></div>
-            <div class="kv" style="grid-column: 1 / -1;"><span class="k">Connection String (masked)</span><span class="v" id="edit-connection-string">Stored encrypted server-side.</span></div>
-          </div>
-
-          <div class="row" style="margin-top: 10px;">
-            <div>
-              <label for="edit-schema-filter">Schema filter</label>
-              <select id="edit-schema-filter"></select>
+          <section class="card panel-hidden" id="source-kind-panel">
+            <h2 style="margin-top: 0;">Step A1 - Choose a database type</h2>
+            <p class="muted">Pick the source family first. The next page will handle connection testing and source setup for that connector.</p>
+            <p class="muted" style="margin-top: -2px;">
+              Need examples and setup notes first?
+              <a href="/connect/guide" target="_blank" rel="noreferrer">Open the database connection guide</a>.
+            </p>
+            <div class="source-grid" id="source-grid">
+              <button class="source-option" data-provider="postgres" type="button">
+                <strong>Postgres</strong>
+                <span>Best for Postgres, Neon, and similar read replicas using a standard connection string.</span>
+              </button>
+              <button class="source-option" data-provider="mysql" type="button">
+                <strong>MySQL</strong>
+                <span>Use a MySQL-compatible connection string and follow the same governed onboarding flow.</span>
+              </button>
+              <button class="source-option" data-provider="snowflake" type="button">
+                <strong>Snowflake</strong>
+                <span>Use a Snowflake connection string with database, schema, and warehouse so we can validate governed access cleanly.</span>
+              </button>
+              <button class="source-option" data-provider="bigquery" type="button">
+                <strong>BigQuery</strong>
+                <span>Use a BigQuery project and dataset connection string so we can validate the dataset, catalog it, and activate safe queries.</span>
+              </button>
             </div>
-            <div>
-              <label for="edit-search-filter">Search</label>
-              <input id="edit-search-filter" placeholder="sales, customers, reporting..." />
+            <div class="actions" style="margin-top: 16px;">
+              <button class="primary" id="source-kind-continue" type="button">Continue to connection details</button>
             </div>
-          </div>
+          </section>
 
-          <div class="actions">
-            <button class="secondary" id="edit-select-all">Select all visible</button>
-            <button class="secondary" id="edit-select-none">Select none</button>
-            <button class="primary" id="edit-save-allowlist">Save allowlist changes</button>
-            <button class="warn" id="edit-disconnect">Disconnect source</button>
-          </div>
-          <div class="table-list" id="edit-table-list"></div>
-          <div id="edit-validation-container"></div>
-        </div>
-      </section>
+          <section class="card panel-hidden" id="source-details-panel">
+            <div class="source-details-head">
+              <div>
+                <h2 style="margin-top: 0;" id="source-details-title">Step A2 - Set up your Postgres connection</h2>
+                <p class="muted" id="source-details-sub">Fill in the Postgres connection details, validate access, and connect the source before you govern the allowlist.</p>
+              </div>
+              <button class="secondary" id="change-provider" type="button">Change source type</button>
+            </div>
 
-      <section class="card panel-hidden" id="connect-flow-panel">
-        <h2 style="margin-top: 0;">STEP A - Source</h2>
-        <div class="row">
-          <div>
-            <label for="connection-name">Connection Name</label>
-            <input id="connection-name" placeholder="Customer Prod Read Replica" />
-          </div>
-          <div>
-            <label for="query-limit">Safe Query Limit</label>
-            <input id="query-limit" type="number" min="1" max="2000" value="200" />
-          </div>
-        </div>
+            <div class="source-details-card">
+              <div class="source-provider-label">Selected source <strong id="selected-provider-name">Postgres</strong></div>
+              <p class="source-provider-note" id="selected-provider-note">Use a Postgres-compatible connection string for a governed read-only connection.</p>
+            </div>
 
-        <div style="margin-top: 10px;">
-          <label for="connection-provider">Data Source</label>
-          <select id="connection-provider">
-            <option value="postgres">Postgres</option>
-            <option value="supabase">Supabase (Postgres)</option>
-            <option value="neon">Neon (Postgres)</option>
-            <option value="mysql">MySQL (coming soon)</option>
-            <option value="snowflake">Snowflake (coming soon)</option>
-            <option value="bigquery">BigQuery (coming soon)</option>
-          </select>
-          <p class="muted">Postgres-compatible sources (Postgres/Supabase/Neon) are enabled in this runtime.</p>
-        </div>
+            <div class="setup-mode-toggle" id="setup-mode-toggle">
+              <button class="secondary active" id="setup-mode-guided" type="button">Guided setup</button>
+              <button class="secondary" id="setup-mode-manual" type="button">Paste connection string</button>
+            </div>
+            <p class="builder-note" id="setup-mode-note">Guided setup builds the connection string for you, URL-encodes credentials safely, and lets you choose SSL behavior without editing the URI by hand.</p>
 
-        <div>
-          <label for="connection-string">Connection String</label>
-          <input id="connection-string" type="password" placeholder="postgresql://user:pass@host:5432/db?sslmode=require" />
-          <p class="muted">Credentials never run in the browser. This string is sent to the server, stored encrypted, and used for governed SELECT-only execution.</p>
-        </div>
+            <div class="hidden-select">
+              <label for="connection-provider">Data Source</label>
+              <select id="connection-provider">
+                <option value="postgres">Postgres</option>
+                <option value="mysql">MySQL</option>
+                <option value="snowflake">Snowflake</option>
+                <option value="bigquery">BigQuery</option>
+              </select>
+            </div>
 
-        <details style="margin-top: 10px;">
-          <summary class="muted" style="cursor: pointer;"><strong>Advanced TLS</strong> (optional)</summary>
-          <div style="margin-top: 10px;">
-            <label for="tls-ca-pem">Custom CA (PEM)</label>
-            <textarea id="tls-ca-pem" placeholder="-----BEGIN CERTIFICATE-----\n..."></textarea>
-            <p class="muted">If you see TLS errors like "self-signed certificate in certificate chain", paste your org/DB root CA here (PEM). This is used only for this session.</p>
-          </div>
-        </details>
+            <div class="row">
+              <div>
+                <label for="connection-name">Connection Name</label>
+                <input id="connection-name" placeholder="Customer Prod Read Replica" />
+              </div>
+              <div>
+                <label for="query-limit">Safe Query Limit</label>
+                <input id="query-limit" type="number" min="1" max="2000" value="200" />
+              </div>
+            </div>
 
-        <div class="actions">
-          <button class="secondary" id="test-connection">Test Connection</button>
-          <button class="primary" id="connect-source">Connect source & continue</button>
-        </div>
+            <section class="guided-fields" id="guided-connection-fields">
+              <div class="guided-section-head">
+                <strong id="guided-form-title">Postgres connection details</strong>
+                <span id="guided-form-subtitle">Use the values from your Postgres, Supabase, or Neon connection screen. We will build the URI for you.</span>
+              </div>
+              <div class="builder-tip" id="guided-builder-tip">Use plain credentials here. We will URL-encode usernames and passwords for you before sending the connection to the API.</div>
+              <p class="muted" id="guided-provider-quickstart" style="margin-top: 0;">For Supabase or any managed Postgres, copy Host, Port, Database, Username, and Password from the provider's connection details. You do not need a warehouse.</p>
+              <p class="muted" id="guided-tls-quickstart" style="margin-top: -2px;">For cloud databases like Supabase, leave Custom CA empty and keep SSL mode on Automatic or Require TLS. Use Disable TLS only for localhost or private dev databases that do not support SSL.</p>
 
-        <div class="kvs" id="test-metadata" style="display:none;">
-          <div class="kv"><span class="k">current_user</span><span class="v" id="meta-user"></span></div>
-          <div class="kv"><span class="k">current_database</span><span class="v" id="meta-db"></span></div>
-          <div class="kv" style="grid-column: 1 / -1;"><span class="k">version</span><span class="v" id="meta-version"></span></div>
-        </div>
+              <div class="row" id="guided-auth-row">
+                <div id="guided-username-wrap">
+                  <label id="guided-username-label" for="guided-username">Username</label>
+                  <input id="guided-username" autocomplete="username" placeholder="reader" />
+                </div>
+                <div id="guided-password-wrap">
+                  <label id="guided-password-label" for="guided-password">Password</label>
+                  <input id="guided-password" type="password" autocomplete="current-password" placeholder="••••••••" />
+                </div>
+              </div>
 
-        <div id="test-notes"></div>
+              <div class="row">
+                <div>
+                  <label id="guided-host-label" for="guided-host">Host</label>
+                  <input id="guided-host" placeholder="db.company.com" />
+                </div>
+                <div id="guided-port-wrap">
+                  <label id="guided-port-label" for="guided-port">Port</label>
+                  <input id="guided-port" inputmode="numeric" placeholder="5432" />
+                </div>
+              </div>
 
-      </section>
+              <div class="row">
+                <div>
+                  <label id="guided-db-label" for="guided-db">Database</label>
+                  <input id="guided-db" placeholder="analytics" />
+                </div>
+                <div id="guided-schema-wrap" class="panel-hidden">
+                  <label id="guided-schema-label" for="guided-schema">Schema</label>
+                  <input id="guided-schema" placeholder="public" />
+                </div>
+              </div>
 
-      <section class="card panel-hidden" id="governance-panel">
-        <h2 style="margin-top: 0;">STEP B - Governance</h2>
-        <p class="muted">Pick allowlist tables/views. After save, validation and catalog indexing run automatically.</p>
-        <div class="row">
-          <div>
-            <label for="schema-filter">Schema filter</label>
-            <select id="schema-filter"></select>
-          </div>
-          <div>
-            <label for="search-filter">Search</label>
-            <input id="search-filter" placeholder="sales, customers, reporting..." />
-          </div>
-        </div>
+              <div class="row panel-hidden" id="guided-snowflake-row">
+                <div>
+                  <label id="guided-warehouse-label" for="guided-warehouse">Warehouse</label>
+                  <input id="guided-warehouse" placeholder="COMPUTE_WH" />
+                </div>
+              </div>
 
-        <div class="actions">
-          <button class="secondary" id="select-recommended">Select recommended</button>
-          <button class="secondary" id="select-ok">Select all OK</button>
-          <button class="secondary" id="select-none">Select none</button>
-          <button class="primary" id="save-allowlist">Save governance & continue</button>
-          <button class="danger" id="open-fix-script">Fix-it script</button>
-        </div>
-        <div class="table-list" id="table-list"></div>
-        <div class="governance-summary panel-hidden" id="governance-summary"></div>
-        <div id="validation-container"></div>
-      </section>
+              <div class="row" id="guided-ssl-row">
+                <div>
+                  <label for="guided-ssl-mode">SSL mode</label>
+                  <select id="guided-ssl-mode">
+                    <option value="automatic">Automatic (recommended)</option>
+                    <option value="require">Require TLS</option>
+                    <option value="disable">Disable TLS (local/dev)</option>
+                    <option value="no-verify">TLS without certificate verification (dev only)</option>
+                  </select>
+                </div>
+                <div class="builder-hint-card" id="guided-ssl-hint">
+                  <strong>SSL hint</strong>
+                  <span>Use Disable TLS only for local or private dev databases that do not support SSL.</span>
+                </div>
+              </div>
+            </section>
 
-      <section class="card panel-hidden" id="activate-panel">
-        <h2>STEP C - Activate (Safe Query)</h2>
-        <p class="muted"><strong>Read-only enforced</strong> and <strong>SELECT-only enforced</strong>. Exactly one statement (no semicolons). Allowlist enforced. LIMIT enforced.</p>
-        <label for="safe-sql">SQL</label>
-        <textarea id="safe-sql">SELECT * FROM public.sales LIMIT 50</textarea>
-        <div class="actions">
-          <button class="primary" id="run-query">Run Query</button>
-          <button class="secondary" id="refresh-logs">Refresh audit logs</button>
-          <button class="primary" id="submit-connection">Submit connected source</button>
-        </div>
-        <div class="output" id="query-output"></div>
-      </section>
+            <div id="manual-connection-fields" class="panel-hidden" style="margin-top: 10px;">
+              <label for="connection-string">Connection String</label>
+              <input id="connection-string" type="password" placeholder="postgresql://user:pass@host:5432/db?sslmode=require" />
+              <p class="muted" id="connection-string-help">Credentials never run in the browser. This string is sent to the server, stored encrypted, and used for governed SELECT-only execution.</p>
+            </div>
+
+            <details class="panel-hidden" style="margin-top: 10px;" id="advanced-tls-section">
+              <summary class="muted" style="cursor: pointer;"><strong id="advanced-tls-title">Advanced TLS</strong> <span id="advanced-tls-optional">(optional)</span></summary>
+              <div style="margin-top: 10px;">
+                <p class="tls-guidance-kicker">For corporate VPN / SSL inspection</p>
+                <p class="tls-guidance-copy">Only use this if your company network intercepts TLS or your database team gave you a custom CA certificate. For normal cloud Postgres or MySQL connections, leave this empty.</p>
+                <label for="tls-ca-pem">Custom CA (PEM)</label>
+                <textarea id="tls-ca-pem" placeholder="-----BEGIN CERTIFICATE-----\n..."></textarea>
+                <p class="muted" id="advanced-tls-help">If you see TLS errors like "self-signed certificate in certificate chain", paste your org or DB root CA here. It is used only for this session. Need help finding it? <a href="/connect/guide#tls-ca-corporate" target="_blank" rel="noreferrer">Open the TLS CA guide</a>.</p>
+              </div>
+            </details>
+
+            <div class="actions">
+              <button class="secondary" id="test-connection" type="button">Test Postgres connection</button>
+              <button class="primary" id="connect-source" type="button">Connect Postgres source</button>
+            </div>
+
+            <div class="kvs" id="test-metadata" style="display:none;">
+              <div class="kv"><span class="k">current_user</span><span class="v" id="meta-user"></span></div>
+              <div class="kv"><span class="k">current_database</span><span class="v" id="meta-db"></span></div>
+              <div class="kv" style="grid-column: 1 / -1;"><span class="k">version</span><span class="v" id="meta-version"></span></div>
+            </div>
+
+            <div id="test-notes"></div>
+          </section>
+
+          <section class="card panel-hidden" id="governance-panel">
+            <h2 style="margin-top: 0;">Step B - Governance</h2>
+            <p class="muted">Choose which tables belong on the allowlist. Saving the allowlist will validate access, catalogue the source, and stage activation.</p>
+            <div class="wizard-count" id="allowlist-count">0 tables selected for governance</div>
+            <div class="row">
+              <div>
+                <label for="schema-filter">Schema filter</label>
+                <select id="schema-filter"></select>
+              </div>
+              <div>
+                <label for="search-filter">Search</label>
+                <input id="search-filter" placeholder="sales, customers, reporting..." />
+              </div>
+            </div>
+
+            <div class="actions">
+              <button class="secondary" id="select-recommended" type="button">Select recommended</button>
+              <button class="secondary" id="select-ok" type="button">Select all OK</button>
+              <button class="secondary" id="select-none" type="button">Select none</button>
+              <button class="primary" id="save-allowlist" type="button">Save allowlist</button>
+              <button class="danger" id="open-fix-script" type="button">Fix-it script</button>
+            </div>
+            <div class="table-list" id="table-list"></div>
+            <div class="governance-summary panel-hidden" id="governance-summary"></div>
+            <div id="validation-container"></div>
+          </section>
+
+          <section class="card panel-hidden" id="activate-panel">
+            <h2 style="margin-top: 0;">Step C - Activate</h2>
+            <p class="muted"><strong>Read-only enforced</strong> and <strong>SELECT-only enforced</strong>. Run a safe query, inspect the result, and then submit the connection for chat and report usage.</p>
+            <label for="safe-sql">SQL</label>
+            <textarea id="safe-sql" placeholder="A safe query will be suggested once the governed allowlist is ready."></textarea>
+            <div class="actions">
+              <button class="primary" id="run-query" type="button">Run safe query</button>
+              <button class="secondary" id="refresh-logs" type="button">Refresh audit logs</button>
+              <button class="primary" id="submit-connection" type="button">Submit connection</button>
+            </div>
+            <div class="output" id="query-output"></div>
+          </section>
+
+          <section class="card panel-hidden" id="edit-list-panel">
+            <div class="detail-title">
+              <div>
+                <h2 style="margin-top: 0;">Connected Databases</h2>
+                <p class="muted">Review the active governed source, including how many tables and catalogued columns are currently available.</p>
+              </div>
+            </div>
+            <div class="table-shell">
+              <table class="connections-table">
+                <thead>
+                  <tr>
+                    <th>Database</th>
+                    <th>Provider</th>
+                    <th>Allowlist</th>
+                    <th>Catalog</th>
+                    <th>Connected</th>
+                  </tr>
+                </thead>
+                <tbody id="connections-table-body">
+                  <tr><td class="connections-table-empty" colspan="5">No connected databases yet.</td></tr>
+                </tbody>
+              </table>
+            </div>
+          </section>
+
+          <section class="card panel-hidden" id="edit-panel">
+            <div class="detail-title">
+              <div>
+                <h2 style="margin-top: 0;">Connection Details</h2>
+                <div class="detail-meta" id="edit-selected-meta">Choose a connected source above to review its details.</div>
+              </div>
+            </div>
+            <div id="edit-empty" class="callout"><strong>No source selected.</strong> Pick a connected database from the table above to edit its allowlist or disconnect it.</div>
+            <div id="edit-content" class="panel-hidden">
+              <div class="kvs">
+                <div class="kv"><span class="k">Connection ID</span><span class="v" id="edit-connection-id">-</span></div>
+                <div class="kv"><span class="k">Provider</span><span class="v" id="edit-provider">-</span></div>
+                <div class="kv"><span class="k">Database</span><span class="v" id="edit-database">-</span></div>
+                <div class="kv"><span class="k">Connected At</span><span class="v" id="edit-connected-at">-</span></div>
+                <div class="kv" style="grid-column: 1 / -1;"><span class="k">Connection String (masked)</span><span class="v" id="edit-connection-string">Stored encrypted server-side.</span></div>
+              </div>
+
+              <div class="row" style="margin-top: 10px;">
+                <div>
+                  <label for="edit-schema-filter">Schema filter</label>
+                  <select id="edit-schema-filter"></select>
+                </div>
+                <div>
+                  <label for="edit-search-filter">Search</label>
+                  <input id="edit-search-filter" placeholder="sales, customers, reporting..." />
+                </div>
+              </div>
+
+              <div class="actions">
+                <button class="secondary" id="edit-select-all" type="button">Select all visible</button>
+                <button class="secondary" id="edit-select-none" type="button">Select none</button>
+                <button class="primary" id="edit-save-allowlist" type="button">Save allowlist changes</button>
+                <button class="warn" id="edit-disconnect" type="button">Disconnect source</button>
+              </div>
+              <div class="table-list" id="edit-table-list"></div>
+              <div id="edit-validation-container"></div>
+            </div>
+          </section>
         </main>
+      </div>
+    </div>
+
+    <div class="modal" id="catalog-modal" aria-hidden="true">
+      <div class="modal-card catalog-modal-card">
+        <div class="catalog-hero">
+          <div class="catalog-hero-head">
+            <div class="catalog-copy">
+              <h2 id="catalog-modal-title">Cataloging your governed source</h2>
+              <p id="catalog-modal-message">We are validating the allowlist, indexing the selected tables, and preparing the source for activation.</p>
+            </div>
+            <div class="catalog-spinner" id="catalog-spinner"></div>
+          </div>
+          <div class="catalog-stats">
+            <div class="catalog-stat">
+              <small>Allowlist</small>
+              <strong id="catalog-stat-allowlist">0</strong>
+              <span>tables selected for governance</span>
+            </div>
+            <div class="catalog-stat">
+              <small>Catalogued Tables</small>
+              <strong id="catalog-stat-tables">0</strong>
+              <span>tables indexed and ready</span>
+            </div>
+            <div class="catalog-stat">
+              <small>Catalogued Columns</small>
+              <strong id="catalog-stat-columns">0</strong>
+              <span>columns profiled for the source</span>
+            </div>
+          </div>
+          <div class="catalog-footnote" id="catalog-footnote">This step prepares the governed catalog used by the planner, analyst, and reports.</div>
+          <div class="catalog-actions">
+            <button class="secondary panel-hidden" id="catalog-close" type="button">Close</button>
+            <button class="primary panel-hidden" id="catalog-continue" type="button">Continue to activate</button>
+          </div>
+        </div>
       </div>
     </div>
 
@@ -967,16 +1707,65 @@ export function renderConnectionPage(): string {
     <script>
       (() => {
         const elements = {
+          modePanel: document.getElementById("mode-panel"),
           status: document.getElementById("connection-status"),
           modeEditBtn: document.getElementById("mode-edit"),
           modeConnectBtn: document.getElementById("mode-connect"),
+          flowToolbar: document.getElementById("flow-toolbar"),
+          flowBackBtn: document.getElementById("flow-back"),
+          flowKicker: document.getElementById("flow-kicker"),
+          flowTitle: document.getElementById("flow-title"),
+          flowSub: document.getElementById("flow-sub"),
+          flowStatus: document.getElementById("flow-status"),
+          stepTrack: document.getElementById("step-track"),
+          sourceKindPanel: document.getElementById("source-kind-panel"),
+          sourceKindContinueBtn: document.getElementById("source-kind-continue"),
+          sourceOptions: Array.from(document.querySelectorAll("[data-provider]")),
+          sourceDetailsPanel: document.getElementById("source-details-panel"),
+          selectedProviderName: document.getElementById("selected-provider-name"),
+          selectedProviderNote: document.getElementById("selected-provider-note"),
+          sourceDetailsTitle: document.getElementById("source-details-title"),
+          sourceDetailsSub: document.getElementById("source-details-sub"),
+          setupModeGuidedBtn: document.getElementById("setup-mode-guided"),
+          setupModeManualBtn: document.getElementById("setup-mode-manual"),
+          setupModeNote: document.getElementById("setup-mode-note"),
+          guidedFields: document.getElementById("guided-connection-fields"),
+          manualConnectionFields: document.getElementById("manual-connection-fields"),
+          guidedFormTitle: document.getElementById("guided-form-title"),
+          guidedFormSubtitle: document.getElementById("guided-form-subtitle"),
+          guidedBuilderTip: document.getElementById("guided-builder-tip"),
+          guidedProviderQuickstart: document.getElementById("guided-provider-quickstart"),
+          guidedTlsQuickstart: document.getElementById("guided-tls-quickstart"),
+          guidedAuthRow: document.getElementById("guided-auth-row"),
+          guidedUsername: document.getElementById("guided-username"),
+          guidedPassword: document.getElementById("guided-password"),
+          guidedHostLabel: document.getElementById("guided-host-label"),
+          guidedHost: document.getElementById("guided-host"),
+          guidedPortWrap: document.getElementById("guided-port-wrap"),
+          guidedPort: document.getElementById("guided-port"),
+          guidedDbLabel: document.getElementById("guided-db-label"),
+          guidedDb: document.getElementById("guided-db"),
+          guidedSchemaWrap: document.getElementById("guided-schema-wrap"),
+          guidedSchema: document.getElementById("guided-schema"),
+          guidedSnowflakeRow: document.getElementById("guided-snowflake-row"),
+          guidedWarehouse: document.getElementById("guided-warehouse"),
+          guidedSslRow: document.getElementById("guided-ssl-row"),
+          guidedSslMode: document.getElementById("guided-ssl-mode"),
+          guidedSslHint: document.getElementById("guided-ssl-hint"),
+          advancedTlsSection: document.getElementById("advanced-tls-section"),
+          advancedTlsTitle: document.getElementById("advanced-tls-title"),
+          advancedTlsOptional: document.getElementById("advanced-tls-optional"),
+          advancedTlsHelp: document.getElementById("advanced-tls-help"),
+          changeProviderBtn: document.getElementById("change-provider"),
           editPanel: document.getElementById("edit-panel"),
-          connectFlowPanel: document.getElementById("connect-flow-panel"),
+          editListPanel: document.getElementById("edit-list-panel"),
           governancePanel: document.getElementById("governance-panel"),
           activatePanel: document.getElementById("activate-panel"),
           stepSource: document.getElementById("step-pill-source"),
           stepGovernance: document.getElementById("step-pill-governance"),
           stepActivate: document.getElementById("step-pill-activate"),
+          connectionsTableBody: document.getElementById("connections-table-body"),
+          editSelectedMeta: document.getElementById("edit-selected-meta"),
           editEmpty: document.getElementById("edit-empty"),
           editContent: document.getElementById("edit-content"),
           editConnectionId: document.getElementById("edit-connection-id"),
@@ -1000,6 +1789,7 @@ export function renderConnectionPage(): string {
           schemaFilter: document.getElementById("schema-filter"),
           searchFilter: document.getElementById("search-filter"),
           tableList: document.getElementById("table-list"),
+          allowlistCount: document.getElementById("allowlist-count"),
           governanceSummary: document.getElementById("governance-summary"),
           sql: document.getElementById("safe-sql"),
           output: document.getElementById("query-output"),
@@ -1025,14 +1815,56 @@ export function renderConnectionPage(): string {
           copyFixScriptBtn: document.getElementById("copy-fix-script"),
           ranFixScriptBtn: document.getElementById("ran-fix-script"),
           validationContainer: document.getElementById("validation-container"),
+          catalogModal: document.getElementById("catalog-modal"),
+          catalogModalTitle: document.getElementById("catalog-modal-title"),
+          catalogModalMessage: document.getElementById("catalog-modal-message"),
+          catalogSpinner: document.getElementById("catalog-spinner"),
+          catalogStatAllowlist: document.getElementById("catalog-stat-allowlist"),
+          catalogStatTables: document.getElementById("catalog-stat-tables"),
+          catalogStatColumns: document.getElementById("catalog-stat-columns"),
+          catalogFootnote: document.getElementById("catalog-footnote"),
+          catalogCloseBtn: document.getElementById("catalog-close"),
+          catalogContinueBtn: document.getElementById("catalog-continue"),
           errorModal: document.getElementById("error-modal"),
           errorTitle: document.getElementById("error-title"),
           errorMessage: document.getElementById("error-message"),
           closeErrorModalBtn: document.getElementById("close-error-modal")
         };
 
+        const PROVIDER_CONFIG = {
+          postgres: {
+            label: "Postgres",
+            note: "Use a Postgres-compatible connection string. This is also the best fit for Neon and similar read replicas.",
+            placeholder: "postgresql://user:pass@host:5432/db?sslmode=require",
+            help: "Credentials never run in the browser. This string is sent to the server, stored encrypted, and used for governed SELECT-only execution."
+          },
+          mysql: {
+            label: "MySQL",
+            note: "Use a MySQL-compatible connection string. The flow stays the same: test, govern, catalogue, then activate.",
+            placeholder: "mysql://user:pass@host:3306/db?sslmode=require",
+            help: "Use a MySQL-compatible connection string. The runtime will validate access before governance."
+          },
+          snowflake: {
+            label: "Snowflake",
+            note: "Use a Snowflake connection string with account, database, schema, and warehouse so we can test access and catalog the governed tables.",
+            placeholder: "snowflake://user:pass@account/db/schema?warehouse=COMPUTE_WH",
+            help: "We will validate access first, then move into allowlist governance and safe-query activation."
+          },
+          bigquery: {
+            label: "BigQuery",
+            note: "Use a BigQuery project and dataset connection string so we can validate the dataset, catalogue it, and activate safe queries.",
+            placeholder: "bigquery://project-id/dataset?credentials_json=...",
+            help: "We will validate the dataset first, then move into allowlist governance and safe-query activation."
+          }
+        };
+
         const state = {
-          mode: "connect",
+          mode: "chooser",
+          connectStep: "source-kind",
+          connectionEntryMode: "guided",
+          selectedProvider: "postgres",
+          selectedConnectionId: null,
+          safeSqlTemplate: "",
           context: null,
           relations: [],
           selected: new Set(),
@@ -1077,43 +1909,362 @@ export function renderConnectionPage(): string {
           state.wizard.source_tested = false;
           state.wizard.source_connected = false;
           state.wizard.governance_saved = false;
+          state.connectionEntryMode = "guided";
+          state.connectStep = "source-kind";
+          state.testResult = null;
+          state.lastValidation = null;
+          state.lastCatalog = null;
+          state.safeSqlTemplate = "";
           elements.governanceSummary.classList.add("panel-hidden");
           elements.validationContainer.innerHTML = "";
           elements.metaBlock.style.display = "none";
           elements.testNotes.innerHTML = "";
-          if (!state.context || !state.context.connected) {
-            state.selected = new Set();
-            state.relations = [];
-            renderSchemaFilter(elements.schemaFilter);
-            renderSchemaFilter(elements.editSchemaFilter);
-            renderAllRelationLists();
+          elements.flowStatus.textContent = "";
+          elements.connectionString.value = "";
+          elements.sql.value = "";
+          state.selected = new Set();
+          state.relations = [];
+          renderSchemaFilter(elements.schemaFilter);
+          renderSchemaFilter(elements.editSchemaFilter);
+          renderAllRelationLists();
+          updateAllowlistCount();
+          setConnectionEntryMode("guided");
+        }
+
+        function getProviderConfig(provider) {
+          return PROVIDER_CONFIG[provider] || PROVIDER_CONFIG.postgres;
+        }
+
+        function setConnectionEntryMode(mode) {
+          state.connectionEntryMode = mode === "manual" ? "manual" : "guided";
+          const guided = state.connectionEntryMode === "guided";
+          elements.setupModeGuidedBtn.classList.toggle("active", guided);
+          elements.setupModeManualBtn.classList.toggle("active", !guided);
+          elements.guidedFields.classList.toggle("panel-hidden", !guided);
+          elements.manualConnectionFields.classList.toggle("panel-hidden", guided);
+          const providerLabel = elements.selectedProviderName.textContent || "selected";
+          elements.setupModeNote.textContent = guided
+            ? "Guided setup builds the " + providerLabel + " connection string for you, URL-encodes credentials safely, and only asks for the fields this database actually needs."
+            : "If you already have a full " + providerLabel + " connection string from your database console or secret manager, paste it here exactly as provided.";
+        }
+
+        function updateGuidedProviderFields() {
+          const provider = state.selectedProvider in PROVIDER_CONFIG ? state.selectedProvider : "postgres";
+          const isPostgres = provider === "postgres";
+          const isMySql = provider === "mysql";
+          const isSnowflake = provider === "snowflake";
+          const isBigQuery = provider === "bigquery";
+
+          elements.guidedAuthRow.classList.toggle("panel-hidden", isBigQuery);
+          elements.guidedPortWrap.classList.toggle("panel-hidden", !(isPostgres || isMySql));
+          elements.guidedSchemaWrap.classList.toggle("panel-hidden", !isSnowflake);
+          elements.guidedSnowflakeRow.classList.toggle("panel-hidden", !isSnowflake);
+          elements.guidedSslRow.classList.toggle("panel-hidden", !(isPostgres || isMySql));
+          elements.advancedTlsSection.classList.toggle("panel-hidden", !(isPostgres || isMySql));
+
+          if (isPostgres) {
+            elements.sourceDetailsTitle.textContent = "Step A2 - Set up your Postgres connection";
+            elements.sourceDetailsSub.textContent = "Fill in the Postgres connection details, validate access, and connect the source before you govern the allowlist.";
+            elements.guidedFormTitle.textContent = "Postgres connection details";
+            elements.guidedFormSubtitle.textContent = "Use the values from your Postgres, Supabase, or Neon connection screen. We will build the URI for you.";
+            elements.guidedHostLabel.textContent = "Host";
+            elements.guidedHost.placeholder = "db.company.com";
+            elements.guidedPort.placeholder = "5432";
+            elements.guidedDbLabel.textContent = "Database";
+            elements.guidedDb.placeholder = "analytics";
+            elements.guidedBuilderTip.textContent = "Use plain credentials here. We will URL-encode usernames and passwords for you before sending the connection to the API.";
+            elements.guidedProviderQuickstart.textContent = "For Supabase, copy Host, Port, Database, Username, and Password from the connection details page. There is no warehouse for Postgres.";
+            elements.guidedTlsQuickstart.textContent = "For Supabase or Neon, leave Custom CA empty and keep SSL mode on Automatic or Require TLS. Use Disable TLS only for localhost or private dev Postgres that does not support SSL.";
+            elements.guidedSslHint.querySelector("span").textContent = "Use Disable TLS only for local or private dev Postgres instances that do not support SSL.";
+            elements.advancedTlsTitle.textContent = "Advanced TLS";
+            elements.advancedTlsOptional.textContent = "(optional)";
+            setAdvancedTlsHelp('If you see TLS errors like "self-signed certificate in certificate chain", paste your org or DB root CA here. It is used only for this session.');
+            elements.testBtn.textContent = "Test Postgres connection";
+            elements.connectSourceBtn.textContent = "Connect Postgres source";
+            elements.name.placeholder = "Supabase Prod Reader";
+            elements.guidedUsername.placeholder = "postgres.xxxxx";
+            elements.guidedPassword.placeholder = "********";
+            if (!getTrimmedValue(elements.guidedPort)) {
+              elements.guidedPort.value = "5432";
+            }
+          } else if (isMySql) {
+            elements.sourceDetailsTitle.textContent = "Step A2 - Set up your MySQL connection";
+            elements.sourceDetailsSub.textContent = "Fill in the MySQL connection details, validate access, and connect the source before you govern the allowlist.";
+            elements.guidedFormTitle.textContent = "MySQL connection details";
+            elements.guidedFormSubtitle.textContent = "Use the values from your MySQL read-only connection screen. We will build the URI for you.";
+            elements.guidedHostLabel.textContent = "Host";
+            elements.guidedHost.placeholder = "mysql.company.com";
+            elements.guidedPort.placeholder = "3306";
+            elements.guidedDbLabel.textContent = "Database";
+            elements.guidedDb.placeholder = "analytics";
+            elements.guidedBuilderTip.textContent = "Guided setup will build a MySQL URI for you and keep special characters in credentials properly encoded.";
+            elements.guidedProviderQuickstart.textContent = "Copy Host, Port, Database, Username, and Password from your MySQL read-only connection details.";
+            elements.guidedTlsQuickstart.textContent = "Use Require TLS for managed MySQL. Use Disable TLS only for local or private dev MySQL that does not support SSL.";
+            elements.guidedSslHint.querySelector("span").textContent = "Use Disable TLS only for local or private dev MySQL instances that do not support SSL.";
+            elements.advancedTlsTitle.textContent = "Advanced TLS";
+            elements.advancedTlsOptional.textContent = "(optional)";
+            setAdvancedTlsHelp('If your MySQL server uses a custom CA chain, paste the CA certificate here for this session.');
+            elements.testBtn.textContent = "Test MySQL connection";
+            elements.connectSourceBtn.textContent = "Connect MySQL source";
+            elements.name.placeholder = "MySQL Reporting Replica";
+            elements.guidedUsername.placeholder = "reader";
+            elements.guidedPassword.placeholder = "********";
+            if (!getTrimmedValue(elements.guidedPort)) {
+              elements.guidedPort.value = "3306";
+            }
+          } else if (isSnowflake) {
+            elements.sourceDetailsTitle.textContent = "Step A2 - Set up your Snowflake connection";
+            elements.sourceDetailsSub.textContent = "Fill in the Snowflake account details, validate access, and connect the source before you govern the allowlist.";
+            elements.guidedFormTitle.textContent = "Snowflake connection details";
+            elements.guidedFormSubtitle.textContent = "Use your Snowflake account, database, schema, and warehouse. We will build the Snowflake connection string for you.";
+            elements.guidedHostLabel.textContent = "Account";
+            elements.guidedHost.placeholder = "acme or acme.us-east-1";
+            elements.guidedDbLabel.textContent = "Database";
+            elements.guidedDb.placeholder = "TESTDB";
+            elements.guidedSchema.placeholder = "PUBLIC";
+            elements.guidedBuilderTip.textContent = "Enter your Snowflake username, password, account, database, schema, and warehouse. We will build the Snowflake connection string for you.";
+            elements.guidedProviderQuickstart.textContent = "Warehouse is a Snowflake concept only. Get it from your Snowflake admin or from the worksheet/connection details your team uses, for example COMPUTE_WH.";
+            elements.guidedTlsQuickstart.textContent = "Snowflake handles transport security itself in the connector. You do not need the Postgres/MySQL SSL mode dropdown here.";
+            elements.testBtn.textContent = "Test Snowflake connection";
+            elements.connectSourceBtn.textContent = "Connect Snowflake source";
+            elements.name.placeholder = "Snowflake Finance Reader";
+            elements.guidedUsername.placeholder = "reader";
+            elements.guidedPassword.placeholder = "********";
+          } else {
+            elements.sourceDetailsTitle.textContent = "Step A2 - Set up your BigQuery connection";
+            elements.sourceDetailsSub.textContent = "Fill in the BigQuery project details, validate access, and connect the source before you govern the allowlist.";
+            elements.guidedFormTitle.textContent = "BigQuery connection details";
+            elements.guidedFormSubtitle.textContent = "Use your project and dataset. If you need custom auth details, use the manual connection string mode.";
+            elements.guidedHostLabel.textContent = "Project ID";
+            elements.guidedHost.placeholder = "demo-project";
+            elements.guidedDbLabel.textContent = "Dataset";
+            elements.guidedDb.placeholder = "analytics";
+            elements.guidedBuilderTip.textContent = "Use your BigQuery project and dataset here. Guided mode keeps this simple. If you need credentials_json or other advanced auth options, switch to Paste connection string.";
+            elements.guidedProviderQuickstart.textContent = "For BigQuery guided setup, only Project ID and Dataset are shown. If your server does not already have Application Default Credentials, use the manual connection string mode.";
+            elements.guidedTlsQuickstart.textContent = "BigQuery does not use the Postgres/MySQL SSL mode dropdown or Advanced TLS section.";
+            elements.testBtn.textContent = "Test BigQuery connection";
+            elements.connectSourceBtn.textContent = "Connect BigQuery source";
+            elements.name.placeholder = "BigQuery Marketing Dataset";
+          }
+          setConnectionEntryMode(state.connectionEntryMode || "guided");
+        }
+
+        function getTrimmedValue(input) {
+          return String((input && input.value) || "").trim();
+        }
+
+        function setAdvancedTlsHelp(copy) {
+          elements.advancedTlsHelp.innerHTML =
+            escapeHtml(copy) +
+            ' Need help finding it? <a href="/connect/guide#tls-ca-corporate" target="_blank" rel="noreferrer">Open the TLS CA guide</a>.';
+        }
+
+        function buildGuidedConnectionString(provider) {
+          if (provider === "bigquery") {
+            const projectId = getTrimmedValue(elements.guidedHost);
+            const dataset = getTrimmedValue(elements.guidedDb);
+            if (!projectId || !dataset) {
+              throw new Error("Project ID and dataset are required for BigQuery.");
+            }
+            const url = new URL("bigquery://" + projectId);
+            url.pathname = "/" + dataset.replace(/^[/]+/, "");
+            return url.toString();
+          }
+
+          const username = getTrimmedValue(elements.guidedUsername);
+          const password = String((elements.guidedPassword && elements.guidedPassword.value) || "");
+          const host = getTrimmedValue(elements.guidedHost);
+          const database = getTrimmedValue(elements.guidedDb);
+
+          if (!host || !database) {
+            throw new Error("Host/account and database are required.");
+          }
+          if (!username || !password) {
+            throw new Error("Username and password are required.");
+          }
+
+          if (provider === "snowflake") {
+            const url = new URL("snowflake://placeholder");
+            url.username = username;
+            url.password = password;
+            url.hostname = host;
+            const schema = getTrimmedValue(elements.guidedSchema) || "PUBLIC";
+            url.pathname = "/" + database.replace(/^[/]+/, "") + "/" + schema.replace(/^[/]+/, "");
+            const warehouse = getTrimmedValue(elements.guidedWarehouse);
+            if (warehouse) {
+              url.searchParams.set("warehouse", warehouse);
+            }
+            if (!warehouse) {
+              throw new Error("Warehouse is required for Snowflake.");
+            }
+            return url.toString();
+          }
+
+          const isMySql = provider === "mysql";
+          const url = new URL((isMySql ? "mysql" : "postgresql") + "://placeholder");
+          url.username = username;
+          url.password = password;
+          url.hostname = host;
+          const port = getTrimmedValue(elements.guidedPort);
+          if (port) {
+            url.port = port;
+          }
+          url.pathname = "/" + database.replace(/^[/]+/, "");
+          const sslMode = getTrimmedValue(elements.guidedSslMode);
+          if (sslMode && sslMode !== "automatic") {
+            url.searchParams.set("sslmode", sslMode);
+          }
+          return url.toString();
+        }
+
+        function resolveConnectionInput() {
+          const provider = String(elements.provider.value || state.selectedProvider || "postgres").trim().toLowerCase();
+          const connectionString =
+            state.connectionEntryMode === "manual"
+              ? getTrimmedValue(elements.connectionString)
+              : buildGuidedConnectionString(provider);
+
+          if (!connectionString) {
+            throw new Error("Connection details are required.");
+          }
+
+          return {
+            provider,
+            connection_string: connectionString,
+            tls_ca_pem: getTrimmedValue(elements.tlsCaPem)
+          };
+        }
+
+        function enhanceConnectionError(message) {
+          const provider = String(elements.provider.value || state.selectedProvider || "postgres").trim().toLowerCase();
+          if (
+            state.connectionEntryMode === "guided" &&
+            (provider === "postgres" || provider === "mysql") &&
+            /does not support ssl connections/i.test(message) &&
+            getTrimmedValue(elements.guidedSslMode) !== "disable"
+          ) {
+            return message + " Switch SSL mode to Disable TLS (local/dev) and retry.";
+          }
+          return message;
+        }
+
+        function updateProviderSelectionUi() {
+          const provider = state.selectedProvider in PROVIDER_CONFIG ? state.selectedProvider : "postgres";
+          state.selectedProvider = provider;
+          elements.provider.value = provider;
+          const config = getProviderConfig(provider);
+          elements.selectedProviderName.textContent = config.label;
+          elements.selectedProviderNote.textContent = config.note;
+          elements.connectionString.placeholder = config.placeholder;
+          const help = document.getElementById("connection-string-help");
+          if (help) {
+            help.textContent = config.help;
+          }
+          updateGuidedProviderFields();
+          setConnectionEntryMode(state.connectionEntryMode || "guided");
+          for (const option of elements.sourceOptions) {
+            option.classList.toggle("selected", option.dataset.provider === provider);
+          }
+        }
+
+        function updateAllowlistCount() {
+          const count = state.selected instanceof Set ? state.selected.size : 0;
+          elements.allowlistCount.textContent = count + " table" + (count === 1 ? "" : "s") + " selected for governance";
+        }
+
+        function buildSafeSqlTemplate() {
+          const selectedRelations = Array.from(state.selected || []);
+          const relation =
+            selectedRelations.length > 0
+              ? selectedRelations[0]
+              : state.context && Array.isArray(state.context.allowed_relations) && state.context.allowed_relations.length > 0
+                ? String(state.context.allowed_relations[0] || "").toLowerCase()
+                : "";
+
+          if (!relation) {
+            return "";
+          }
+
+          return "SELECT COUNT(*) AS row_count FROM " + relation;
+        }
+
+        function syncSafeSqlTemplate(force) {
+          const nextTemplate = buildSafeSqlTemplate();
+          const currentValue = String(elements.sql.value || "").trim();
+          const previousTemplate = String(state.safeSqlTemplate || "").trim();
+          const shouldReplace =
+            force ||
+            currentValue.length === 0 ||
+            currentValue === previousTemplate ||
+            (currentValue.startsWith("SELECT * FROM public.") && currentValue.endsWith(" LIMIT 50"));
+
+          state.safeSqlTemplate = nextTemplate;
+
+          if (shouldReplace) {
+            elements.sql.value = nextTemplate;
+          }
+        }
+
+        function setConnectStep(step) {
+          state.connectStep = step;
+          elements.sourceKindPanel.classList.toggle("panel-hidden", step !== "source-kind");
+          elements.sourceDetailsPanel.classList.toggle("panel-hidden", step !== "source-details");
+          elements.governancePanel.classList.toggle("panel-hidden", step !== "governance");
+          elements.activatePanel.classList.toggle("panel-hidden", step !== "activate");
+
+          if (step === "governance") {
+            setWizardStep("governance");
+            elements.flowKicker.textContent = "Governance";
+            elements.flowTitle.textContent = "Choose the tables that belong on the governed allowlist";
+            elements.flowSub.textContent = "Save the allowlist to validate access, catalogue the source, and prepare activation.";
+          } else if (step === "activate") {
+            setWizardStep("activate");
+            elements.flowKicker.textContent = "Activate";
+            elements.flowTitle.textContent = "Run a safe query, review the output, and submit the source";
+            elements.flowSub.textContent = "Activation is the final check before the source is available to chat and reports.";
+          } else if (step === "source-details") {
+            setWizardStep("source");
+            elements.flowKicker.textContent = "Source";
+            elements.flowTitle.textContent = "Test the connection string and connect the source";
+            elements.flowSub.textContent = "Validate access first, then connect the source before you govern the allowlist.";
+          } else {
+            setWizardStep("source");
+            elements.flowKicker.textContent = "Source";
+            elements.flowTitle.textContent = "Choose your source type";
+            elements.flowSub.textContent = "Start by picking the database family you want to connect.";
           }
         }
 
         function setMode(mode) {
-          state.mode = mode === "edit" ? "edit" : "connect";
+          state.mode = mode === "edit" ? "edit" : mode === "connect" ? "connect" : "chooser";
+          const chooserMode = state.mode === "chooser";
+          const connectMode = state.mode === "connect";
           const editMode = state.mode === "edit";
+
           elements.modeEditBtn.classList.toggle("active", editMode);
-          elements.modeConnectBtn.classList.toggle("active", !editMode);
+          elements.modeConnectBtn.classList.toggle("active", connectMode);
+          elements.modePanel.classList.toggle("panel-hidden", !chooserMode);
+          elements.flowToolbar.classList.toggle("panel-hidden", chooserMode);
+          elements.stepTrack.classList.toggle("panel-hidden", !connectMode);
+          elements.editListPanel.classList.toggle("panel-hidden", !editMode);
           elements.editPanel.classList.toggle("panel-hidden", !editMode);
-          elements.connectFlowPanel.classList.toggle("panel-hidden", editMode);
-          elements.governancePanel.classList.toggle(
-            "panel-hidden",
-            editMode || !state.wizard.source_connected
-          );
-          elements.activatePanel.classList.toggle(
-            "panel-hidden",
-            editMode || !state.wizard.governance_saved
-          );
+
+          if (connectMode) {
+            setConnectStep(state.connectStep);
+          } else {
+            elements.sourceKindPanel.classList.add("panel-hidden");
+            elements.sourceDetailsPanel.classList.add("panel-hidden");
+            elements.governancePanel.classList.add("panel-hidden");
+            elements.activatePanel.classList.add("panel-hidden");
+          }
 
           if (editMode) {
-            setWizardStep("source");
-          } else if (state.wizard.governance_saved) {
-            setWizardStep("activate");
-          } else if (state.wizard.source_connected) {
-            setWizardStep("governance");
-          } else {
-            setWizardStep("source");
+            elements.flowKicker.textContent = "Edit";
+            elements.flowTitle.textContent = "Review connected databases and manage allowlists";
+            elements.flowSub.textContent = "Choose a connected source below to inspect its coverage, update the allowlist, or disconnect it.";
+            elements.flowStatus.textContent = state.context && state.context.connected ? "1 active source" : "No active source";
+          } else if (chooserMode) {
+            elements.flowStatus.textContent = "";
           }
         }
 
@@ -1321,6 +2472,8 @@ export function renderConnectionPage(): string {
               } else {
                 state.selected.delete(qnLower);
               }
+              updateAllowlistCount();
+              syncSafeSqlTemplate(false);
             });
 
             const text = document.createElement("span");
@@ -1358,38 +2511,68 @@ export function renderConnectionPage(): string {
         function renderAllRelationLists() {
           renderRelations(elements.tableList, elements.schemaFilter.value, elements.searchFilter.value);
           renderRelations(elements.editTableList, elements.editSchemaFilter.value, elements.editSearchFilter.value);
+          updateAllowlistCount();
+          syncSafeSqlTemplate(false);
         }
 
-        function setConnectionStatus(context) {
+        function getCatalogStats(catalog) {
+          const tables = catalog && Array.isArray(catalog.tables) ? catalog.tables.length : 0;
+          const columns = catalog && Array.isArray(catalog.tables)
+            ? catalog.tables.reduce((sum, table) => {
+                return sum + (table && Array.isArray(table.columns) ? table.columns.length : 0);
+              }, 0)
+            : 0;
+          return { tables, columns };
+        }
+
+        function renderConnectionsTable() {
+          const body = elements.connectionsTableBody;
+          body.innerHTML = "";
+
+          if (!state.context || !state.context.connected) {
+            body.innerHTML = '<tr><td class="connections-table-empty" colspan="5">No connected databases yet.</td></tr>';
+            return;
+          }
+
+          const stats = getCatalogStats(state.context.catalog);
+          const row = document.createElement("tr");
+          const isSelected = state.selectedConnectionId && state.selectedConnectionId === state.context.connection_id;
+          row.classList.toggle("active", Boolean(isSelected));
+          row.innerHTML =
+            "<td>" + escapeHtml(String(state.context.database || state.context.name || "Unknown")) + "</td>" +
+            "<td>" + escapeHtml(String(state.context.provider || "postgres")) + "</td>" +
+            "<td>" + escapeHtml(String(Array.isArray(state.context.allowed_relations) ? state.context.allowed_relations.length : 0)) + " tables</td>" +
+            "<td>" + escapeHtml(String(stats.tables)) + " tables / " + escapeHtml(String(stats.columns)) + " columns</td>" +
+            "<td>" + escapeHtml(state.context.connected_at ? new Date(state.context.connected_at).toLocaleString() : "-") + "</td>";
+          row.addEventListener("click", () => {
+            state.selectedConnectionId = state.context ? state.context.connection_id : null;
+            populateEditDetails(state.context);
+            renderConnectionsTable();
+          });
+          body.appendChild(row);
+        }
+
+        function populateEditDetails(context) {
           if (!context || !context.connected) {
-            elements.status.textContent = "No active runtime connection.";
+            state.selectedConnectionId = null;
+            elements.editSelectedMeta.textContent = "Choose a connected source above to review its details.";
             elements.editEmpty.classList.remove("panel-hidden");
             elements.editContent.classList.add("panel-hidden");
             return;
           }
 
-          const source = typeof context.source === "string" ? context.source : "runtime";
+          const stats = getCatalogStats(context.catalog);
           const provider = typeof context.provider === "string" ? context.provider : "postgres";
           const db = context.database || context.name || "unknown";
-          const tableCount = Array.isArray(context.allowed_relations) ? context.allowed_relations.length : 0;
-          const businessId =
-            context &&
-            context.catalog &&
-            typeof context.catalog.business_id === "string" &&
-            context.catalog.business_id.length > 0
-              ? context.catalog.business_id
-              : "";
-          elements.status.textContent =
-            "Connected: " +
-            db +
-            " | provider: " +
+          elements.editSelectedMeta.textContent =
             provider +
-            " | source: " +
-            source +
-            " | allowlisted: " +
-            tableCount +
-            (businessId ? " | business_id: " + businessId : "");
-
+            " | " +
+            db +
+            " | " +
+            (Array.isArray(context.allowed_relations) ? context.allowed_relations.length : 0) +
+            " allowlisted tables | " +
+            stats.columns +
+            " catalogued columns";
           elements.editEmpty.classList.add("panel-hidden");
           elements.editContent.classList.remove("panel-hidden");
           elements.editConnectionId.textContent = String(context.connection_id || "-");
@@ -1397,6 +2580,42 @@ export function renderConnectionPage(): string {
           elements.editDatabase.textContent = String(db || "-");
           elements.editConnectedAt.textContent = context.connected_at ? new Date(context.connected_at).toLocaleString() : "-";
           elements.editConnectionString.textContent = maskConnectionString(elements.connectionString.value);
+        }
+
+        function setConnectionStatus(context) {
+          renderConnectionsTable();
+
+          if (!context || !context.connected) {
+            elements.status.textContent = "No active runtime connection. Choose connect to start a new source, or return later to edit one once it is active.";
+            syncSafeSqlTemplate(true);
+            if (state.mode === "edit") {
+              populateEditDetails(null);
+            }
+            return;
+          }
+
+          const source = typeof context.source === "string" ? context.source : "runtime";
+          const provider = typeof context.provider === "string" ? context.provider : "postgres";
+          const db = context.database || context.name || "unknown";
+          const tableCount = Array.isArray(context.allowed_relations) ? context.allowed_relations.length : 0;
+          const stats = getCatalogStats(context.catalog);
+          elements.status.textContent =
+            "1 active source: " +
+            db +
+            " | provider: " +
+            provider +
+            " | source: " +
+            source +
+            " | allowlisted: " +
+            tableCount +
+            " | catalogued columns: " +
+            stats.columns;
+
+          if (state.mode === "edit" && state.selectedConnectionId) {
+            populateEditDetails(context);
+          }
+
+          syncSafeSqlTemplate(false);
         }
 
         function showGovernanceSummary(validation, catalog) {
@@ -1450,6 +2669,36 @@ export function renderConnectionPage(): string {
           elements.governanceSummary.classList.remove("panel-hidden");
         }
 
+        function openCatalogModalPending() {
+          elements.catalogModalTitle.textContent = "Cataloging your governed source";
+          elements.catalogModalMessage.textContent = "We are validating the allowlist, indexing the selected tables, and preparing the source for activation.";
+          elements.catalogSpinner.style.display = "";
+          elements.catalogStatAllowlist.textContent = String(state.selected.size);
+          elements.catalogStatTables.textContent = "0";
+          elements.catalogStatColumns.textContent = "0";
+          elements.catalogFootnote.textContent = "This step prepares the governed catalog used by the planner, analyst, and reports.";
+          elements.catalogCloseBtn.classList.add("panel-hidden");
+          elements.catalogContinueBtn.classList.add("panel-hidden");
+          openModal(elements.catalogModal);
+        }
+
+        function completeCatalogModal(validation, catalog) {
+          const stats = getCatalogStats(catalog);
+          elements.catalogModalTitle.textContent = "Catalog ready for activation";
+          elements.catalogModalMessage.textContent = validation && validation.summary
+            ? String(validation.summary)
+            : "The governed source has been validated and catalogued.";
+          elements.catalogSpinner.style.display = "none";
+          elements.catalogStatAllowlist.textContent = String(state.selected.size);
+          elements.catalogStatTables.textContent = String(stats.tables);
+          elements.catalogStatColumns.textContent = String(stats.columns);
+          elements.catalogFootnote.textContent = catalog && typeof catalog.business_id === "string" && catalog.business_id
+            ? "Business id: " + catalog.business_id + ". Continue when you are ready to run the safe activation query."
+            : "Continue when you are ready to run the safe activation query.";
+          elements.catalogCloseBtn.classList.remove("panel-hidden");
+          elements.catalogContinueBtn.classList.remove("panel-hidden");
+        }
+
         function renderTestNotes(result) {
           elements.testNotes.innerHTML = "";
 
@@ -1498,10 +2747,12 @@ export function renderConnectionPage(): string {
           }
 
           state.context = context;
+          state.selectedConnectionId = null;
           state.testResult = null;
           state.wizard.source_tested = false;
           state.wizard.source_connected = false;
           state.wizard.governance_saved = false;
+          state.connectStep = "source-kind";
           setConnectionStatus(context);
 
           const tables = await request("/api/db/tables", "GET").catch(() => null);
@@ -1509,19 +2760,15 @@ export function renderConnectionPage(): string {
           state.relations = relations;
           state.selected = new Set(Array.isArray(context.allowed_relations) ? context.allowed_relations.map((v) => String(v).toLowerCase()) : []);
           if (context && typeof context.provider === "string") {
-            elements.provider.value = context.provider;
+            state.selectedProvider = context.provider;
           }
 
+          updateProviderSelectionUi();
           renderSchemaFilter(elements.schemaFilter);
           renderSchemaFilter(elements.editSchemaFilter);
           renderAllRelationLists();
           renderTestNotes(null);
-
-          if (context && context.connected) {
-            setMode("edit");
-          } else {
-            setMode("connect");
-          }
+          setMode("chooser");
         }
 
         function openFixModal() {
@@ -1546,12 +2793,100 @@ export function renderConnectionPage(): string {
           }
         });
 
-        elements.modeEditBtn.addEventListener("click", () => setMode("edit"));
-        elements.modeConnectBtn.addEventListener("click", () => {
-          if (state.mode !== "connect") {
-            resetConnectWizardState();
-          }
+        elements.catalogCloseBtn.addEventListener("click", () => closeModal(elements.catalogModal));
+        elements.catalogContinueBtn.addEventListener("click", () => {
+          closeModal(elements.catalogModal);
+          state.wizard.governance_saved = true;
           setMode("connect");
+          setConnectStep("activate");
+        });
+        elements.catalogModal.addEventListener("click", (event) => {
+          if (event.target === elements.catalogModal && !elements.catalogContinueBtn.classList.contains("panel-hidden")) {
+            closeModal(elements.catalogModal);
+          }
+        });
+
+        elements.modeEditBtn.addEventListener("click", () => {
+          setMode("edit");
+          populateEditDetails(null);
+        });
+        elements.modeConnectBtn.addEventListener("click", () => {
+          resetConnectWizardState();
+          updateProviderSelectionUi();
+          setMode("connect");
+          setConnectStep("source-kind");
+        });
+
+        elements.sourceOptions.forEach((option) => {
+          option.addEventListener("click", () => {
+            const provider = option.dataset.provider;
+            if (!provider) {
+              return;
+            }
+            state.selectedProvider = provider;
+            updateProviderSelectionUi();
+          });
+        });
+
+        elements.guidedHost.addEventListener("input", () => {
+          const host = getTrimmedValue(elements.guidedHost).toLowerCase();
+          const provider = String(elements.provider.value || state.selectedProvider || "postgres").trim().toLowerCase();
+          if (provider === "postgres" && host.includes(".pooler.supabase.com")) {
+            const currentPort = getTrimmedValue(elements.guidedPort);
+            if (!currentPort || currentPort === "5432") {
+              elements.guidedPort.value = "6543";
+            }
+          }
+        });
+
+        elements.sourceKindContinueBtn.addEventListener("click", () => {
+          updateProviderSelectionUi();
+          setMode("connect");
+          setConnectStep("source-details");
+        });
+
+        elements.setupModeGuidedBtn.addEventListener("click", () => {
+          setConnectionEntryMode("guided");
+        });
+
+        elements.setupModeManualBtn.addEventListener("click", () => {
+          setConnectionEntryMode("manual");
+        });
+
+        elements.changeProviderBtn.addEventListener("click", () => {
+          setConnectStep("source-kind");
+        });
+
+        elements.flowBackBtn.addEventListener("click", () => {
+          if (state.mode === "edit") {
+            state.selectedConnectionId = null;
+            populateEditDetails(null);
+            setMode("chooser");
+            return;
+          }
+
+          if (state.mode !== "connect") {
+            setMode("chooser");
+            return;
+          }
+
+          if (state.connectStep === "activate") {
+            setConnectStep("governance");
+            return;
+          }
+
+          if (state.connectStep === "governance") {
+            setConnectStep("source-details");
+            return;
+          }
+
+          if (state.connectStep === "source-details") {
+            setConnectStep("source-kind");
+            return;
+          }
+
+          resetConnectWizardState();
+          setMode("chooser");
         });
 
         elements.schemaFilter.addEventListener("change", () => renderAllRelationLists());
@@ -1561,19 +2896,13 @@ export function renderConnectionPage(): string {
 
         elements.testBtn.addEventListener("click", async () => {
           try {
-            const connectionString = String(elements.connectionString.value || "").trim();
-            if (!connectionString) {
-              throw new Error("Connection string is required.");
-            }
-            const provider = String(elements.provider.value || "postgres").trim().toLowerCase();
-
-            const tlsCaPem = String(elements.tlsCaPem.value || "").trim();
+            const resolved = resolveConnectionInput();
             const body = {
-              connection_string: connectionString,
-              provider
+              connection_string: resolved.connection_string,
+              provider: resolved.provider
             };
-            if (tlsCaPem) {
-              body.tls_ca_pem = tlsCaPem;
+            if (resolved.tls_ca_pem) {
+              body.tls_ca_pem = resolved.tls_ca_pem;
             }
 
             const result = await request("/api/db/test", "POST", body);
@@ -1593,16 +2922,17 @@ export function renderConnectionPage(): string {
               elements.metaBlock.style.display = "none";
             }
 
-            elements.editConnectionString.textContent = maskConnectionString(connectionString);
+            elements.editConnectionString.textContent = maskConnectionString(resolved.connection_string);
             renderSchemaFilter(elements.schemaFilter);
             renderSchemaFilter(elements.editSchemaFilter);
             renderAllRelationLists();
             renderTestNotes(result);
-            setWizardStep("source");
+            elements.flowStatus.textContent = "Connection test complete";
             setMode("connect");
+            setConnectStep("source-details");
             showOutput(result);
           } catch (error) {
-            const message = error instanceof Error ? error.message : "Unknown error";
+            const message = enhanceConnectionError(error instanceof Error ? error.message : "Unknown error");
             showOutput(message);
             showError(message, "Test connection failed");
           }
@@ -1614,43 +2944,14 @@ export function renderConnectionPage(): string {
               throw new Error("Run Step A test connection first.");
             }
 
-            const connectionString = String(elements.connectionString.value || "").trim();
-            if (!connectionString) {
-              throw new Error("Connection string is required.");
-            }
-            const provider = String(elements.provider.value || "postgres").trim().toLowerCase();
-
-            if (state.selected.size === 0) {
-              const recommended =
-                state.testResult && Array.isArray(state.testResult.recommended_allowlist)
-                  ? state.testResult.recommended_allowlist
-                  : [];
-              if (recommended.length > 0) {
-                state.selected = new Set(recommended.map((entry) => String(entry).toLowerCase()));
-              }
-            }
-            if (state.selected.size === 0) {
-              const ok = (state.relations || [])
-                .filter((relation) => relation && relation.status === "OK")
-                .map((relation) => qualifiedName(relation).toLowerCase())
-                .filter((v) => v.length > 0);
-              if (ok.length > 0) {
-                state.selected = new Set(ok);
-              }
-            }
-            if (state.selected.size === 0) {
-              throw new Error("Select at least one table/view before connecting.");
-            }
-
-            const tlsCaPem = String(elements.tlsCaPem.value || "").trim();
+            const resolved = resolveConnectionInput();
             const body = {
               name: String(elements.name.value || "").trim() || undefined,
-              connection_string: connectionString,
-              provider,
-              allowed_relations: Array.from(state.selected)
+              connection_string: resolved.connection_string,
+              provider: resolved.provider
             };
-            if (tlsCaPem) {
-              body.tls_ca_pem = tlsCaPem;
+            if (resolved.tls_ca_pem) {
+              body.tls_ca_pem = resolved.tls_ca_pem;
             }
 
             const context = await request("/api/db/connect", "POST", body);
@@ -1666,18 +2967,19 @@ export function renderConnectionPage(): string {
                 ? context.allowed_relations.map((v) => String(v).toLowerCase())
                 : []
             );
-            elements.editConnectionString.textContent = maskConnectionString(connectionString);
+            elements.editConnectionString.textContent = maskConnectionString(resolved.connection_string);
             renderSchemaFilter(elements.schemaFilter);
             renderSchemaFilter(elements.editSchemaFilter);
             renderAllRelationLists();
+            elements.flowStatus.textContent = "Source connected";
             setMode("connect");
-            setWizardStep("governance");
+            setConnectStep("governance");
             showOutput({
-              message: "Source connected. Step B governance is now unlocked.",
+              message: "Source connected. Governance is now ready.",
               connection_id: context.connection_id || null
             });
           } catch (error) {
-            const message = error instanceof Error ? error.message : "Unknown error";
+            const message = enhanceConnectionError(error instanceof Error ? error.message : "Unknown error");
             showOutput(message);
             showError(message, "Connect source failed");
           }
@@ -1713,6 +3015,8 @@ export function renderConnectionPage(): string {
               throw new Error("Select at least one table/view for your allowlist.");
             }
 
+            openCatalogModalPending();
+
             const context = await request("/api/db/allowlist", "POST", {
               allowed_relations: Array.from(state.selected)
             });
@@ -1733,9 +3037,10 @@ export function renderConnectionPage(): string {
             const catalog = await request("/api/db/catalogue", "POST", {});
             state.lastCatalog = catalog;
             showGovernanceSummary(validation, catalog);
+            completeCatalogModal(validation, catalog);
 
             if (!validation.ok) {
-              showError("Governance saved, but some tables/columns failed validation. Open Fix-it script and re-test.", "Validation warning");
+              elements.catalogFootnote.textContent = "Some tables or columns still have validation warnings. You can continue to activate, but review the fix-it script before final rollout.";
             }
 
             showOutput({
@@ -1744,11 +3049,8 @@ export function renderConnectionPage(): string {
               cataloged_at: catalog ? catalog.cataloged_at : null,
               business_id: catalog ? catalog.business_id : null
             });
-
-            state.wizard.governance_saved = true;
-            setMode("connect");
-            setWizardStep("activate");
           } catch (error) {
+            closeModal(elements.catalogModal);
             const message = error instanceof Error ? error.message : "Unknown error";
             showOutput(message);
             showError(message, "Governance step failed");
@@ -1911,20 +3213,14 @@ export function renderConnectionPage(): string {
 
         elements.ranFixScriptBtn.addEventListener("click", async () => {
           try {
-            const connectionString = String(elements.connectionString.value || "").trim();
-            if (!connectionString) {
-              throw new Error("Re-enter the connection string (we don't store it in the browser).");
-            }
-            const provider = String(elements.provider.value || "postgres").trim().toLowerCase();
-
-            const tlsCaPem = String(elements.tlsCaPem.value || "").trim();
+            const resolved = resolveConnectionInput();
             elements.fixStatus.textContent = "Re-testing...";
             const body = {
-              connection_string: connectionString,
-              provider
+              connection_string: resolved.connection_string,
+              provider: resolved.provider
             };
-            if (tlsCaPem) {
-              body.tls_ca_pem = tlsCaPem;
+            if (resolved.tls_ca_pem) {
+              body.tls_ca_pem = resolved.tls_ca_pem;
             }
             const result = await request("/api/db/test", "POST", body);
 
@@ -1941,7 +3237,7 @@ export function renderConnectionPage(): string {
               elements.metaBlock.style.display = "none";
             }
 
-            elements.editConnectionString.textContent = maskConnectionString(connectionString);
+            elements.editConnectionString.textContent = maskConnectionString(resolved.connection_string);
             renderSchemaFilter(elements.schemaFilter);
             renderSchemaFilter(elements.editSchemaFilter);
             renderAllRelationLists();
@@ -1949,7 +3245,7 @@ export function renderConnectionPage(): string {
 
             elements.fixStatus.textContent = "Re-test complete. You can now save governance and continue.";
           } catch (error) {
-            elements.fixStatus.textContent = error instanceof Error ? error.message : "Re-test failed";
+            elements.fixStatus.textContent = enhanceConnectionError(error instanceof Error ? error.message : "Re-test failed");
           }
         });
 

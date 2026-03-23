@@ -1,6 +1,7 @@
 import type {
   ReportContract,
   ReportRun,
+  ScheduledReportProfile,
   SemanticEntity,
   SemanticField,
   SemanticRelationship,
@@ -14,6 +15,7 @@ import type {
   RagChunkSearchResult,
   RagChunkUpsertRecord,
   ReportContractVersionRecord,
+  ScheduledReportProfileRecord,
   SemanticCollectionName,
   SemanticCollections,
   StoreRequestContext
@@ -36,6 +38,7 @@ export class InMemoryMetadataStore implements MetadataStore {
   private readonly reportContractsByTenant = new Map<string, Map<string, ReportContract>>();
   private readonly reportRunsByTenant = new Map<string, Map<string, ReportRun[]>>();
   private readonly reportRunsByIdByTenant = new Map<string, Map<string, ReportRun>>();
+  private readonly scheduledProfilesByTenant = new Map<string, Map<string, ScheduledReportProfile>>();
   private readonly contractVersionsByTenant = new Map<string, Map<string, ReportContractVersionRecord[]>>();
   private readonly systemStateByTenant = new Map<string, Map<string, Record<string, unknown>>>();
   private readonly usersByTenant = new Map<string, Map<string, PlatformUserRecord>>();
@@ -157,6 +160,39 @@ export class InMemoryMetadataStore implements MetadataStore {
   async getReportRunById(runId: string, context?: StoreRequestContext): Promise<ReportRun | null> {
     const tenantId = resolveTenantId(context);
     return this.getOrCreateRunsById(tenantId).get(runId) ?? null;
+  }
+
+  async upsertScheduledReportProfile(
+    payload: ScheduledReportProfileRecord,
+    context?: StoreRequestContext
+  ): Promise<ScheduledReportProfileRecord> {
+    const tenantId = resolveTenantId(context, payload.tenant_id);
+    const profiles = this.getOrCreateScheduledProfiles(tenantId);
+    const nowIso = new Date().toISOString();
+    const existing = profiles.get(payload.contract_id);
+    const normalized: ScheduledReportProfileRecord = {
+      ...payload,
+      tenant_id: tenantId,
+      created_at: existing?.created_at ?? nowIso,
+      updated_at: nowIso
+    };
+    profiles.set(payload.contract_id, normalized);
+    return normalized;
+  }
+
+  async listScheduledReportProfiles(context?: StoreRequestContext): Promise<ScheduledReportProfileRecord[]> {
+    const tenantId = resolveTenantId(context);
+    return Array.from(this.getOrCreateScheduledProfiles(tenantId).values()).sort(
+      (left, right) => Date.parse(right.updated_at ?? right.created_at ?? "") - Date.parse(left.updated_at ?? left.created_at ?? "")
+    );
+  }
+
+  async getScheduledReportProfileByContractId(
+    contractId: string,
+    context?: StoreRequestContext
+  ): Promise<ScheduledReportProfileRecord | null> {
+    const tenantId = resolveTenantId(context);
+    return this.getOrCreateScheduledProfiles(tenantId).get(contractId) ?? null;
   }
 
   async setSystemState(
@@ -320,6 +356,7 @@ export class InMemoryMetadataStore implements MetadataStore {
     this.reportContractsByTenant.clear();
     this.reportRunsByTenant.clear();
     this.reportRunsByIdByTenant.clear();
+    this.scheduledProfilesByTenant.clear();
     this.contractVersionsByTenant.clear();
     this.systemStateByTenant.clear();
     this.usersByTenant.clear();
@@ -372,6 +409,17 @@ export class InMemoryMetadataStore implements MetadataStore {
 
     const created = new Map<string, ReportRun>();
     this.reportRunsByIdByTenant.set(tenantId, created);
+    return created;
+  }
+
+  private getOrCreateScheduledProfiles(tenantId: string): Map<string, ScheduledReportProfile> {
+    const existing = this.scheduledProfilesByTenant.get(tenantId);
+    if (existing) {
+      return existing;
+    }
+
+    const created = new Map<string, ScheduledReportProfile>();
+    this.scheduledProfilesByTenant.set(tenantId, created);
     return created;
   }
 

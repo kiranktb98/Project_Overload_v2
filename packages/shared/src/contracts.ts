@@ -58,6 +58,15 @@ export const ReportContractSchema = z.object({
       })
     )
     .default([]),
+  prepared_query_overrides: z
+    .array(
+      z.object({
+        question_id: z.string().min(1).nullable().optional(),
+        question_number: z.number().int().min(1).nullable().optional(),
+        sql: z.string().min(1)
+      })
+    )
+    .default([]),
   kpi_watchlist: z.array(KpiWatchlistItemSchema).default([]),
   guardrails: ReportGuardrailsSchema
 });

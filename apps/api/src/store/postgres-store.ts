@@ -5,6 +5,7 @@ import type {
   Metric,
   ReportContract,
   ReportRun,
+  ScheduledReportProfile,
   SemanticEntity,
   SemanticField,
   SemanticRelationship
@@ -16,6 +17,7 @@ import type {
   RagChunkSearchResult,
   RagChunkUpsertRecord,
   ReportContractVersionRecord,
+  ScheduledReportProfileRecord,
   SemanticCollectionName,
   SemanticCollections,
   StoreRequestContext
@@ -254,6 +256,70 @@ export class PostgresMetadataStore implements MetadataStore {
       LIMIT 1
       `,
       [runId, tenantId]
+    );
+
+    return result.rows.length > 0 ? result.rows[0].payload : null;
+  }
+
+  async upsertScheduledReportProfile(
+    payload: ScheduledReportProfileRecord,
+    context?: StoreRequestContext
+  ): Promise<ScheduledReportProfileRecord> {
+    const tenantId = resolveTenantId(context, payload.tenant_id);
+    const existing = await this.getScheduledReportProfileByContractId(payload.contract_id, { tenant_id: tenantId });
+    const nowIso = new Date().toISOString();
+    const normalizedPayload: ScheduledReportProfile = {
+      ...payload,
+      tenant_id: tenantId,
+      created_at: existing?.created_at ?? payload.created_at ?? nowIso,
+      updated_at: nowIso
+    };
+
+    const result = await this.pool.query<{ payload: ScheduledReportProfile }>(
+      `
+      INSERT INTO scheduled_report_profiles (id, contract_id, tenant_id, payload)
+      VALUES ($1, $2, $3, $4::jsonb)
+      ON CONFLICT (contract_id, tenant_id) DO UPDATE SET
+        id = EXCLUDED.id,
+        payload = EXCLUDED.payload,
+        updated_at = NOW()
+      RETURNING payload
+      `,
+      [normalizedPayload.id, normalizedPayload.contract_id, tenantId, JSON.stringify(normalizedPayload)]
+    );
+
+    return result.rows[0].payload;
+  }
+
+  async listScheduledReportProfiles(context?: StoreRequestContext): Promise<ScheduledReportProfileRecord[]> {
+    const tenantId = resolveTenantId(context);
+    const result = await this.pool.query<{ payload: ScheduledReportProfile }>(
+      `
+      SELECT payload
+      FROM scheduled_report_profiles
+      WHERE tenant_id = $1
+      ORDER BY updated_at DESC, created_at DESC
+      `,
+      [tenantId]
+    );
+
+    return result.rows.map((row) => row.payload);
+  }
+
+  async getScheduledReportProfileByContractId(
+    contractId: string,
+    context?: StoreRequestContext
+  ): Promise<ScheduledReportProfileRecord | null> {
+    const tenantId = resolveTenantId(context);
+    const result = await this.pool.query<{ payload: ScheduledReportProfile }>(
+      `
+      SELECT payload
+      FROM scheduled_report_profiles
+      WHERE contract_id = $1
+        AND tenant_id = $2
+      LIMIT 1
+      `,
+      [contractId, tenantId]
     );
 
     return result.rows.length > 0 ? result.rows[0].payload : null;
@@ -691,6 +757,21 @@ export class PostgresMetadataStore implements MetadataStore {
         updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
         PRIMARY KEY (state_key, tenant_id)
       );
+    `);
+    await this.pool.query(`
+      CREATE TABLE IF NOT EXISTS scheduled_report_profiles (
+        id TEXT PRIMARY KEY,
+        contract_id TEXT NOT NULL,
+        tenant_id TEXT NOT NULL DEFAULT '${DEFAULT_TENANT_ID}',
+        payload JSONB NOT NULL,
+        created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+        updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+        UNIQUE (contract_id, tenant_id)
+      );
+    `);
+    await this.pool.query(`
+      CREATE INDEX IF NOT EXISTS scheduled_report_profiles_updated_idx
+        ON scheduled_report_profiles(tenant_id, updated_at DESC, created_at DESC);
     `);
     await this.pool.query(`
       CREATE TABLE IF NOT EXISTS platform_users (

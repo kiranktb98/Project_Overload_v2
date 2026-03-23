@@ -100,8 +100,15 @@ const ChatQuestionRegistrySchema = z.object({
   scope_clarified: z.boolean().default(false)
 });
 
+const PreparedQueryOverrideSchema = z.object({
+  question_id: z.string().min(1).nullable().default(null),
+  question_number: z.number().int().min(1).nullable().default(null),
+  sql: z.string().min(1)
+});
+
 export const ChatStateSchema = z.object({
   draft: ChatDraftSchema,
+  session_title: z.string().nullable().default(null),
   contract_id: z.string().nullable(),
   last_run_id: z.string().nullable(),
   last_query_id: z.string().nullable().default(null),
@@ -203,7 +210,9 @@ export const ChatStateSchema = z.object({
       warnings: z.array(z.string()).default([])
     })
   ).default([]),
+  prepared_query_overrides: z.array(PreparedQueryOverrideSchema).default([]),
   post_run_actions_pending: z.boolean().default(false),
+  scheduled_report_view: z.boolean().default(false),
   report_clarification_active: z.boolean().default(false),
   business_case_active: z.boolean().default(false),
   business_case_candidates: z.array(BusinessCaseCandidateSchema).default([]),
@@ -603,6 +612,7 @@ export function createInitialChatState(): ChatState {
       allowed_schemas: [...DEFAULT_DRAFT.allowed_schemas],
       insight_mode: DEFAULT_DRAFT.insight_mode
     },
+    session_title: null,
     contract_id: null,
     last_run_id: null,
     last_query_id: null,
@@ -630,7 +640,9 @@ export function createInitialChatState(): ChatState {
     planner_summary: null,
     preparation_summary: null,
     prepared_payloads: [],
+    prepared_query_overrides: [],
     post_run_actions_pending: false,
+    scheduled_report_view: false,
     report_clarification_active: false,
     business_case_active: false,
     business_case_candidates: [],
@@ -675,6 +687,7 @@ export function parseChatState(value: unknown): ChatState {
       allowed_schemas: [...parsed.data.draft.allowed_schemas],
       insight_mode: parsed.data.draft.insight_mode ?? "business"
     },
+    session_title: parsed.data.session_title ?? null,
     contract_id: parsed.data.contract_id,
     last_run_id: parsed.data.last_run_id,
     last_query_id: parsed.data.last_query_id ?? null,
@@ -723,7 +736,13 @@ export function parseChatState(value: unknown): ChatState {
     planner_summary: parsed.data.planner_summary ?? null,
     preparation_summary: parsed.data.preparation_summary ?? null,
     prepared_payloads: [...parsed.data.prepared_payloads],
+    prepared_query_overrides: parsed.data.prepared_query_overrides.map((entry) => ({
+      question_id: entry.question_id ?? null,
+      question_number: entry.question_number ?? null,
+      sql: entry.sql
+    })),
     post_run_actions_pending: parsed.data.post_run_actions_pending ?? false,
+    scheduled_report_view: parsed.data.scheduled_report_view ?? false,
     report_clarification_active: parsed.data.report_clarification_active ?? false,
     business_case_active: parsed.data.business_case_active ?? false,
     business_case_candidates: [...(parsed.data.business_case_candidates ?? [])],
@@ -9867,7 +9886,7 @@ async function executePreparation(state: ChatState, apiClient: WebApiClient): Pr
   const nextState = nextStateForGate;
   nextState.prep_pending = false;
 
-  if (!nextState.contract_id) {
+  if (!nextState.contract_id || hasPreparedQueryOverrides(nextState)) {
     try {
       const contract = buildContractPayload(nextState);
       const created = await apiClient.createContract(contract);
@@ -10022,7 +10041,7 @@ async function executeRun(state: ChatState, apiClient: WebApiClient): Promise<Ch
   nextState.pending_query_sql = null;
   nextState.pending_query_limit = null;
 
-  if (!nextState.contract_id) {
+  if (!nextState.contract_id || hasPreparedQueryOverrides(nextState)) {
     try {
       const contract = buildContractPayload(nextState);
       const created = await apiClient.createContract(contract);
@@ -12113,6 +12132,7 @@ function resetPreparedState(state: ChatState): void {
   state.last_orchestrator_decision = null;
   state.preparation_summary = null;
   state.prepared_payloads = [];
+  state.prepared_query_overrides = [];
   resetPostRunFollowupState(state);
   state.awaiting_pdf_confirmation = false;
   state.awaiting_post_run_refinement = false;
@@ -12199,7 +12219,12 @@ function looksLikeReportTitle(lower: string): boolean {
 
 function buildContractPayload(state: ChatState): ReportContractRecord {
   const draft = state.draft;
-  const name = draft.name.trim().length > 0 ? draft.name.trim() : suggestReportName(state);
+  const chatTitle = state.session_title?.trim() ?? "";
+  const name = chatTitle.length > 0 && !/^new chat$/i.test(chatTitle)
+    ? chatTitle
+    : draft.name.trim().length > 0
+      ? draft.name.trim()
+      : suggestReportName(state);
 
   const sql = draft.sql_template.trim();
   if (!/^\s*select\b/i.test(sql)) {
@@ -12233,6 +12258,11 @@ function buildContractPayload(state: ChatState): ReportContractRecord {
         ? q.answer.trim()
         : `[No specific clarification — use best judgment for: ${q.question}]`
     })),
+    prepared_query_overrides: state.prepared_query_overrides.map((entry) => ({
+      question_id: entry.question_id ?? null,
+      question_number: entry.question_number ?? null,
+      sql: entry.sql.trim()
+    })),
     guardrails: {
       evidence_row_cap: 200,
       max_batches: 5,
@@ -12242,6 +12272,10 @@ function buildContractPayload(state: ChatState): ReportContractRecord {
       deny_write: true
     }
   });
+}
+
+function hasPreparedQueryOverrides(state: ChatState): boolean {
+  return state.prepared_query_overrides.some((entry) => entry.sql.trim().length > 0);
 }
 
 function deriveSchemas(relations: string[]): string[] {

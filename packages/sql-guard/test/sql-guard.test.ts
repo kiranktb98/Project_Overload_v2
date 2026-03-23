@@ -96,6 +96,17 @@ describe("allowlist checks", () => {
     ).not.toThrow();
   });
 
+  it("extracts BigQuery backtick-qualified identifiers and normalizes to dataset.table", () => {
+    const sql = "SELECT * FROM `demo-project.analytics.refunds`";
+    expect(extractReferencedRelations(sql)).toEqual(["analytics.refunds"]);
+    expect(() =>
+      assertAllowlistedRelations(sql, ["analytics.refunds"])
+    ).not.toThrow();
+    expect(() =>
+      assertAllowlistedSchemas(sql, ["analytics"])
+    ).not.toThrow();
+  });
+
   it("ignores set-returning functions in FROM", () => {
     const sql = "SELECT day::date FROM generate_series(CURRENT_DATE - interval '6 days', CURRENT_DATE, interval '1 day') AS day";
     expect(extractReferencedRelations(sql)).toEqual([]);
