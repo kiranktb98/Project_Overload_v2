@@ -213,7 +213,7 @@ export function renderChatPage(): string {
       }
 
       .platform-link.active {
-        background: linear-gradient(135deg, rgba(72, 99, 255, 0.9), rgba(89, 92, 255, 0.92) 54%, rgba(109, 208, 255, 0.82));
+        background: rgba(72, 99, 255, 0.9);
         border-color: rgba(151, 191, 255, 0.4);
         color: #f3f8ff;
         box-shadow: 0 14px 28px rgba(67, 93, 222, 0.28);
@@ -371,7 +371,7 @@ export function renderChatPage(): string {
         line-height: 1;
         cursor: pointer;
         color: #d7e6ff;
-        background: linear-gradient(135deg, rgba(17, 42, 104, 0.96), rgba(39, 90, 180, 0.92));
+        background: rgba(28, 66, 150, 0.96);
         box-shadow: 0 10px 20px rgba(38, 78, 164, 0.2);
       }
 
@@ -446,7 +446,7 @@ export function renderChatPage(): string {
         padding: 12px 12px 11px;
         border-radius: 16px;
         border: 1px solid rgba(115, 145, 213, 0.1);
-        background: linear-gradient(180deg, rgba(10, 24, 58, 0.92), rgba(8, 20, 49, 0.92));
+        background: rgba(10, 24, 58, 0.92);
         color: inherit;
         cursor: pointer;
         transition: border-color 130ms ease, transform 130ms ease, background 130ms ease, box-shadow 130ms ease;
@@ -455,7 +455,7 @@ export function renderChatPage(): string {
 
       .history-item.active {
         border-color: rgba(132, 183, 255, 0.34);
-        background: linear-gradient(135deg, rgba(42, 67, 163, 0.92), rgba(19, 38, 102, 0.98));
+        background: rgba(42, 67, 163, 0.92);
         box-shadow:
           inset 0 0 0 1px rgba(134, 168, 255, 0.14),
           0 16px 30px rgba(29, 49, 115, 0.34);
@@ -1375,7 +1375,7 @@ export function renderChatPage(): string {
 
       .schedule-btn.primary {
         border-color: rgba(138, 184, 255, 0.34);
-        background: linear-gradient(135deg, rgba(79, 112, 255, 0.96), rgba(92, 199, 255, 0.88));
+        background: rgba(79, 112, 255, 0.96);
       }
 
       .schedule-inline-hidden {
@@ -1506,7 +1506,7 @@ export function renderChatPage(): string {
         min-height: 52px;
         cursor: pointer;
         color: #ffffff;
-        background: linear-gradient(135deg, #4f87ff, #595eff 58%, #73cfff);
+        background: #4f87ff;
         font-family: "Mona Sans", sans-serif;
         font-weight: 700;
         letter-spacing: 0;
@@ -1547,7 +1547,7 @@ export function renderChatPage(): string {
       .decision-btn {
         border: 1px solid rgba(127, 143, 255, 0.48);
         border-radius: 999px;
-        background: linear-gradient(135deg, #4c40ff, #5f54ff);
+        background: #4c40ff;
         color: #ffffff;
         font-family: "JetBrains Mono", monospace;
         font-size: 0.73rem;
@@ -3652,7 +3652,7 @@ export function renderChatPage(): string {
                     const saveBtn = document.createElement("button");
                     saveBtn.type = "button";
                     saveBtn.textContent = "Save query";
-                    saveBtn.style.cssText = "padding:8px 12px;border-radius:10px;border:0;background:linear-gradient(135deg,#5f75ff,#69c2ff);color:#f8fbff;font:700 0.76rem/1 'Mona Sans',sans-serif;cursor:pointer;";
+                    saveBtn.style.cssText = "padding:8px 12px;border-radius:10px;border:0;background:#5f75ff;color:#f8fbff;font:700 0.76rem/1 'Mona Sans',sans-serif;cursor:pointer;";
                     saveBtn.addEventListener("click", function () {
                       const updated = String(editor.value || "").trim();
                       if (!updated) {

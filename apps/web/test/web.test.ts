@@ -165,6 +165,84 @@ describe("web chat interface", () => {
     await app.close();
   });
 
+  it("proxies scheduled report status updates to the API", async () => {
+    const requests: Array<{
+      url: string;
+      method: string;
+      body: Record<string, unknown> | null;
+      headers: Record<string, string>;
+    }> = [];
+
+    const app = buildWebApp({
+      api_base_url: "http://api.local",
+      fetch_impl: async (input, init) => {
+        const url = typeof input === "string" ? input : input instanceof URL ? input.toString() : input.url;
+        const method = init?.method?.toUpperCase() ?? "GET";
+        const body =
+          typeof init?.body === "string" && init.body.length > 0
+            ? (JSON.parse(init.body) as Record<string, unknown>)
+            : null;
+        const headers = Object.fromEntries(new Headers(init?.headers ?? {}).entries());
+
+        requests.push({ url, method, body, headers });
+
+        if (url.endsWith("/scheduled-reports/contract_sched_123/status") && method === "POST") {
+          return new Response(
+            JSON.stringify({
+              profile: {
+                id: "sched_profile_123",
+                contract_id: "contract_sched_123",
+                status: "paused"
+              },
+              contract: {
+                id: "contract_sched_123",
+                schedule_cron: null
+              }
+            }),
+            {
+              status: 200,
+              headers: { "content-type": "application/json" }
+            }
+          );
+        }
+
+        return new Response(JSON.stringify({ message: `Unhandled request: ${method} ${url}` }), {
+          status: 404,
+          headers: { "content-type": "application/json" }
+        });
+      },
+      conversation_client: createPassthroughConversationClient()
+    });
+
+    const response = await app.inject({
+      method: "POST",
+      url: "/api/scheduled-reports/contract_sched_123/status",
+      headers: {
+        cookie: "po_user=test123"
+      },
+      payload: {
+        status: "paused"
+      }
+    });
+
+    expect(response.statusCode).toBe(200);
+    expect(response.json()).toMatchObject({
+      profile: {
+        contract_id: "contract_sched_123",
+        status: "paused"
+      }
+    });
+    expect(requests).toHaveLength(1);
+    expect(requests[0]).toMatchObject({
+      method: "POST",
+      url: "http://api.local/scheduled-reports/contract_sched_123/status",
+      body: { status: "paused" }
+    });
+    expect(requests[0]?.headers["x-ui-user"]).toBe("test123");
+
+    await app.close();
+  });
+
   it("persists state updates from set commands", async () => {
     const app = buildWebApp({
       conversation_client: createPassthroughConversationClient()

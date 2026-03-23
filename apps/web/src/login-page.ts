@@ -283,7 +283,7 @@ export function renderLoginPage(): string {
         cursor: pointer;
         font-family: "Mona Sans", sans-serif;
         font-weight: 700;
-        background: linear-gradient(135deg, #4f3eff, #5f4dff 56%, #6c5cff);
+        background: #4f3eff;
         box-shadow: 0 12px 28px rgba(92, 92, 255, 0.28);
       }
 

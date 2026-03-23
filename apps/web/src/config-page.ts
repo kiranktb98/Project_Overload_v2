@@ -190,7 +190,7 @@ export function renderGlobalConfigPage(): string {
       }
 
       .platform-link.active {
-        background: linear-gradient(135deg, rgba(72, 99, 255, 0.9), rgba(89, 92, 255, 0.92) 54%, rgba(109, 208, 255, 0.82));
+        background: rgba(72, 99, 255, 0.9);
         border-color: rgba(151, 191, 255, 0.4);
         color: #f3f8ff;
         box-shadow: 0 14px 28px rgba(67, 93, 222, 0.28);
@@ -393,7 +393,7 @@ export function renderGlobalConfigPage(): string {
         padding: 10px 14px;
         color: #fff;
         cursor: pointer;
-        background: linear-gradient(135deg, #4f3eff, #5f4dff 56%, #6c5cff);
+        background: #4f3eff;
         font-family: "Mona Sans", sans-serif;
         font-weight: 700;
         box-shadow: 0 10px 22px var(--glow);
