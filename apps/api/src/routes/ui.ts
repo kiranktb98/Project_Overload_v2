@@ -66,6 +66,7 @@ export function registerUiRoutes(app: FastifyInstance, store: MetadataStore): vo
 
     const demoUsers: Record<string, { id: string; password: string }> = {
       test123: { id: "user_test123", password: "test123" },
+      krypton123: { id: "user_krypton123", password: "test123" },
       test456: { id: "user_test456", password: "test456" }
     };
 

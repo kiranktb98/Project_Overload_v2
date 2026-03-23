@@ -41,6 +41,7 @@ function makeContract(overrides: Partial<ReportContract> = {}): ReportContract {
     locked_at: null,
     locked_by: null,
     scope_clarifications: [],
+    prepared_query_overrides: [],
     kpi_watchlist: [],
     guardrails: {
       evidence_row_cap: 200,
@@ -1686,48 +1687,69 @@ describe("data preparation", () => {
     expect(result.planner_summary.length).toBeGreaterThan(0);
   });
 
-  it("applies LLM dialect compiler before executing prepared SQL", async () => {
-    const compileCalls: Array<{ dialect: string; sql: string }> = [];
-    const strategist: QueryStrategistClient = {
-      provider: "stub",
-      async planQueries() {
-        return {
-          queries: [
-            {
-              question: "Last 30 days sales",
-              sql: "SELECT * FROM public.sales WHERE event_time >= CURRENT_DATE - INTERVAL '30 days'",
-              purpose: "Windowed sales pull"
-            }
-          ]
-        };
-      },
-      async compileSql(input) {
-        compileCalls.push({
-          dialect: input.dialect,
-          sql: input.sql
-        });
-        return {
-          sql: "SELECT id, amount, region, event_time FROM public.sales LIMIT 80",
-          rationale: "Converted to mysql-compatible window strategy."
-        };
-      }
-    };
+  const providerDialectCases = [
+    {
+      dialect: "mysql" as const,
+      compiledSql: "SELECT id, amount, region, event_time FROM `public`.`sales` LIMIT 80",
+      expectedFragment: "`public`.`sales`"
+    },
+    {
+      dialect: "snowflake" as const,
+      compiledSql: 'SELECT id, amount, region, event_time FROM "PUBLIC"."SALES" LIMIT 80',
+      expectedFragment: '"PUBLIC"."SALES"'
+    },
+    {
+      dialect: "bigquery" as const,
+      compiledSql: "SELECT id, amount, region, event_time FROM `demo-project.public.sales` LIMIT 80",
+      expectedFragment: "`demo-project.public.sales`"
+    }
+  ];
 
-    const result = await prepareReportContractData({
-      contract: makeContract(),
-      store: new InMemoryMetadataStore(),
-      data_plane: new LocalStubDataPlane({ row_provider: () => makeRows(120) }),
-      query_strategist: strategist,
-      planner_client: createStubPlannerClient(),
-      catalog_summary: "public.sales",
-      sql_dialect: "mysql"
+  for (const testCase of providerDialectCases) {
+    it(`applies the ${testCase.dialect} dialect compiler before executing multi-query preparation`, async () => {
+      const compileCalls: Array<{ dialect: string; sql: string }> = [];
+      const strategist: QueryStrategistClient = {
+        provider: "stub",
+        async planQueries() {
+          return {
+            queries: [
+              {
+                question: "Last 30 days sales",
+                sql: "SELECT * FROM public.sales WHERE event_time >= CURRENT_DATE - INTERVAL '30 days'",
+                purpose: "Windowed sales pull"
+              }
+            ]
+          };
+        },
+        async compileSql(input) {
+          compileCalls.push({
+            dialect: input.dialect,
+            sql: input.sql
+          });
+          return {
+            sql: testCase.compiledSql,
+            rationale: `Converted to ${testCase.dialect}-compatible window strategy.`
+          };
+        }
+      };
+
+      const result = await prepareReportContractData({
+        contract: makeContract(),
+        store: new InMemoryMetadataStore(),
+        data_plane: new LocalStubDataPlane({ row_provider: () => makeRows(120) }),
+        query_strategist: strategist,
+        planner_client: createStubPlannerClient(),
+        catalog_summary: "public.sales",
+        sql_dialect: testCase.dialect
+      });
+
+      expect(compileCalls.length).toBeGreaterThan(0);
+      expect(compileCalls[0].dialect).toBe(testCase.dialect);
+      expect(result.query_details).toHaveLength(1);
+      expect(result.query_details[0].sql).toContain(testCase.expectedFragment);
+      expect(result.prepared_payloads).toHaveLength(1);
     });
-
-    expect(compileCalls.length).toBeGreaterThan(0);
-    expect(compileCalls[0].dialect).toBe("mysql");
-    expect(result.query_details).toHaveLength(1);
-    expect(result.query_details[0].sql).toContain("LIMIT 80");
-  });
+  }
 
   it("auto-repairs off-allowlist strategist SQL to a safe allowlisted fallback", async () => {
     const strategist = fixedStrategist([

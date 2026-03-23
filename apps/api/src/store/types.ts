@@ -3,6 +3,7 @@ import type {
   Metric,
   ReportContract,
   ReportRun,
+  ScheduledReportProfile,
   SemanticEntity,
   SemanticField,
   SemanticRelationship
@@ -65,6 +66,8 @@ export type ReportContractVersionRecord = {
   created_at: string;
 };
 
+export type ScheduledReportProfileRecord = ScheduledReportProfile;
+
 export type RagChunkUpsertRecord = {
   user_id: string;
   session_id: string;
@@ -113,6 +116,15 @@ export interface MetadataStore {
   listReportRuns(contractId: string, context?: StoreRequestContext): Promise<ReportRun[]>;
   getLatestReportRun(contractId: string, context?: StoreRequestContext): Promise<ReportRun | null>;
   getReportRunById(runId: string, context?: StoreRequestContext): Promise<ReportRun | null>;
+  upsertScheduledReportProfile(
+    payload: ScheduledReportProfileRecord,
+    context?: StoreRequestContext
+  ): Promise<ScheduledReportProfileRecord>;
+  listScheduledReportProfiles(context?: StoreRequestContext): Promise<ScheduledReportProfileRecord[]>;
+  getScheduledReportProfileByContractId(
+    contractId: string,
+    context?: StoreRequestContext
+  ): Promise<ScheduledReportProfileRecord | null>;
 
   setSystemState(key: string, payload: Record<string, unknown> | null, context?: StoreRequestContext): Promise<void>;
   getSystemState(key: string, context?: StoreRequestContext): Promise<Record<string, unknown> | null>;

@@ -75,23 +75,35 @@ describe("api connection routes", () => {
     await app.close();
   });
 
-  it("returns actionable error for unsupported connector providers", async () => {
+  it("accepts cloud connector providers and returns provider-specific validation errors", async () => {
     const app = await buildApiApp({
       store: new InMemoryMetadataStore(),
       analyst_client: createStubAnalystClient()
     });
 
-    const testResult = await app.inject({
+    const snowflakeResult = await app.inject({
       method: "POST",
       url: "/connections/test",
       payload: {
         provider: "snowflake",
-        connection_string: "postgres://reader:password@server.local:5432/postgres"
+        connection_string: "snowflake://"
       }
     });
 
-    expect(testResult.statusCode).toBe(400);
-    expect(testResult.json().message.toLowerCase()).toContain("not enabled");
+    expect(snowflakeResult.statusCode).toBe(400);
+    expect(snowflakeResult.json().message.toLowerCase()).toContain("account");
+
+    const bigQueryResult = await app.inject({
+      method: "POST",
+      url: "/connections/test",
+      payload: {
+        provider: "bigquery",
+        connection_string: "bigquery://"
+      }
+    });
+
+    expect(bigQueryResult.statusCode).toBe(400);
+    expect(bigQueryResult.json().message.toLowerCase()).toContain("project id");
 
     await app.close();
   });

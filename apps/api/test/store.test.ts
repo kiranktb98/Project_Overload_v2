@@ -25,6 +25,7 @@ describe("metadata store tenant + version state", () => {
         locked_by: null,
         locked_at: null,
         scope_clarifications: [],
+        prepared_query_overrides: [],
         kpi_watchlist: [],
         guardrails: {
           evidence_row_cap: 200,

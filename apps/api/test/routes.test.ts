@@ -391,6 +391,155 @@ describe("api semantic and run flow", () => {
     await app.close();
   }, 90_000);
 
+  it("creates scheduled report profiles, lists them, and uses the saved profile on scheduled reruns", async () => {
+    const store = new InMemoryMetadataStore();
+    const dataPlane = new LocalStubDataPlane({
+      row_provider: () =>
+        Array.from({ length: 320 }, (_, index) => ({
+          order_id: `o_${index + 1}`,
+          order_date: new Date(Date.UTC(2025, index % 6, 1)).toISOString(),
+          amount: (index % 30) + 10,
+          city: ["Bengaluru", "Pune", "Delhi", "Chennai"][index % 4],
+          refund_status: index % 5 === 0 ? "refunded" : "completed"
+        }))
+    });
+
+    const app = await buildApiApp({
+      store,
+      data_plane: dataPlane,
+      analyst_client: createStubAnalystClient(),
+      query_strategist: createStubQueryStrategistClient(),
+      report_composer: createStubReportComposerClient(),
+      planner_client: createStubPlannerClient()
+    });
+
+    const contractCreate = await app.inject({
+      method: "POST",
+      url: "/report-contracts",
+      payload: {
+        id: "contract_scheduled_profile",
+        name: "Scheduled refund watch",
+        audience: "Executive",
+        timezone: "UTC",
+        schedule_cron: null,
+        sql_template: "SELECT * FROM analytics.sales",
+        metric_ids: ["metric_refunds"],
+        dimension_ids: ["city"],
+        insight_mode: "business",
+        scope_clarifications: [
+          {
+            question_number: 1,
+            question: "What is the monthly refund trend over the past 4 complete months?",
+            answer: "Use the most recent 4 complete months with monthly granularity."
+          },
+          {
+            question_number: 2,
+            question: "Which cities have the highest refund rate over the past 4 complete months?",
+            answer: "Use refund rate and rank the top cities."
+          }
+        ],
+        guardrails: {
+          evidence_row_cap: 200,
+          max_batches: 5,
+          allowed_relations: ["analytics.sales"],
+          allowed_schemas: ["analytics"],
+          timeout_ms: 10000,
+          deny_write: true
+        }
+      }
+    });
+    expect(contractCreate.statusCode).toBe(201);
+
+    const manualRun = await app.inject({
+      method: "POST",
+      url: "/report-contracts/contract_scheduled_profile/run"
+    });
+    expect(manualRun.statusCode).toBe(202);
+    const manualRunId = manualRun.json().run_id as string;
+
+    let manualRunBody: Record<string, unknown> | undefined;
+    for (let i = 0; i < 40; i += 1) {
+      await new Promise((resolve) => setTimeout(resolve, 100));
+      const poll = await app.inject({ method: "GET", url: `/report-runs/${manualRunId}` });
+      if (poll.json().status === "succeeded") {
+        manualRunBody = poll.json();
+        break;
+      }
+    }
+    expect(manualRunBody).toBeDefined();
+
+    const draft = await app.inject({
+      method: "GET",
+      url: `/report-runs/${manualRunId}/schedule-draft`
+    });
+    expect(draft.statusCode).toBe(200);
+    expect(Array.isArray(draft.json().questions)).toBe(true);
+    expect(draft.json().questions.length).toBeGreaterThan(0);
+
+    const createProfile = await app.inject({
+      method: "POST",
+      url: `/report-runs/${manualRunId}/schedule-profile`,
+      payload: {
+        frequency: "monthly",
+        timezone: "UTC",
+        day_of_month: 1,
+        hour_utc: 9,
+        minute_utc: 15,
+        windowing_instructions: "Roll the window to the latest complete month on each run.",
+        additional_instructions: "Keep the same governed questions and layout.",
+        question_execution_plan: draft.json().questions.map((entry: Record<string, unknown>) => ({
+          question_number: entry.question_number,
+          next_run_behavior: `Re-run Q${entry.question_number} using the latest complete reporting window.`
+        }))
+      }
+    });
+    expect(createProfile.statusCode).toBe(200);
+    expect(createProfile.json().profile.contract_id).toBe("contract_scheduled_profile");
+
+    const listScheduled = await app.inject({
+      method: "GET",
+      url: "/scheduled-reports"
+    });
+    expect(listScheduled.statusCode).toBe(200);
+    expect(listScheduled.json().items).toHaveLength(1);
+    expect(listScheduled.json().items[0].contract_id).toBe("contract_scheduled_profile");
+
+    const detailScheduled = await app.inject({
+      method: "GET",
+      url: "/scheduled-reports/contract_scheduled_profile"
+    });
+    expect(detailScheduled.statusCode).toBe(200);
+    expect(detailScheduled.json().profile.question_execution_plan).toHaveLength(draft.json().questions.length);
+    expect(Array.isArray(detailScheduled.json().runs)).toBe(true);
+
+    const scheduledRun = await app.inject({
+      method: "POST",
+      url: "/report-contracts/contract_scheduled_profile/run",
+      payload: {
+        trigger: "scheduled"
+      }
+    });
+    expect(scheduledRun.statusCode).toBe(202);
+    const scheduledRunId = scheduledRun.json().run_id as string;
+
+    let scheduledRunBody: Record<string, unknown> | undefined;
+    for (let i = 0; i < 40; i += 1) {
+      await new Promise((resolve) => setTimeout(resolve, 100));
+      const poll = await app.inject({ method: "GET", url: `/report-runs/${scheduledRunId}` });
+      if (poll.json().status === "succeeded") {
+        scheduledRunBody = poll.json();
+        break;
+      }
+    }
+    expect(scheduledRunBody).toBeDefined();
+
+    const storedScheduledRun = await store.getReportRunById(scheduledRunId);
+    expect(storedScheduledRun?.query_plan.previous_run_id).toBe(manualRunId);
+    expect(Array.isArray(storedScheduledRun?.query_plan.change_checker_notes)).toBe(true);
+
+    await app.close();
+  }, 90_000);
+
   it("does not expose business case candidates for report-review-only recommendations", async () => {
     const store = new InMemoryMetadataStore();
     const dataPlane = new LocalStubDataPlane({
