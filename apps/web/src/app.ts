@@ -629,6 +629,20 @@ export function buildWebApp(options: WebAppDependencies = {}) {
     });
   });
 
+  app.post("/api/scheduled-reports/:contractId/status", async (request, reply) => {
+    const username = getAuthenticatedUsername(request.headers.cookie);
+    const { contractId } = request.params as { contractId: string };
+    return proxyToApi({
+      fetch_impl: options.fetch_impl,
+      api_base_url: apiBaseUrl,
+      method: "POST",
+      path: `/scheduled-reports/${encodeURIComponent(contractId)}/status`,
+      body: request.body,
+      additional_headers: username ? { "x-ui-user": username } : undefined,
+      reply
+    });
+  });
+
   app.get("/api/db/context", async (request, reply) => {
     const username = getAuthenticatedUsername(request.headers.cookie);
     return proxyToApi({

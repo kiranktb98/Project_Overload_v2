@@ -25,7 +25,7 @@ export function renderScheduledReportsPage(): string {
       .platform-link { display:flex; align-items:center; gap:8px; padding:11px 12px; border-radius:14px; color:#9eb3d9; text-decoration:none; border:1px solid rgba(117,148,214,.06); font-size:.84rem; font-weight:600; transition:transform 140ms ease,border-color 140ms ease,background 140ms ease,color 140ms ease; }
       .platform-link svg { width:16px; height:16px; stroke:currentColor; fill:none; stroke-width:1.8; stroke-linecap:round; stroke-linejoin:round; }
       .platform-link:hover { transform:translateX(2px); background:rgba(33,62,129,.36); border-color:rgba(112,152,244,.26); }
-      .platform-link.active { background:linear-gradient(135deg, rgba(72,99,255,.9), rgba(89,92,255,.92) 54%, rgba(109,208,255,.82)); border-color:rgba(151,191,255,.4); color:#f3f8ff; box-shadow:0 14px 28px rgba(67,93,222,.28); }
+      .platform-link.active { background:rgba(72,99,255,.9); border-color:rgba(151,191,255,.4); color:#f3f8ff; box-shadow:0 14px 28px rgba(67,93,222,.28); }
       .platform-footer { margin-top:auto; display:flex; flex-direction:column; gap:10px; position:relative; z-index:1; }
       .platform-user,.platform-support { display:flex; align-items:center; gap:10px; border:1px solid rgba(111,147,220,.14); border-radius:16px; padding:11px 12px; background:rgba(10,24,58,.76); }
       .platform-user-avatar { width:28px; height:28px; border-radius:11px; display:grid; place-items:center; border:1px solid #2f4d95; color:#9cb3e3; background:rgba(13,31,78,.9); box-shadow:inset 0 1px 0 rgba(255,255,255,.06); }
@@ -49,10 +49,10 @@ export function renderScheduledReportsPage(): string {
       .surface-header h2 { margin:0; font-size:1rem; }
       .surface-header p { margin:6px 0 0; color:var(--ink-soft); font-size:.82rem; }
       .reports-grid { display:grid; grid-template-columns:repeat(3, minmax(240px,1fr)); gap:14px; padding:18px; align-content:start; }
-      .tile { position:relative; display:grid; gap:12px; align-content:start; text-align:left; border:1px solid rgba(118,152,226,.14); border-radius:20px; padding:16px; background:linear-gradient(180deg, rgba(11,27,65,.94), rgba(8,20,49,.98)); cursor:pointer; transition:transform 150ms ease,border-color 150ms ease,box-shadow 150ms ease,background 150ms ease; box-shadow:inset 0 1px 0 rgba(255,255,255,.03); overflow:hidden; }
+      .tile { position:relative; display:grid; gap:12px; align-content:start; text-align:left; border:1px solid rgba(118,152,226,.14); border-radius:20px; padding:16px; background:rgba(11,27,65,.96); cursor:pointer; transition:transform 150ms ease,border-color 150ms ease,box-shadow 150ms ease,background 150ms ease; box-shadow:inset 0 1px 0 rgba(255,255,255,.03); overflow:hidden; }
       .tile::before { content:""; position:absolute; inset:0 auto 0 0; width:3px; background:linear-gradient(180deg, rgba(116,175,255,0), rgba(116,175,255,.9), rgba(108,108,255,.75)); opacity:0; transition:opacity 150ms ease; }
       .tile:hover,.tile.active { transform:translateY(-2px); border-color:var(--line-strong); box-shadow:0 16px 30px rgba(4,11,29,.24); }
-      .tile.active { background:linear-gradient(180deg, rgba(15,33,78,.96), rgba(9,22,56,.98)); }
+      .tile.active { background:rgba(15,33,78,.96); }
       .tile.active::before { opacity:1; }
       .tile[data-status="succeeded"].active { border-color:rgba(110,214,194,.28); box-shadow:0 18px 32px rgba(2,14,30,.3), 0 0 0 1px rgba(110,214,194,.08); }
       .tile[data-status="succeeded"].active::before { background:linear-gradient(180deg, rgba(141,240,218,0), rgba(141,240,218,.94), rgba(102,167,255,.75)); }
@@ -97,7 +97,7 @@ export function renderScheduledReportsPage(): string {
       .status-pill { display:inline-flex; align-items:center; gap:6px; }
       .status-pill .status-mark { min-width:1rem; min-height:1rem; font-size:.92rem; }
       .status-pill.succeeded { color:#5eead4; } .status-pill.failed { color:#fca5a5; }
-      .open-btn { appearance:none; border:1px solid rgba(144,180,255,.24); border-radius:12px; background:linear-gradient(135deg, rgba(79,112,255,.92), rgba(92,199,255,.86)); color:#fff; padding:9px 12px; font-weight:700; cursor:pointer; }
+      .open-btn { appearance:none; border:1px solid rgba(144,180,255,.24); border-radius:12px; background:rgba(79,112,255,.92); color:#fff; padding:9px 12px; font-weight:700; cursor:pointer; }
       .toggle-btn { appearance:none; border:1px solid rgba(144,180,255,.2); border-radius:12px; background:rgba(12,30,72,.94); color:#dce7ff; padding:9px 12px; font-weight:700; cursor:pointer; transition:background 140ms ease, border-color 140ms ease, transform 140ms ease; }
       .toggle-btn:hover { transform:translateY(-1px); border-color:rgba(164,196,255,.3); background:rgba(19,40,92,.98); }
       .toggle-btn.pause { color:#ffd8a8; border-color:rgba(255,196,122,.22); background:rgba(61,40,11,.54); }

@@ -201,7 +201,7 @@ export function renderConnectionPage(): string {
       }
 
       .platform-link.active {
-        background: linear-gradient(135deg, rgba(72, 99, 255, 0.9), rgba(89, 92, 255, 0.92) 54%, rgba(109, 208, 255, 0.82));
+        background: rgba(72, 99, 255, 0.9);
         border-color: rgba(151, 191, 255, 0.4);
         color: #f3f8ff;
         box-shadow: 0 14px 28px rgba(67, 93, 222, 0.28);
@@ -445,7 +445,7 @@ export function renderConnectionPage(): string {
 
       .mode-btn.active {
         border-color: rgba(151, 191, 255, 0.4);
-        background: linear-gradient(135deg, rgba(72, 99, 255, 0.9), rgba(89, 92, 255, 0.92) 54%, rgba(109, 208, 255, 0.82));
+        background: rgba(72, 99, 255, 0.9);
         color: #ffffff;
       }
 
@@ -501,9 +501,7 @@ export function renderConnectionPage(): string {
         border-radius: 18px;
         padding: 18px;
         text-align: left;
-        background:
-          linear-gradient(160deg, rgba(8, 22, 56, 0.78), rgba(6, 18, 46, 0.9)),
-          radial-gradient(circle at 100% 0%, rgba(102, 167, 255, 0.12), transparent 28%);
+        background: rgba(8, 22, 56, 0.88);
         color: #d7e5ff;
         box-shadow: var(--shadow-soft);
       }
@@ -518,7 +516,7 @@ export function renderConnectionPage(): string {
 
       .source-option.selected {
         border-color: rgba(151, 191, 255, 0.4);
-        background: linear-gradient(135deg, rgba(72, 99, 255, 0.9), rgba(89, 92, 255, 0.92) 54%, rgba(109, 208, 255, 0.82));
+        background: rgba(72, 99, 255, 0.9);
         color: #ffffff;
       }
 
@@ -622,7 +620,7 @@ export function renderConnectionPage(): string {
 
       .setup-mode-toggle .secondary.active {
         border-color: rgba(151, 191, 255, 0.4);
-        background: linear-gradient(135deg, rgba(72, 99, 255, 0.9), rgba(89, 92, 255, 0.92) 54%, rgba(109, 208, 255, 0.82));
+        background: rgba(72, 99, 255, 0.9);
         color: #ffffff;
       }
 
@@ -859,7 +857,7 @@ export function renderConnectionPage(): string {
 
       .primary {
         border: 1px solid rgba(143, 160, 255, 0.48);
-        background: linear-gradient(134deg, var(--primary), var(--primary-2), var(--primary-3));
+        background: var(--primary);
         color: #ffffff;
         box-shadow: 0 14px 30px rgba(68, 95, 211, 0.3);
       }
