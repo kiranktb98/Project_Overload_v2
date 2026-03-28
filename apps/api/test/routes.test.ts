@@ -483,8 +483,8 @@ describe("api semantic and run flow", () => {
         frequency: "monthly",
         timezone: "UTC",
         day_of_month: 1,
-        hour_utc: 9,
-        minute_utc: 15,
+        hour_local: 9,
+        minute_local: 15,
         windowing_instructions: "Roll the window to the latest complete month on each run.",
         additional_instructions: "Keep the same governed questions and layout.",
         question_execution_plan: draft.json().questions.map((entry: Record<string, unknown>) => ({
@@ -495,6 +495,9 @@ describe("api semantic and run flow", () => {
     });
     expect(createProfile.statusCode).toBe(200);
     expect(createProfile.json().profile.contract_id).toBe("contract_scheduled_profile");
+    expect(createProfile.json().profile.hour_local).toBe(9);
+    expect(createProfile.json().profile.minute_local).toBe(15);
+    expect(createProfile.json().understanding.local_run_time).toBe("09:15");
 
     const listScheduled = await app.inject({
       method: "GET",
@@ -503,6 +506,8 @@ describe("api semantic and run flow", () => {
     expect(listScheduled.statusCode).toBe(200);
     expect(listScheduled.json().items).toHaveLength(1);
     expect(listScheduled.json().items[0].contract_id).toBe("contract_scheduled_profile");
+    expect(listScheduled.json().items[0].local_run_time).toBe("09:15");
+    expect(typeof listScheduled.json().items[0].next_run_at).toBe("string");
 
     const detailScheduled = await app.inject({
       method: "GET",
@@ -511,6 +516,9 @@ describe("api semantic and run flow", () => {
     expect(detailScheduled.statusCode).toBe(200);
     expect(detailScheduled.json().profile.question_execution_plan).toHaveLength(draft.json().questions.length);
     expect(Array.isArray(detailScheduled.json().runs)).toBe(true);
+    expect(detailScheduled.json().profile.hour_local).toBe(9);
+    expect(detailScheduled.json().profile.minute_local).toBe(15);
+    expect(typeof detailScheduled.json().next_run_at).toBe("string");
 
     const scheduledRun = await app.inject({
       method: "POST",
@@ -910,6 +918,211 @@ describe("api semantic and run flow", () => {
     expect(listB.statusCode).toBe(200);
     expect(listB.json()).toHaveLength(1);
     expect(listB.json()[0].id).toBe("contract_tenant_b");
+
+    await app.close();
+  });
+
+  it("surfaces usage rollups and admin overview for Claritect operations", async () => {
+    const store = new InMemoryMetadataStore();
+    const app = await buildApiApp({
+      store,
+      data_plane: new LocalStubDataPlane({ row_provider: () => [] }),
+      analyst_client: createStubAnalystClient(),
+      query_strategist: createStubQueryStrategistClient(),
+      report_composer: createStubReportComposerClient(),
+      planner_client: createStubPlannerClient()
+    });
+
+    await store.createReportContract({
+      id: "contract_usage_admin",
+      tenant_id: "default",
+      name: "Usage and admin contract",
+      audience: "Ops",
+      timezone: "Asia/Kolkata",
+      schedule_cron: "15 9 1 * *",
+      sql_template: "SELECT * FROM analytics.sales",
+      metric_ids: [],
+      dimension_ids: [],
+      insight_mode: "business",
+      scope_clarifications: [],
+      prepared_query_overrides: [],
+      kpi_watchlist: [],
+      guardrails: {
+        evidence_row_cap: 200,
+        max_batches: 5,
+        allowed_relations: ["analytics.sales"],
+        allowed_schemas: ["analytics"],
+        timeout_ms: 10_000,
+        deny_write: true
+      },
+      lifecycle_status: "locked",
+      contract_version: 1
+    });
+
+    await store.createReportRun({
+      id: "run_usage_admin",
+      tenant_id: "default",
+      contract_id: "contract_usage_admin",
+      status: "succeeded",
+      trigger: "scheduled",
+      attempt: 1,
+      retry_of_run_id: null,
+      started_at: "2026-03-25T03:45:00.000Z",
+      finished_at: "2026-03-25T03:48:00.000Z",
+      query_plan: {
+        manual_notes: [],
+        planned_changes: [],
+        previous_run_id: null,
+        change_checker_notes: [],
+        comparison_target_run_id: null,
+        use_time_comparison: false,
+        report_template_version: "v1"
+      },
+      exec_brief: {
+        what_changed: [],
+        why: [],
+        so_what: [],
+        what_to_do: [],
+        appendix_refs: []
+      },
+      report_html: "<html><body>Claritect report</body></html>",
+      delivery: {
+        status: "not_configured",
+        recipients: [],
+        provider: "none",
+        sent_at: null,
+        error: null
+      },
+      token_usage: {
+        input_tokens: 120,
+        output_tokens: 80,
+        total_tokens: 200,
+        by_agent: {
+          analyst: {
+            input_tokens: 120,
+            output_tokens: 80,
+            total_tokens: 200
+          }
+        },
+        by_model: {
+          "openai/gpt-5.4": {
+            input_tokens: 120,
+            output_tokens: 80,
+            total_tokens: 200
+          }
+        }
+      }
+    });
+
+    await store.upsertScheduledReportProfile({
+      id: "sched_usage_admin",
+      tenant_id: "default",
+      contract_id: "contract_usage_admin",
+      source_run_id: "run_usage_admin",
+      report_title: "Usage and admin report",
+      frequency: "monthly",
+      timezone: "Asia/Kolkata",
+      day_of_week: null,
+      day_of_month: 1,
+      hour_utc: 9,
+      minute_utc: 15,
+      hour_local: 9,
+      minute_local: 15,
+      schedule_cron: "15 9 1 * *",
+      status: "active",
+      windowing_instructions: "Roll to the latest complete month.",
+      additional_instructions: "Keep the same structure.",
+      question_execution_plan: [
+        {
+          question_id: null,
+          question_number: 1,
+          question_text: "How is refund exposure trending?",
+          current_scope_summary: "Trend refunds month over month.",
+          next_run_behavior: "Re-run with the latest completed month window.",
+          query_template_count: 0
+        }
+      ],
+      query_template_snapshot: [],
+      report_template_html: "<section>Claritect schedule template</section>",
+      created_at: "2026-03-20T00:00:00.000Z",
+      updated_at: "2026-03-25T03:48:00.000Z"
+    });
+
+    await store.setSystemState("runtime_connection_v1", {
+      provider: "postgres",
+      name: "Primary governed source",
+      database: "claritect",
+      allowed_relations: ["analytics.sales", "analytics.refunds"],
+      connected_at: "2026-03-20T00:00:00.000Z"
+    });
+
+    const usageSummary = await app.inject({
+      method: "GET",
+      url: "/usage/summary",
+      headers: {
+        "x-ui-user": "test123"
+      }
+    });
+    expect(usageSummary.statusCode).toBe(200);
+    expect(usageSummary.json().summary.reports.total_runs).toBe(1);
+    expect(usageSummary.json().summary.schedules.active).toBe(1);
+
+    const usageAi = await app.inject({
+      method: "GET",
+      url: "/usage/ai",
+      headers: {
+        "x-ui-user": "test123"
+      }
+    });
+    expect(usageAi.statusCode).toBe(200);
+    expect(usageAi.json().usage.total_tokens).toBe(200);
+    expect(usageAi.json().usage.by_agent.analyst.total_tokens).toBe(200);
+    expect(usageAi.json().usage.by_model["openai/gpt-5.4"].total_tokens).toBe(200);
+    expect(usageAi.json().balance.provider).toBe("openrouter");
+
+    const forbiddenAdmin = await app.inject({
+      method: "GET",
+      url: "/admin/overview",
+      headers: {
+        "x-ui-user": "test123"
+      }
+    });
+    expect(forbiddenAdmin.statusCode).toBe(401);
+
+    await store.upsertPlatformUser({
+      id: "user_claritect_admin",
+      tenant_id: "default",
+      username: "claritect_admin",
+      password_salt: "salt",
+      password_hash: "hash",
+      role: "admin",
+      display_name: "Claritect Admin",
+      is_active: true
+    });
+
+    const adminOverview = await app.inject({
+      method: "GET",
+      url: "/admin/overview",
+      headers: {
+        "x-ui-user": "claritect_admin"
+      }
+    });
+    expect(adminOverview.statusCode).toBe(200);
+    expect(adminOverview.json().overview.report_runs).toBe(1);
+    expect(adminOverview.json().overview.active_schedules).toBe(1);
+    expect(adminOverview.json().openrouter_balance.provider).toBe("openrouter");
+
+    const adminSchedules = await app.inject({
+      method: "GET",
+      url: "/admin/schedules",
+      headers: {
+        "x-ui-user": "claritect_admin"
+      }
+    });
+    expect(adminSchedules.statusCode).toBe(200);
+    expect(adminSchedules.json().items).toHaveLength(1);
+    expect(adminSchedules.json().items[0].local_run_time).toBe("09:15");
+    expect(typeof adminSchedules.json().items[0].next_run_at).toBe("string");
 
     await app.close();
   });

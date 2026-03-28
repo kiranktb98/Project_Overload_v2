@@ -25,8 +25,10 @@ const ScheduleProfileCreateSchema = z.object({
   timezone: z.string().trim().min(1).optional(),
   day_of_week: z.number().int().min(0).max(6).optional(),
   day_of_month: z.number().int().min(1).max(28).optional(),
-  hour_utc: z.number().int().min(0).max(23).default(9),
-  minute_utc: z.number().int().min(0).max(59).default(0),
+  hour_local: z.number().int().min(0).max(23).optional(),
+  minute_local: z.number().int().min(0).max(59).optional(),
+  hour_utc: z.number().int().min(0).max(23).optional(),
+  minute_utc: z.number().int().min(0).max(59).optional(),
   windowing_instructions: z.string().trim().min(1),
   additional_instructions: z.string().trim().max(2000).default(""),
   question_execution_plan: z.array(
@@ -65,6 +67,8 @@ export function registerScheduledReportRoutes(app: FastifyInstance, store: Metad
       defaults: {
         frequency: "monthly",
         timezone: contract.timezone,
+        hour_local: 9,
+        minute_local: 0,
         hour_utc: 9,
         minute_utc: 0
       }
@@ -102,6 +106,8 @@ export function registerScheduledReportRoutes(app: FastifyInstance, store: Metad
     const queryTemplateSnapshot = extractScheduledQueryTemplates(run);
     const nowIso = new Date().toISOString();
     const timezone = parsed.data.timezone ?? contract.timezone;
+    const hourLocal = parsed.data.hour_local ?? parsed.data.hour_utc ?? 9;
+    const minuteLocal = parsed.data.minute_local ?? parsed.data.minute_utc ?? 0;
 
     const profile = ScheduledReportProfileSchema.parse({
       id: `sched_${randomUUID()}`,
@@ -113,8 +119,10 @@ export function registerScheduledReportRoutes(app: FastifyInstance, store: Metad
       timezone,
       day_of_week: parsed.data.day_of_week ?? null,
       day_of_month: parsed.data.day_of_month ?? null,
-      hour_utc: parsed.data.hour_utc,
-      minute_utc: parsed.data.minute_utc,
+      hour_local: hourLocal,
+      minute_local: minuteLocal,
+      hour_utc: hourLocal,
+      minute_utc: minuteLocal,
       schedule_cron: schedule.cron,
       windowing_instructions: parsed.data.windowing_instructions,
       additional_instructions: parsed.data.additional_instructions,
@@ -171,6 +179,7 @@ export function registerScheduledReportRoutes(app: FastifyInstance, store: Metad
         frequency: profile.frequency,
         timezone: profile.timezone,
         schedule_cron: profile.schedule_cron,
+        local_run_time: formatLocalRunTime(profile.hour_local, profile.minute_local),
         questions: profile.question_execution_plan
       }
     });
@@ -191,7 +200,12 @@ export function registerScheduledReportRoutes(app: FastifyInstance, store: Metad
           status: profile.status,
           frequency: profile.frequency,
           timezone: profile.timezone,
+          local_run_time: formatLocalRunTime(profile.hour_local, profile.minute_local),
           schedule_cron: profile.schedule_cron,
+          next_run_at:
+            profile.status === "active"
+              ? computeNextScheduledRunIso(profile.schedule_cron, profile.timezone)
+              : null,
           question_count: profile.question_execution_plan.length,
           run_count: runs.length,
           latest_run_id: latestRun?.id ?? null,
@@ -224,6 +238,10 @@ export function registerScheduledReportRoutes(app: FastifyInstance, store: Metad
     return reply.code(200).send({
       profile,
       contract,
+      next_run_at:
+        profile.status === "active"
+          ? computeNextScheduledRunIso(profile.schedule_cron, profile.timezone)
+          : null,
       runs: sortedRuns.map((run) => toRunSummary(run))
     });
   });
@@ -425,11 +443,13 @@ function buildScheduleCron(input: {
   frequency: "weekly" | "monthly" | "quarterly";
   day_of_week?: number;
   day_of_month?: number;
-  hour_utc: number;
-  minute_utc: number;
+  hour_local?: number;
+  minute_local?: number;
+  hour_utc?: number;
+  minute_utc?: number;
 }): { ok: true; cron: string } | { ok: false; message: string } {
-  const minute = input.minute_utc;
-  const hour = input.hour_utc;
+  const minute = input.minute_local ?? input.minute_utc ?? 0;
+  const hour = input.hour_local ?? input.hour_utc ?? 9;
 
   if (input.frequency === "weekly") {
     if (typeof input.day_of_week !== "number") {
@@ -450,4 +470,146 @@ function buildScheduleCron(input: {
   }
 
   return { ok: true, cron: `${minute} ${hour} ${input.day_of_month} 1,4,7,10 *` };
+}
+
+function formatLocalRunTime(hour: number, minute: number): string {
+  const normalizedHour = Math.max(0, Math.min(23, Number(hour) || 0));
+  const normalizedMinute = Math.max(0, Math.min(59, Number(minute) || 0));
+  return `${String(normalizedHour).padStart(2, "0")}:${String(normalizedMinute).padStart(2, "0")}`;
+}
+
+function computeNextScheduledRunIso(cron: string, timezone: string): string | null {
+  try {
+    return computeNextRunUtc(cron, timezone, new Date()).toISOString();
+  } catch {
+    return null;
+  }
+}
+
+function computeNextRunUtc(cron: string, timezone: string, from: Date): Date {
+  assertTimezone(timezone);
+  const matchers = parseCronMatchers(cron);
+  const candidate = new Date(from.getTime());
+  candidate.setUTCSeconds(0, 0);
+  candidate.setUTCMinutes(candidate.getUTCMinutes() + 1);
+
+  for (let step = 0; step < 60 * 24 * 366; step += 1) {
+    const parts = getZonedParts(candidate, timezone);
+    if (
+      matchers.minute(parts.minute) &&
+      matchers.hour(parts.hour) &&
+      matchers.dayOfMonth(parts.dayOfMonth) &&
+      matchers.month(parts.month) &&
+      matchers.dayOfWeek(parts.dayOfWeek)
+    ) {
+      return new Date(candidate.getTime());
+    }
+    candidate.setUTCMinutes(candidate.getUTCMinutes() + 1);
+  }
+
+  throw new Error("Unable to compute next run within one year.");
+}
+
+function parseCronMatchers(cron: string) {
+  const fields = cron.trim().split(/\s+/);
+  if (fields.length !== 5) {
+    throw new Error("Cron must have exactly 5 fields.");
+  }
+  const [minuteField, hourField, dayField, monthField, weekDayField] = fields;
+  return {
+    minute: compileFieldMatcher(minuteField, 0, 59),
+    hour: compileFieldMatcher(hourField, 0, 23),
+    dayOfMonth: compileFieldMatcher(dayField, 1, 31),
+    month: compileFieldMatcher(monthField, 1, 12),
+    dayOfWeek: compileFieldMatcher(weekDayField, 0, 6)
+  };
+}
+
+function compileFieldMatcher(field: string, min: number, max: number): (value: number) => boolean {
+  const values = new Set<number>();
+
+  for (const segment of field.split(",")) {
+    const trimmed = segment.trim();
+    if (trimmed === "*") {
+      for (let value = min; value <= max; value += 1) {
+        values.add(value);
+      }
+      continue;
+    }
+    if (trimmed.startsWith("*/")) {
+      const step = Number.parseInt(trimmed.slice(2), 10);
+      if (!Number.isFinite(step) || step <= 0) {
+        throw new Error(`Invalid cron segment: ${trimmed}`);
+      }
+      for (let value = min; value <= max; value += step) {
+        values.add(value);
+      }
+      continue;
+    }
+    if (trimmed.includes("-")) {
+      const [startRaw, endRaw] = trimmed.split("-");
+      const start = Number.parseInt(startRaw, 10);
+      const end = Number.parseInt(endRaw, 10);
+      if (!Number.isFinite(start) || !Number.isFinite(end) || start > end) {
+        throw new Error(`Invalid cron segment: ${trimmed}`);
+      }
+      for (let value = start; value <= end; value += 1) {
+        if (value >= min && value <= max) {
+          values.add(value);
+        }
+      }
+      continue;
+    }
+    const exact = Number.parseInt(trimmed, 10);
+    if (!Number.isFinite(exact)) {
+      throw new Error(`Invalid cron segment: ${trimmed}`);
+    }
+    if (exact < min || exact > max) {
+      throw new Error(`Cron value ${exact} is out of range.`);
+    }
+    values.add(exact);
+  }
+
+  return (value: number) => values.has(value);
+}
+
+function assertTimezone(timezone: string): void {
+  new Intl.DateTimeFormat("en-US", { timeZone: timezone });
+}
+
+function getZonedParts(date: Date, timezone: string) {
+  const formatter = new Intl.DateTimeFormat("en-US", {
+    timeZone: timezone,
+    hour12: false,
+    weekday: "short",
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+    hour: "2-digit",
+    minute: "2-digit"
+  });
+  const parts = formatter.formatToParts(date);
+  const get = (type: Intl.DateTimeFormatPartTypes) => {
+    const part = parts.find((entry) => entry.type === type);
+    if (!part) {
+      throw new Error(`Missing datetime part: ${type}`);
+    }
+    return part.value;
+  };
+  const weekDayMap: Record<string, number> = {
+    Sun: 0,
+    Mon: 1,
+    Tue: 2,
+    Wed: 3,
+    Thu: 4,
+    Fri: 5,
+    Sat: 6
+  };
+  return {
+    minute: Number.parseInt(get("minute"), 10),
+    hour: Number.parseInt(get("hour"), 10),
+    dayOfMonth: Number.parseInt(get("day"), 10),
+    month: Number.parseInt(get("month"), 10),
+    dayOfWeek: weekDayMap[get("weekday")]
+  };
 }

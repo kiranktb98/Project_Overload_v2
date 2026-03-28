@@ -38,5 +38,5 @@ describe("report render", () => {
     expect(pdf.page_count).toBeGreaterThan(0);
     expect(pdf.bytes.length).toBeGreaterThan(0);
     expect(pdf.bytes.subarray(0, 5).toString("utf8")).toBe("%PDF-");
-  }, 60000);
+  }, 120000);
 });

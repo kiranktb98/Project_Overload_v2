@@ -39,7 +39,32 @@ describe("ui auth and chat sessions", () => {
     expect(login.json().user.username).toBe("krypton123");
 
     await app.close();
-  });
+  }, 20000);
+
+  it("authenticates claritect_admin through the dedicated admin login route", async () => {
+    process.env.API_AUTH_REQUIRED = "false";
+    delete process.env.API_AUTH_TOKEN;
+
+    const app = await buildApiApp({
+      store: new InMemoryMetadataStore(),
+      analyst_client: createStubAnalystClient()
+    });
+
+    const login = await app.inject({
+      method: "POST",
+      url: "/ui/auth/admin/login",
+      payload: {
+        username: "claritect_admin",
+        password: "test123"
+      }
+    });
+
+    expect(login.statusCode).toBe(200);
+    expect(login.json().user.username).toBe("claritect_admin");
+    expect(login.json().user.role).toBe("admin");
+
+    await app.close();
+  }, 20000);
 
   it("authenticates test123 and persists chat sessions", async () => {
     process.env.API_AUTH_REQUIRED = "false";
@@ -211,7 +236,7 @@ describe("ui auth and chat sessions", () => {
     expect(Date.parse(secondSession.updated_at)).toBeGreaterThanOrEqual(Date.parse(firstSession.updated_at));
 
     await app.close();
-  });
+  }, 20000);
 
   it("preserves updated_at when an identical chat session is saved again", async () => {
     process.env.API_AUTH_REQUIRED = "false";

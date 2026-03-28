@@ -1,22 +1,24 @@
+import { renderClaritectLogoImage } from "./brand";
+
 export function renderGlobalConfigPage(): string {
   return `<!doctype html>
 <html lang="en">
   <head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
-    <title>Project Overload | Global Config</title>
+    <title>Claritect | Global config</title>
     <style>
-      @import url("https://fonts.googleapis.com/css2?family=Mona+Sans:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;500&display=swap");
+      @import url("https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&display=swap");
 
       :root {
-        --ink: #edf4ff;
-        --ink-soft: #8ca2cb;
-        --ink-muted: #6076a1;
-        --line: rgba(104, 137, 206, 0.18);
-        --line-soft: rgba(116, 156, 238, 0.34);
-        --glow: rgba(108, 111, 255, 0.36);
-        --shadow: 0 24px 60px rgba(1, 8, 28, 0.44);
-        --shadow-soft: 0 12px 32px rgba(3, 9, 27, 0.26);
+        --ink: #F5F3FF;
+        --ink-soft: #D7CFE6;
+        --ink-muted: #9D90BC;
+        --line: rgba(107, 92, 138, 0.28);
+        --line-soft: rgba(236, 72, 153, 0.24);
+        --glow: rgba(236, 72, 153, 0.22);
+        --shadow: 0 24px 60px rgba(10, 6, 20, 0.48);
+        --shadow-soft: 0 12px 32px rgba(10, 6, 20, 0.32);
       }
 
       * { box-sizing: border-box; }
@@ -24,13 +26,13 @@ export function renderGlobalConfigPage(): string {
       body {
         margin: 0;
         min-height: 100vh;
-        font-family: "Mona Sans", sans-serif;
+        font-family: Inter, "Sohne", "Suisse Intl", sans-serif;
         color: var(--ink);
         background:
-          radial-gradient(circle at 14% 10%, rgba(110, 165, 255, 0.17), transparent 24%),
-          radial-gradient(circle at 88% 8%, rgba(104, 92, 255, 0.15), transparent 26%),
-          radial-gradient(circle at 50% 100%, rgba(59, 132, 255, 0.1), transparent 30%),
-          linear-gradient(180deg, #020714 0%, #06112e 44%, #061533 100%);
+          radial-gradient(circle at 14% 10%, rgba(108, 58, 237, 0.22), transparent 24%),
+          radial-gradient(circle at 88% 8%, rgba(236, 72, 153, 0.15), transparent 26%),
+          radial-gradient(circle at 50% 100%, rgba(108, 58, 237, 0.12), transparent 30%),
+          linear-gradient(180deg, #0F0B1A 0%, #130F20 44%, #161122 100%);
       }
 
       body::before {
@@ -38,7 +40,7 @@ export function renderGlobalConfigPage(): string {
         position: fixed;
         inset: 0;
         pointer-events: none;
-        background-image: linear-gradient(to right, rgba(108, 138, 214, 0.05) 1px, transparent 1px);
+        background-image: linear-gradient(to right, rgba(107, 92, 138, 0.08) 1px, transparent 1px);
         background-size: 60px 60px;
         mask-image: radial-gradient(circle at 50% 45%, rgba(0, 0, 0, 0.86), transparent 92%);
       }
@@ -49,8 +51,8 @@ export function renderGlobalConfigPage(): string {
         inset: 0;
         pointer-events: none;
         background:
-          radial-gradient(circle at 18% 22%, rgba(115, 191, 255, 0.12), transparent 20%),
-          radial-gradient(circle at 78% 16%, rgba(120, 102, 255, 0.16), transparent 24%);
+          radial-gradient(circle at 18% 22%, rgba(108, 58, 237, 0.18), transparent 20%),
+          radial-gradient(circle at 78% 16%, rgba(236, 72, 153, 0.18), transparent 24%);
         filter: blur(34px);
         opacity: 0.9;
       }
@@ -72,7 +74,7 @@ export function renderGlobalConfigPage(): string {
         border: 1px solid var(--line);
         border-radius: 28px;
         background:
-          linear-gradient(180deg, rgba(10, 22, 55, 0.98), rgba(5, 14, 36, 0.98)),
+          linear-gradient(180deg, rgba(20, 15, 34, 0.98), rgba(17, 12, 28, 0.98)),
           linear-gradient(180deg, rgba(255, 255, 255, 0.02), transparent);
         box-shadow: var(--shadow);
         display: flex;
@@ -87,7 +89,7 @@ export function renderGlobalConfigPage(): string {
         inset: 0;
         pointer-events: none;
         background:
-          radial-gradient(circle at 20% 0%, rgba(118, 171, 255, 0.14), transparent 26%),
+          radial-gradient(circle at 20% 0%, rgba(108, 58, 237, 0.18), transparent 26%),
           linear-gradient(180deg, rgba(255, 255, 255, 0.04), transparent 30%);
       }
 
@@ -97,21 +99,26 @@ export function renderGlobalConfigPage(): string {
         gap: 10px;
         padding: 8px 6px 14px;
         margin-bottom: 10px;
-        border-bottom: 1px solid rgba(130, 162, 231, 0.14);
+        border-bottom: 1px solid rgba(107, 92, 138, 0.24);
         position: relative;
         z-index: 1;
       }
 
       .platform-brand-badge {
-        width: 42px;
-        height: 42px;
-        border-radius: 15px;
-        display: grid;
-        place-items: center;
-        font-weight: 800;
-        color: #f3f8ff;
-        background: linear-gradient(145deg, #66a7ff, #6c6cff 56%, #7fd0ff);
-        box-shadow: 0 14px 32px rgba(76, 122, 255, 0.34);
+        width: 56px;
+        height: 24px;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        flex-shrink: 0;
+      }
+
+      .platform-brand-badge img {
+        width: 100%;
+        height: 100%;
+        display: block;
+        object-fit: contain;
+        filter: drop-shadow(0 8px 20px rgba(118, 93, 255, 0.22));
       }
 
       .platform-brand strong {
@@ -125,7 +132,7 @@ export function renderGlobalConfigPage(): string {
       .platform-brand span {
         display: block;
         margin-top: 2px;
-        font-family: "JetBrains Mono", monospace;
+        font-family: Inter, "Sohne", "Suisse Intl", sans-serif;
         font-size: 0.62rem;
         letter-spacing: 0.24em;
         text-transform: uppercase;
@@ -156,9 +163,9 @@ export function renderGlobalConfigPage(): string {
         gap: 8px;
         padding: 11px 12px;
         border-radius: 14px;
-        color: #9eb3d9;
+        color: #E1DAF4;
         text-decoration: none;
-        border: 1px solid rgba(117, 148, 214, 0.06);
+        border: 1px solid rgba(107, 92, 138, 0.14);
         font-size: 0.84rem;
         font-weight: 600;
         transition: transform 140ms ease, border-color 140ms ease, background 140ms ease, color 140ms ease;
@@ -171,7 +178,7 @@ export function renderGlobalConfigPage(): string {
         align-items: center;
         justify-content: center;
         flex-shrink: 0;
-        color: #6f8ac1;
+        color: #9D90BC;
       }
       .platform-link .link-icon svg {
         width: 16px;
@@ -185,15 +192,15 @@ export function renderGlobalConfigPage(): string {
 
       .platform-link:hover {
         transform: translateX(2px);
-        background: rgba(33, 62, 129, 0.36);
-        border-color: rgba(112, 152, 244, 0.26);
+        background: rgba(108, 58, 237, 0.16);
+        border-color: rgba(236, 72, 153, 0.18);
       }
 
       .platform-link.active {
-        background: rgba(72, 99, 255, 0.9);
-        border-color: rgba(151, 191, 255, 0.4);
+        background: rgba(108, 58, 237, 0.92);
+        border-color: rgba(245, 243, 255, 0.22);
         color: #f3f8ff;
-        box-shadow: 0 14px 28px rgba(67, 93, 222, 0.28);
+        box-shadow: 0 14px 30px rgba(108, 58, 237, 0.24);
       }
 
       .platform-link.active .link-icon {
@@ -213,10 +220,10 @@ export function renderGlobalConfigPage(): string {
         display: flex;
         align-items: center;
         gap: 10px;
-        border: 1px solid rgba(111, 147, 220, 0.14);
+        border: 1px solid rgba(107, 92, 138, 0.22);
         border-radius: 16px;
         padding: 11px 12px;
-        background: rgba(10, 24, 58, 0.76);
+        background: rgba(31, 21, 49, 0.82);
       }
 
       .platform-user-avatar {
@@ -225,15 +232,15 @@ export function renderGlobalConfigPage(): string {
         border-radius: 11px;
         display: grid;
         place-items: center;
-        border: 1px solid #2f4d95;
-        color: #9cb3e3;
+        border: 1px solid rgba(108, 58, 237, 0.34);
+        color: #E1DAF4;
         background: rgba(12, 29, 72, 0.9);
         box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.06);
       }
 
       .platform-user small {
         display: block;
-        color: #6e86bd;
+        color: #9D90BC;
         font-size: 0.63rem;
         text-transform: uppercase;
         letter-spacing: 0.12em;
@@ -250,10 +257,10 @@ export function renderGlobalConfigPage(): string {
         align-items: center;
         justify-content: space-between;
         gap: 8px;
-        border: 1px solid rgba(111, 147, 220, 0.14);
+        border: 1px solid rgba(107, 92, 138, 0.22);
         border-radius: 16px;
         padding: 9px 11px 9px 12px;
-        background: rgba(7, 18, 45, 0.82);
+        background: rgba(24, 18, 39, 0.84);
       }
 
       .platform-support span {
@@ -268,12 +275,12 @@ export function renderGlobalConfigPage(): string {
       }
 
       .logout-btn {
-        border: 1px solid rgba(122, 155, 226, 0.22);
+        border: 1px solid rgba(107, 92, 138, 0.28);
         border-radius: 12px;
-        background: rgba(16, 36, 84, 0.9);
-        color: #cfddff;
+        background: rgba(34, 25, 56, 0.94);
+        color: #F5F3FF;
         padding: 7px 10px;
-        font-family: "JetBrains Mono", monospace;
+        font-family: Inter, "Sohne", "Suisse Intl", sans-serif;
         font-size: 0.64rem;
         cursor: pointer;
       }
@@ -282,8 +289,8 @@ export function renderGlobalConfigPage(): string {
         border: 1px solid var(--line);
         border-radius: 32px;
         background:
-          linear-gradient(180deg, rgba(5, 12, 34, 0.98), rgba(3, 10, 26, 0.99)),
-          radial-gradient(circle at 100% 0%, rgba(113, 122, 255, 0.12), transparent 24%);
+          linear-gradient(180deg, rgba(20, 15, 34, 0.98), rgba(17, 12, 28, 0.99)),
+          radial-gradient(circle at 100% 0%, rgba(108, 58, 237, 0.16), transparent 24%);
         box-shadow: var(--shadow);
         padding: 16px 20px 20px;
         overflow-y: auto;
@@ -319,11 +326,11 @@ export function renderGlobalConfigPage(): string {
         font-size: 0.62rem;
         text-transform: uppercase;
         letter-spacing: 0.22em;
-        color: #7fd0ff;
+        color: #EC4899;
       }
 
       .badge {
-        font-family: "JetBrains Mono", monospace;
+        font-family: Inter, "Sohne", "Suisse Intl", sans-serif;
         font-size: 0.62rem;
         color: var(--ink-soft);
         padding: 6px 10px 5px;
@@ -333,7 +340,7 @@ export function renderGlobalConfigPage(): string {
       }
 
       .section {
-        border: 1px solid rgba(120, 151, 221, 0.14);
+        border: 1px solid rgba(107, 92, 138, 0.22);
         border-radius: 18px;
         background: linear-gradient(160deg, rgba(8, 22, 56, 0.86), rgba(6, 18, 46, 0.9));
         padding: 14px;
@@ -364,12 +371,12 @@ export function renderGlobalConfigPage(): string {
       textarea, input[type="text"] {
         width: 100%;
         border-radius: 12px;
-        border: 1px solid #2f4d95;
+        border: 1px solid rgba(108, 58, 237, 0.34);
         padding: 12px;
         resize: vertical;
         background: rgba(9, 24, 58, 0.94);
         color: #edf3ff;
-        font-family: "JetBrains Mono", monospace;
+        font-family: Inter, "Sohne", "Suisse Intl", sans-serif;
         font-size: 0.8rem;
       }
 
@@ -388,26 +395,26 @@ export function renderGlobalConfigPage(): string {
       }
 
       .btn-primary {
-        border: 1px solid rgba(128, 144, 255, 0.48);
+        border: 1px solid rgba(107, 92, 138, 0.32);
         border-radius: 12px;
         padding: 10px 14px;
-        color: #fff;
+        color: #F5F3FF;
         cursor: pointer;
-        background: #4f3eff;
-        font-family: "Mona Sans", sans-serif;
+        background: #6C3AED;
+        font-family: Inter, "Sohne", "Suisse Intl", sans-serif;
         font-weight: 700;
         box-shadow: 0 10px 22px var(--glow);
         font-size: 0.84rem;
       }
 
       .btn-secondary {
-        border: 1px solid #2f4d95;
+        border: 1px solid rgba(108, 58, 237, 0.34);
         border-radius: 12px;
         padding: 8px 12px;
-        color: #cfddff;
+        color: #F5F3FF;
         cursor: pointer;
         background: rgba(15, 33, 79, 0.92);
-        font-family: "Mona Sans", sans-serif;
+        font-family: Inter, "Sohne", "Suisse Intl", sans-serif;
         font-weight: 600;
         font-size: 0.78rem;
       }
@@ -419,7 +426,7 @@ export function renderGlobalConfigPage(): string {
         color: #ffa0a0;
         cursor: pointer;
         background: rgba(80, 20, 20, 0.8);
-        font-family: "Mona Sans", sans-serif;
+        font-family: Inter, "Sohne", "Suisse Intl", sans-serif;
         font-weight: 600;
         font-size: 0.72rem;
       }
@@ -462,13 +469,13 @@ export function renderGlobalConfigPage(): string {
       }
 
       .metric-key {
-        font-family: "JetBrains Mono", monospace;
+        font-family: Inter, "Sohne", "Suisse Intl", sans-serif;
         font-size: 0.75rem;
         color: #8eb3ff;
       }
 
       .metric-cols {
-        font-family: "JetBrains Mono", monospace;
+        font-family: Inter, "Sohne", "Suisse Intl", sans-serif;
         font-size: 0.72rem;
         color: #8eb3ff;
       }
@@ -483,7 +490,7 @@ export function renderGlobalConfigPage(): string {
       /* Status Badges */
       .status-badge {
         display: inline-block;
-        font-family: "JetBrains Mono", monospace;
+        font-family: Inter, "Sohne", "Suisse Intl", sans-serif;
         font-size: 0.64rem;
         font-weight: 600;
         padding: 3px 8px;
@@ -517,7 +524,7 @@ export function renderGlobalConfigPage(): string {
       }
 
       .filter-col {
-        font-family: "JetBrains Mono", monospace;
+        font-family: Inter, "Sohne", "Suisse Intl", sans-serif;
         font-size: 0.72rem;
         color: #8eb3ff;
       }
@@ -530,7 +537,7 @@ export function renderGlobalConfigPage(): string {
       }
 
       .filter-val-tag {
-        font-family: "JetBrains Mono", monospace;
+        font-family: Inter, "Sohne", "Suisse Intl", sans-serif;
         font-size: 0.66rem;
         padding: 2px 6px;
         border-radius: 4px;
@@ -571,11 +578,11 @@ export function renderGlobalConfigPage(): string {
 
       .form-group input, .form-group select {
         border-radius: 10px;
-        border: 1px solid #2f4d95;
+        border: 1px solid rgba(108, 58, 237, 0.34);
         padding: 8px 10px;
         background: rgba(9, 24, 58, 0.94);
         color: #edf3ff;
-        font-family: "JetBrains Mono", monospace;
+        font-family: Inter, "Sohne", "Suisse Intl", sans-serif;
         font-size: 0.78rem;
       }
 
@@ -608,7 +615,7 @@ export function renderGlobalConfigPage(): string {
         max-height: 180px;
         overflow-y: auto;
         background: rgba(6, 16, 42, 0.98);
-        border: 1px solid #2f4d95;
+        border: 1px solid rgba(108, 58, 237, 0.34);
         border-top: none;
         border-radius: 0 0 10px 10px;
         z-index: 10;
@@ -618,7 +625,7 @@ export function renderGlobalConfigPage(): string {
 
       .col-option {
         padding: 6px 10px;
-        font-family: "JetBrains Mono", monospace;
+        font-family: Inter, "Sohne", "Suisse Intl", sans-serif;
         font-size: 0.74rem;
         color: #a5b4fc;
         cursor: pointer;
@@ -648,11 +655,11 @@ export function renderGlobalConfigPage(): string {
         gap: 4px;
         padding: 4px 10px;
         border-radius: 8px;
-        font-family: "JetBrains Mono", monospace;
+        font-family: Inter, "Sohne", "Suisse Intl", sans-serif;
         font-size: 0.72rem;
         cursor: pointer;
         transition: all 0.15s ease;
-        border: 1px solid #2f4d95;
+        border: 1px solid rgba(108, 58, 237, 0.34);
         background: rgba(9, 24, 58, 0.94);
         color: #90a7d8;
       }
@@ -686,16 +693,16 @@ export function renderGlobalConfigPage(): string {
       <div class="layout">
         <aside class="platform-panel">
           <div class="platform-brand">
-            <div class="platform-brand-badge">*</div>
+            <div class="platform-brand-badge">${renderClaritectLogoImage("platform-brand-logo")}</div>
             <div>
-              <strong>Project Overload</strong>
-              <span>Decision cockpit</span>
+              <strong>Claritect</strong>
+              <span>Decision intelligence</span>
             </div>
           </div>
           <div class="platform-section">Core Platform</div>
           <nav class="platform-nav">
-            <a class="platform-link" href="/"><span class="link-icon"><svg viewBox="0 0 24 24"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg></span>Chat Explorer</a>
-            <a class="platform-link" href="/usage"><span class="link-icon"><svg viewBox="0 0 24 24"><path d="M18 20V10"/><path d="M12 20V4"/><path d="M6 20v-6"/></svg></span>Usage Metrics</a>
+            <a class="platform-link" href="/app"><span class="link-icon"><svg viewBox="0 0 24 24"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg></span>Chat Explorer</a>
+            <a class="platform-link" href="/usage"><span class="link-icon"><svg viewBox="0 0 24 24"><path d="M18 20V10"/><path d="M12 20V4"/><path d="M6 20v-6"/></svg></span>Usage &amp; AI</a>
           </nav>
           <div class="platform-section">Infrastructure</div>
           <nav class="platform-nav">
@@ -707,8 +714,8 @@ export function renderGlobalConfigPage(): string {
             <div class="platform-user">
               <div class="platform-user-avatar">@</div>
               <div>
-                <small>Admin Profile</small>
-                <strong>Project Owner</strong>
+                <small>Customer workspace</small>
+                <strong>Claritect User</strong>
               </div>
             </div>
             <div class="platform-support">

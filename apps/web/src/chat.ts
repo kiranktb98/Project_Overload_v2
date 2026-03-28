@@ -266,7 +266,17 @@ export const ChatStateSchema = z.object({
           output_tokens: z.number().int().min(0),
           total_tokens: z.number().int().min(0)
         })
-      )
+      ),
+      by_model: z
+        .record(
+          z.string(),
+          z.object({
+            input_tokens: z.number().int().min(0),
+            output_tokens: z.number().int().min(0),
+            total_tokens: z.number().int().min(0)
+          })
+        )
+        .default({})
     })
     .nullable()
     .default(null),
@@ -394,7 +404,17 @@ const TokenUsageSchema = z.object({
       output_tokens: z.number().int().min(0),
       total_tokens: z.number().int().min(0)
     })
-  )
+  ),
+  by_model: z
+    .record(
+      z.string(),
+      z.object({
+        input_tokens: z.number().int().min(0),
+        output_tokens: z.number().int().min(0),
+        total_tokens: z.number().int().min(0)
+      })
+    )
+    .default({})
 });
 
 const PreparedPayloadSchema = z.object({

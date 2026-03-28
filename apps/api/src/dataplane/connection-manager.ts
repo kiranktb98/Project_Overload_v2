@@ -1298,7 +1298,7 @@ export class RuntimeConnectionManager {
         : "-- No RLS tables selected. No policy statements generated.";
 
     return [
-      "-- Project Overload Fix-it Script (MVP)",
+      "-- Claritect Fix-it Script (MVP)",
       "-- Creates/updates read-only role and grants selected schema/table access.",
       "-- Generated dynamically from current allowlist.",
       "",
@@ -1345,7 +1345,7 @@ export class RuntimeConnectionManager {
       : [`GRANT SELECT ON ${quoteMySqlIdentifier(databaseName)}.* TO ${quoteMySqlLiteral(role)}@'%';`];
 
     return [
-      "-- Project Overload Fix-it Script (MySQL, MVP)",
+      "-- Claritect Fix-it Script (MySQL, MVP)",
       "-- Creates/updates read-only user and grants SELECT on selected allowlist.",
       "",
       `CREATE USER IF NOT EXISTS ${quoteMySqlLiteral(role)}@'%' IDENTIFIED BY ${quoteMySqlLiteral(password)};`,
@@ -1390,7 +1390,7 @@ export class RuntimeConnectionManager {
       : `-- Grant SELECT on the required tables/views in ${databaseName}.`;
 
     return [
-      "-- Project Overload Fix-it Script (Snowflake, MVP)",
+      "-- Claritect Fix-it Script (Snowflake, MVP)",
       "-- Creates a read-only role/user and grants SELECT on the selected allowlist.",
       "",
       `CREATE ROLE IF NOT EXISTS ${quoteSnowflakeIdentifier(role)};`,
@@ -1414,7 +1414,7 @@ export class RuntimeConnectionManager {
       : "-- Allowlisted relations will inherit dataset-level viewer access.";
 
     return [
-      "-- Project Overload Fix-it Script (BigQuery, MVP)",
+      "-- Claritect Fix-it Script (BigQuery, MVP)",
       "-- BigQuery access is governed through IAM. Grant read access on the dataset and job execution on the project.",
       tableComments,
       "",

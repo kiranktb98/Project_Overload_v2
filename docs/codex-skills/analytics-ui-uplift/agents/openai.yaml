@@ -1,0 +1,4 @@
+interface:
+  display_name: "Analytics UI Uplift"
+  short_description: "Upgrade dashboard UI with premium depth"
+  default_prompt: "Use $analytics-ui-uplift to modernize this analytics UI while preserving its workflow."

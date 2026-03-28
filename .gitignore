@@ -137,6 +137,14 @@ dist
 # Vite logs files
 vite.config.js.timestamp-*
 vite.config.ts.timestamp-*
+# generated marketing assets
+apps/web/.generated-marketing/
+# local temp artifacts
+.tmp/
+packages/report-render/.tmp/
+test-results/
+.claude/
+docs/~$*.xlsx
 # env
 .env
 .env.*

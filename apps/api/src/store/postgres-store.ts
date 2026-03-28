@@ -12,6 +12,7 @@ import type {
 } from "@project-overload/shared";
 import type {
   ChatSessionRecord,
+  CustomerAccountRecord,
   MetadataStore,
   PlatformUserRecord,
   RagChunkSearchResult,
@@ -20,6 +21,7 @@ import type {
   ScheduledReportProfileRecord,
   SemanticCollectionName,
   SemanticCollections,
+  SystemStateRecord,
   StoreRequestContext
 } from "./types";
 import { loadInitialMigrationSql } from "../db/sql";
@@ -38,6 +40,8 @@ const DEMO_USERNAME = "test123";
 const DEMO_PASSWORD_SALT = "99abe147221b66a4b3323aa942e6d2f4";
 const DEMO_PASSWORD_HASH =
   "09ba67974ef96ca0ff5d6bde095bf986d9e1030fb5cffff66ee2cbc9c5aae603077464b8f8994b583b2f0f01b0d29b48db23345cc04d6ccf0e413d66b965237d";
+const ADMIN_USER_ID = "user_claritect_admin";
+const ADMIN_USERNAME = "claritect_admin";
 
 export class PostgresMetadataStore implements MetadataStore {
   constructor(private readonly pool: Pool) {}
@@ -371,6 +375,30 @@ export class PostgresMetadataStore implements MetadataStore {
     return result.rows.length > 0 ? result.rows[0].payload : null;
   }
 
+  async listSystemStatesByKey(key: string): Promise<SystemStateRecord[]> {
+    const result = await this.pool.query<{
+      state_key: string;
+      tenant_id: string;
+      payload: Record<string, unknown>;
+      updated_at: string;
+    }>(
+      `
+      SELECT state_key, tenant_id, payload, updated_at::text AS updated_at
+      FROM system_state
+      WHERE state_key = $1
+      ORDER BY updated_at DESC
+      `,
+      [key]
+    );
+
+    return result.rows.map((row) => ({
+      state_key: row.state_key,
+      tenant_id: row.tenant_id,
+      payload: row.payload,
+      updated_at: row.updated_at
+    }));
+  }
+
   async upsertPlatformUser(
     payload: Omit<PlatformUserRecord, "created_at" | "last_login_at">,
     context?: StoreRequestContext
@@ -382,21 +410,34 @@ export class PostgresMetadataStore implements MetadataStore {
       username: string;
       password_salt: string;
       password_hash: string;
+      role: "customer" | "admin";
+      display_name: string | null;
       is_active: boolean;
       created_at: string;
       last_login_at: string | null;
     }>(
       `
-      INSERT INTO platform_users (id, tenant_id, username, password_salt, password_hash, is_active)
-      VALUES ($1, $2, $3, $4, $5, $6)
+      INSERT INTO platform_users (id, tenant_id, username, password_salt, password_hash, role, display_name, is_active)
+      VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
       ON CONFLICT (tenant_id, username) DO UPDATE SET
         id = EXCLUDED.id,
         password_salt = EXCLUDED.password_salt,
         password_hash = EXCLUDED.password_hash,
+        role = EXCLUDED.role,
+        display_name = EXCLUDED.display_name,
         is_active = EXCLUDED.is_active
-      RETURNING id, tenant_id, username, password_salt, password_hash, is_active, created_at::text AS created_at, last_login_at::text AS last_login_at
+      RETURNING id, tenant_id, username, password_salt, password_hash, role, display_name, is_active, created_at::text AS created_at, last_login_at::text AS last_login_at
       `,
-      [payload.id, tenantId, payload.username, payload.password_salt, payload.password_hash, payload.is_active]
+      [
+        payload.id,
+        tenantId,
+        payload.username,
+        payload.password_salt,
+        payload.password_hash,
+        payload.role,
+        payload.display_name,
+        payload.is_active
+      ]
     );
 
     const row = result.rows[0];
@@ -406,6 +447,8 @@ export class PostgresMetadataStore implements MetadataStore {
       username: row.username,
       password_salt: row.password_salt,
       password_hash: row.password_hash,
+      role: row.role,
+      display_name: row.display_name,
       is_active: row.is_active,
       created_at: row.created_at,
       last_login_at: row.last_login_at
@@ -420,12 +463,14 @@ export class PostgresMetadataStore implements MetadataStore {
       username: string;
       password_salt: string;
       password_hash: string;
+      role: "customer" | "admin";
+      display_name: string | null;
       is_active: boolean;
       created_at: string;
       last_login_at: string | null;
     }>(
       `
-      SELECT id, tenant_id, username, password_salt, password_hash, is_active, created_at::text AS created_at, last_login_at::text AS last_login_at
+      SELECT id, tenant_id, username, password_salt, password_hash, role, display_name, is_active, created_at::text AS created_at, last_login_at::text AS last_login_at
       FROM platform_users
       WHERE tenant_id = $1
         AND username = $2
@@ -445,10 +490,55 @@ export class PostgresMetadataStore implements MetadataStore {
       username: row.username,
       password_salt: row.password_salt,
       password_hash: row.password_hash,
+      role: row.role,
+      display_name: row.display_name,
       is_active: row.is_active,
       created_at: row.created_at,
       last_login_at: row.last_login_at
     };
+  }
+
+  async listPlatformUsers(context?: StoreRequestContext): Promise<PlatformUserRecord[]> {
+    const tenantId = context?.tenant_id?.trim();
+    const result = await this.pool.query<{
+      id: string;
+      tenant_id: string;
+      username: string;
+      password_salt: string;
+      password_hash: string;
+      role: "customer" | "admin";
+      display_name: string | null;
+      is_active: boolean;
+      created_at: string;
+      last_login_at: string | null;
+    }>(
+      tenantId
+        ? `
+          SELECT id, tenant_id, username, password_salt, password_hash, role, display_name, is_active, created_at::text AS created_at, last_login_at::text AS last_login_at
+          FROM platform_users
+          WHERE tenant_id = $1
+          ORDER BY username ASC
+        `
+        : `
+          SELECT id, tenant_id, username, password_salt, password_hash, role, display_name, is_active, created_at::text AS created_at, last_login_at::text AS last_login_at
+          FROM platform_users
+          ORDER BY tenant_id ASC, username ASC
+        `,
+      tenantId ? [tenantId] : []
+    );
+
+    return result.rows.map((row) => ({
+      id: row.id,
+      tenant_id: row.tenant_id,
+      username: row.username,
+      password_salt: row.password_salt,
+      password_hash: row.password_hash,
+      role: row.role,
+      display_name: row.display_name,
+      is_active: row.is_active,
+      created_at: row.created_at,
+      last_login_at: row.last_login_at
+    }));
   }
 
   async markPlatformUserLogin(userId: string, context?: StoreRequestContext): Promise<void> {
@@ -462,6 +552,129 @@ export class PostgresMetadataStore implements MetadataStore {
       `,
       [userId, tenantId]
     );
+  }
+
+  async upsertCustomerAccount(
+    payload: Omit<CustomerAccountRecord, "created_at" | "updated_at">,
+    context?: StoreRequestContext
+  ): Promise<CustomerAccountRecord> {
+    const tenantId = resolveTenantId(context, payload.tenant_id);
+    const result = await this.pool.query<{
+      tenant_id: string;
+      payload: CustomerAccountRecord;
+      created_at: string;
+      updated_at: string;
+    }>(
+      `
+      INSERT INTO customer_accounts (tenant_id, payload)
+      VALUES ($1, $2::jsonb)
+      ON CONFLICT (tenant_id) DO UPDATE SET
+        payload = EXCLUDED.payload,
+        updated_at = NOW()
+      RETURNING tenant_id, payload, created_at::text AS created_at, updated_at::text AS updated_at
+      `,
+      [
+        tenantId,
+        JSON.stringify({
+          ...payload,
+          tenant_id: tenantId
+        })
+      ]
+    );
+
+    const row = result.rows[0];
+    return {
+      ...row.payload,
+      tenant_id: row.tenant_id,
+      created_at: row.created_at,
+      updated_at: row.updated_at
+    };
+  }
+
+  async listCustomerAccounts(): Promise<CustomerAccountRecord[]> {
+    const result = await this.pool.query<{
+      tenant_id: string;
+      payload: CustomerAccountRecord;
+      created_at: string;
+      updated_at: string;
+    }>(
+      `
+      SELECT tenant_id, payload, created_at::text AS created_at, updated_at::text AS updated_at
+      FROM customer_accounts
+      ORDER BY tenant_id ASC
+      `
+    );
+
+    return result.rows.map((row) => ({
+      ...row.payload,
+      tenant_id: row.tenant_id,
+      created_at: row.created_at,
+      updated_at: row.updated_at
+    }));
+  }
+
+  async getCustomerAccountByTenantId(tenantId: string): Promise<CustomerAccountRecord | null> {
+    const result = await this.pool.query<{
+      tenant_id: string;
+      payload: CustomerAccountRecord;
+      created_at: string;
+      updated_at: string;
+    }>(
+      `
+      SELECT tenant_id, payload, created_at::text AS created_at, updated_at::text AS updated_at
+      FROM customer_accounts
+      WHERE tenant_id = $1
+      LIMIT 1
+      `,
+      [tenantId]
+    );
+
+    if (result.rows.length === 0) {
+      return null;
+    }
+    const row = result.rows[0];
+    return {
+      ...row.payload,
+      tenant_id: row.tenant_id,
+      created_at: row.created_at,
+      updated_at: row.updated_at
+    };
+  }
+
+  async listAllReportContracts(): Promise<ReportContract[]> {
+    const result = await this.pool.query<{ payload: ReportContract }>(
+      `
+      SELECT payload
+      FROM report_contracts
+      ORDER BY created_at DESC
+      `
+    );
+
+    return result.rows.map((row) => row.payload);
+  }
+
+  async listAllReportRuns(): Promise<ReportRun[]> {
+    const result = await this.pool.query<{ payload: ReportRun }>(
+      `
+      SELECT payload
+      FROM report_runs
+      ORDER BY created_at DESC
+      `
+    );
+
+    return result.rows.map((row) => row.payload);
+  }
+
+  async listAllScheduledReportProfiles(): Promise<ScheduledReportProfileRecord[]> {
+    const result = await this.pool.query<{ payload: ScheduledReportProfileRecord }>(
+      `
+      SELECT payload
+      FROM scheduled_report_profiles
+      ORDER BY updated_at DESC, created_at DESC
+      `
+    );
+
+    return result.rows.map((row) => row.payload);
   }
 
   async listChatSessions(userId: string, context?: StoreRequestContext): Promise<ChatSessionRecord[]> {
@@ -780,10 +993,28 @@ export class PostgresMetadataStore implements MetadataStore {
         username TEXT NOT NULL,
         password_salt TEXT NOT NULL,
         password_hash TEXT NOT NULL,
+        role TEXT NOT NULL DEFAULT 'customer',
+        display_name TEXT NULL,
         is_active BOOLEAN NOT NULL DEFAULT TRUE,
         created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
         last_login_at TIMESTAMPTZ NULL,
         UNIQUE (tenant_id, username)
+      );
+    `);
+    await this.pool.query(`
+      ALTER TABLE platform_users
+      ADD COLUMN IF NOT EXISTS role TEXT NOT NULL DEFAULT 'customer';
+    `);
+    await this.pool.query(`
+      ALTER TABLE platform_users
+      ADD COLUMN IF NOT EXISTS display_name TEXT NULL;
+    `);
+    await this.pool.query(`
+      CREATE TABLE IF NOT EXISTS customer_accounts (
+        tenant_id TEXT PRIMARY KEY,
+        payload JSONB NOT NULL,
+        created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+        updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
       );
     `);
     await this.pool.query(`
@@ -831,11 +1062,47 @@ export class PostgresMetadataStore implements MetadataStore {
     `);
     await this.pool.query(
       `
-      INSERT INTO platform_users (id, tenant_id, username, password_salt, password_hash, is_active)
-      VALUES ($1, $2, $3, $4, $5, TRUE)
-      ON CONFLICT (tenant_id, username) DO NOTHING
+      INSERT INTO platform_users (id, tenant_id, username, password_salt, password_hash, role, display_name, is_active)
+      VALUES ($1, $2, $3, $4, $5, 'customer', 'Claritect User', TRUE)
+      ON CONFLICT (tenant_id, username) DO UPDATE SET
+        role = EXCLUDED.role,
+        display_name = EXCLUDED.display_name,
+        is_active = TRUE
       `,
       [DEMO_USER_ID, DEFAULT_TENANT_ID, DEMO_USERNAME, DEMO_PASSWORD_SALT, DEMO_PASSWORD_HASH]
+    );
+    await this.pool.query(
+      `
+      INSERT INTO platform_users (id, tenant_id, username, password_salt, password_hash, role, display_name, is_active)
+      VALUES ($1, $2, $3, $4, $5, 'admin', 'Claritect Admin', TRUE)
+      ON CONFLICT (tenant_id, username) DO UPDATE SET
+        role = EXCLUDED.role,
+        display_name = EXCLUDED.display_name,
+        is_active = TRUE
+      `,
+      [ADMIN_USER_ID, DEFAULT_TENANT_ID, ADMIN_USERNAME, DEMO_PASSWORD_SALT, DEMO_PASSWORD_HASH]
+    );
+    await this.upsertCustomerAccount(
+      {
+        tenant_id: DEFAULT_TENANT_ID,
+        name: "Claritect Pilot",
+        plan_tier: "Growth",
+        status: "active",
+        primary_contact_name: "Claritect Team",
+        primary_contact_email: "owner@example.com",
+        billing_status: "current",
+        renewal_date: null,
+        owner: "Claritect Team",
+        notes: "Default seeded customer account.",
+        entitlements: {
+          seats: 10,
+          scheduled_reports: 24,
+          monthly_runs: 250,
+          ai_budget_usd: null,
+          feature_flags: ["marketing_site", "admin_console", "scheduled_reports", "business_case"]
+        }
+      },
+      { tenant_id: DEFAULT_TENANT_ID }
     );
   }
 

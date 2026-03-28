@@ -1,0 +1,697 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Project Overload v2 - Web App Proxy Guide</title>
+<style>
+  :root {
+    --bg: #081120;
+    --bg-alt: #0d1830;
+    --panel: #111f3d;
+    --text: #f7fbff;
+    --text-soft: #c7d5ee;
+    --text-dim: #89a0c7;
+    --line: rgba(151, 181, 255, 0.18);
+    --blue: #6ba8ff;
+    --cyan: #7de7ff;
+    --teal: #67f2d8;
+    --shadow: 0 20px 60px rgba(2, 8, 24, 0.35);
+    --radius-xl: 28px;
+    --radius-lg: 20px;
+    --radius-md: 14px;
+    --mono: "JetBrains Mono", "Cascadia Code", Consolas, monospace;
+    --sans: "Segoe UI", Inter, Arial, sans-serif;
+  }
+  * { box-sizing: border-box; }
+  @page { size: A4; margin: 0; }
+  html, body {
+    margin: 0;
+    padding: 0;
+    background: var(--bg);
+    color: var(--text);
+    font-family: var(--sans);
+    line-height: 1.45;
+  }
+  body {
+    background:
+      radial-gradient(circle at top right, rgba(107, 168, 255, 0.18), transparent 28%),
+      radial-gradient(circle at bottom left, rgba(103, 242, 216, 0.12), transparent 24%),
+      linear-gradient(180deg, #081120 0%, #091326 100%);
+  }
+  .page {
+    width: 100%;
+    max-width: 920px;
+    margin: 0 auto;
+    min-height: 100vh;
+    padding: 54px 48px;
+    page-break-after: always;
+    position: relative;
+  }
+  .page:last-child { page-break-after: avoid; }
+  .cover {
+    display: flex;
+    flex-direction: column;
+    justify-content: center;
+    min-height: 100vh;
+    position: relative;
+    overflow: hidden;
+  }
+  .cover::before, .cover::after {
+    content: "";
+    position: absolute;
+    border-radius: 999px;
+    filter: blur(18px);
+  }
+  .cover::before {
+    width: 320px;
+    height: 320px;
+    top: -40px;
+    right: -60px;
+    background: radial-gradient(circle, rgba(107, 168, 255, 0.22), transparent 70%);
+  }
+  .cover::after {
+    width: 260px;
+    height: 260px;
+    left: -40px;
+    bottom: 40px;
+    background: radial-gradient(circle, rgba(103, 242, 216, 0.18), transparent 70%);
+  }
+  .eyebrow {
+    display: inline-flex;
+    align-items: center;
+    gap: 10px;
+    width: fit-content;
+    padding: 10px 18px;
+    border-radius: 999px;
+    background: rgba(107, 168, 255, 0.12);
+    border: 1px solid rgba(107, 168, 255, 0.24);
+    color: var(--cyan);
+    font-size: 12px;
+    font-weight: 700;
+    letter-spacing: 0.16em;
+    text-transform: uppercase;
+  }
+  .eyebrow::before {
+    content: "";
+    width: 8px;
+    height: 8px;
+    border-radius: 999px;
+    background: var(--teal);
+    box-shadow: 0 0 18px rgba(103, 242, 216, 0.65);
+  }
+  h1 {
+    margin: 28px 0 18px;
+    font-size: 48px;
+    line-height: 1.02;
+    letter-spacing: -0.04em;
+  }
+  .gradient {
+    background: linear-gradient(135deg, #ffffff 0%, #8ec1ff 56%, #7de7ff 100%);
+    -webkit-background-clip: text;
+    -webkit-text-fill-color: transparent;
+    background-clip: text;
+  }
+  .subtitle {
+    max-width: 760px;
+    font-size: 20px;
+    color: var(--text-soft);
+    line-height: 1.6;
+    margin-bottom: 34px;
+  }
+  .cover-grid {
+    display: grid;
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+    gap: 16px;
+    margin-top: 18px;
+  }
+  .metric, .panel, .route-group, .callout {
+    box-shadow: var(--shadow);
+  }
+  .metric {
+    padding: 18px 20px;
+    border-radius: var(--radius-lg);
+    background: linear-gradient(180deg, rgba(17, 31, 61, 0.98), rgba(12, 24, 47, 0.98));
+    border: 1px solid var(--line);
+  }
+  .metric-label {
+    font-size: 11px;
+    letter-spacing: 0.14em;
+    text-transform: uppercase;
+    color: var(--text-dim);
+    margin-bottom: 8px;
+  }
+  .metric-value {
+    font-size: 28px;
+    font-weight: 800;
+    letter-spacing: -0.03em;
+  }
+  .metric-note {
+    margin-top: 8px;
+    color: var(--text-soft);
+    font-size: 13px;
+  }
+  .footer-note {
+    position: absolute;
+    bottom: 32px;
+    left: 48px;
+    right: 48px;
+    display: flex;
+    justify-content: space-between;
+    font-size: 12px;
+    color: var(--text-dim);
+    border-top: 1px solid var(--line);
+    padding-top: 16px;
+  }
+  .section-tag {
+    color: var(--cyan);
+    font-size: 12px;
+    font-weight: 700;
+    letter-spacing: 0.18em;
+    text-transform: uppercase;
+    margin-bottom: 10px;
+  }
+  h2 {
+    margin: 0 0 14px;
+    font-size: 31px;
+    line-height: 1.15;
+    letter-spacing: -0.03em;
+  }
+  .lede {
+    color: var(--text-soft);
+    font-size: 15px;
+    line-height: 1.7;
+    margin-bottom: 22px;
+  }
+  .callout {
+    padding: 18px 20px;
+    border-radius: var(--radius-lg);
+    background: linear-gradient(180deg, rgba(20, 38, 71, 0.95), rgba(14, 28, 54, 0.95));
+    border: 1px solid rgba(125, 231, 255, 0.22);
+    margin-bottom: 18px;
+  }
+  .callout strong { color: var(--teal); }
+  .grid-2 {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 18px;
+  }
+  .panel {
+    padding: 22px 22px 20px;
+    border-radius: var(--radius-xl);
+    background: linear-gradient(180deg, rgba(17, 31, 61, 0.98), rgba(12, 24, 47, 0.98));
+    border: 1px solid var(--line);
+  }
+  .panel h3 {
+    margin: 0 0 10px;
+    font-size: 20px;
+    letter-spacing: -0.02em;
+  }
+  .panel p {
+    margin: 0;
+    color: var(--text-soft);
+    font-size: 14px;
+    line-height: 1.65;
+  }
+  .route-group {
+    margin-top: 22px;
+    border-radius: var(--radius-xl);
+    overflow: hidden;
+    border: 1px solid var(--line);
+    background: linear-gradient(180deg, rgba(17, 31, 61, 0.98), rgba(11, 22, 42, 0.98));
+  }
+  .route-group-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: flex-end;
+    gap: 16px;
+    padding: 22px 24px 16px;
+    border-bottom: 1px solid rgba(151, 181, 255, 0.12);
+    background: linear-gradient(180deg, rgba(22, 40, 75, 0.95), rgba(16, 29, 56, 0.88));
+  }
+  .route-group-header h3 {
+    margin: 0;
+    font-size: 22px;
+    letter-spacing: -0.02em;
+  }
+  .route-group-header p {
+    margin: 6px 0 0;
+    color: var(--text-soft);
+    font-size: 14px;
+  }
+  .badge {
+    white-space: nowrap;
+    padding: 8px 14px;
+    border-radius: 999px;
+    background: rgba(107, 168, 255, 0.12);
+    border: 1px solid rgba(107, 168, 255, 0.22);
+    color: var(--text);
+    font-size: 12px;
+    font-weight: 700;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+  }
+  table {
+    width: 100%;
+    border-collapse: collapse;
+  }
+  th, td {
+    vertical-align: top;
+    text-align: left;
+    padding: 16px 16px;
+    border-bottom: 1px solid rgba(151, 181, 255, 0.10);
+  }
+  th {
+    color: var(--text-dim);
+    font-size: 11px;
+    text-transform: uppercase;
+    letter-spacing: 0.12em;
+    font-weight: 700;
+    background: rgba(255, 255, 255, 0.02);
+  }
+  td {
+    font-size: 13px;
+    color: var(--text-soft);
+    line-height: 1.55;
+  }
+  td strong {
+    color: var(--text);
+    display: block;
+    margin-bottom: 4px;
+    font-size: 14px;
+  }
+  code {
+    font-family: var(--mono);
+    font-size: 12px;
+    color: #eff8ff;
+    padding: 2px 6px;
+    border-radius: 8px;
+    background: rgba(125, 231, 255, 0.10);
+    border: 1px solid rgba(125, 231, 255, 0.16);
+    word-break: break-word;
+  }
+  .legend {
+    display: grid;
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+    gap: 12px;
+    margin-top: 18px;
+  }
+  .legend-card {
+    padding: 16px 18px;
+    border-radius: var(--radius-md);
+    background: rgba(255, 255, 255, 0.03);
+    border: 1px solid rgba(151, 181, 255, 0.12);
+  }
+  .legend-card h4 {
+    margin: 0 0 8px;
+    font-size: 14px;
+    color: var(--text);
+  }
+  .legend-card p {
+    margin: 0;
+    color: var(--text-soft);
+    font-size: 13px;
+    line-height: 1.55;
+  }
+  .mono-block {
+    margin-top: 12px;
+    padding: 16px 18px;
+    border-radius: var(--radius-md);
+    background: rgba(8, 16, 32, 0.74);
+    border: 1px solid rgba(151, 181, 255, 0.10);
+    font-family: var(--mono);
+    font-size: 12px;
+    line-height: 1.6;
+    color: #d9ebff;
+    white-space: pre-wrap;
+  }
+  .note {
+    font-size: 12px;
+    color: var(--text-dim);
+    margin-top: 12px;
+  }
+</style>
+</head>
+<body>
+  <section class="page cover">
+    <div class="eyebrow">Web Layer Handoff</div>
+    <h1><span class="gradient">Project Overload v2</span><br>Web App Proxy Guide</h1>
+    <p class="subtitle">
+      A clean explanation of every UI proxy route in the web app, what it forwards to,
+      why it exists, and what user context it carries. This is meant as a Wednesday pickup
+      document, so it is written for fast reacquisition rather than code archaeology.
+    </p>
+    <div class="cover-grid">
+      <div class="metric">
+        <div class="metric-label">Proxy Routes</div>
+        <div class="metric-value">24</div>
+        <div class="metric-note">The current web-layer routes that forward through <code>proxyToApi</code>.</div>
+      </div>
+      <div class="metric">
+        <div class="metric-label">Direct API Client Routes</div>
+        <div class="metric-value">3</div>
+        <div class="metric-note">Run status, PDF, and HTML are fetched directly instead of using the shared proxy helper.</div>
+      </div>
+      <div class="metric">
+        <div class="metric-label">Recent Fix</div>
+        <div class="metric-value">1</div>
+        <div class="metric-note">The scheduled report status route was added to the proxy layer on March 23, 2026.</div>
+      </div>
+    </div>
+    <div class="footer-note">
+      <span>Prepared from <code>apps/web/src/app.ts</code></span>
+      <span>Stored in <code>docs/</code></span>
+    </div>
+  </section>
+
+  <section class="page">
+    <div class="section-tag">1. Proxy Layer Basics</div>
+    <h2>What the web proxy layer is doing for us</h2>
+    <p class="lede">
+      The web app is not only serving HTML. It also exposes a UI-facing API under <code>/api/*</code>
+      and forwards many of those calls to the backend API service. This gives us one browser-facing
+      surface while keeping the API base URL, internal API key, and user forwarding behavior in one place.
+    </p>
+    <div class="grid-2">
+      <div class="panel">
+        <h3>Why proxy at all?</h3>
+        <p>
+          It hides the raw API host from the browser, centralizes error handling, keeps auth forwarding
+          consistent, and lets the web app shape user-facing failures without duplicating logic in the UI script.
+        </p>
+      </div>
+      <div class="panel">
+        <h3>What every proxy shares</h3>
+        <p>
+          The helper builds the target URL from <code>api_base_url + path</code>, forwards JSON,
+          adds <code>x-api-key</code> when <code>WEB_INTERNAL_API_KEY</code> exists, and adds
+          <code>x-ui-user</code> when the web cookie identifies a logged-in user.
+        </p>
+      </div>
+    </div>
+    <div class="callout">
+      <strong>Shared behavior worth remembering:</strong> if the API server cannot be reached, the web layer returns a
+      <code>502</code> with a direct message telling us to check whether the API is running. If the API returns non-JSON,
+      the web layer also turns that into a <code>502</code> with a retry-oriented message.
+    </div>
+    <div class="legend">
+      <div class="legend-card">
+        <h4>User context</h4>
+        <p>Most stateful routes read the <code>po_user</code> cookie and pass it through as <code>x-ui-user</code>.</p>
+      </div>
+      <div class="legend-card">
+        <h4>Body handling</h4>
+        <p>Any request with a body is serialized as JSON and gets a <code>content-type: application/json</code> header.</p>
+      </div>
+      <div class="legend-card">
+        <h4>Allowed methods</h4>
+        <p>The shared helper currently supports <code>GET</code>, <code>POST</code>, and <code>PUT</code>.</p>
+      </div>
+    </div>
+    <div class="mono-block">async function proxyToApi(...) {
+  const requestHeaders = {
+    ...buildApiAuthHeader(),
+    ...(additional_headers ?? {})
+  };
+  if (body !== undefined) requestHeaders["content-type"] = "application/json";
+  response = await fetch(api_base_url + path, { method, headers, body: JSON.stringify(body) });
+  ...
+}</div>
+  </section>
+
+  <section class="page">
+    <div class="section-tag">2. Chat And Scheduling</div>
+    <h2>Routes that support chat memory and scheduled reports</h2>
+    <p class="lede">
+      These are the proxies most tied to user-specific state. They nearly all forward the current username,
+      because chat sessions and scheduled reports are meant to be isolated per signed-in user or tenant context.
+    </p>
+    <div class="route-group">
+      <div class="route-group-header">
+        <div>
+          <h3>Chat session proxies</h3>
+          <p>Used by the live chat shell to list prior sessions and save chat-level updates.</p>
+        </div>
+        <div class="badge">2 routes</div>
+      </div>
+      <table>
+        <thead>
+          <tr>
+            <th>Web route</th>
+            <th>Upstream API</th>
+            <th>Explanation</th>
+            <th>Context</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr>
+            <td><code>GET /api/chat/sessions</code></td>
+            <td><code>GET /ui/chat-sessions</code></td>
+            <td>
+              <strong>Lists the saved chat sessions for the current UI user.</strong>
+              This powers the left-side chat history rail.
+            </td>
+            <td>Requires <code>po_user</code>. Forwards <code>x-ui-user</code>.</td>
+          </tr>
+          <tr>
+            <td><code>PUT /api/chat/sessions/:id</code></td>
+            <td><code>PUT /ui/chat-sessions/:id</code></td>
+            <td>
+              <strong>Updates a single saved chat session.</strong>
+              Used for renames, persisted state, and similar session-level changes.
+            </td>
+            <td>Requires <code>po_user</code>. Forwards <code>x-ui-user</code> and JSON body.</td>
+          </tr>
+        </tbody>
+      </table>
+    </div>
+    <div class="route-group">
+      <div class="route-group-header">
+        <div>
+          <h3>Scheduling proxies</h3>
+          <p>Used after report generation to draft, save, list, inspect, pause, and reactivate scheduled report profiles.</p>
+        </div>
+        <div class="badge">5 routes</div>
+      </div>
+      <table>
+        <thead>
+          <tr>
+            <th>Web route</th>
+            <th>Upstream API</th>
+            <th>Explanation</th>
+            <th>Context</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr>
+            <td><code>GET /api/runs/:runId/schedule-draft</code></td>
+            <td><code>GET /report-runs/:runId/schedule-draft</code></td>
+            <td><strong>Builds the schedule popup draft from a finished report run.</strong> Returns per-question rerun guidance and defaults for the modal.</td>
+            <td>Forwards <code>x-ui-user</code> when present.</td>
+          </tr>
+          <tr>
+            <td><code>POST /api/runs/:runId/schedule-profile</code></td>
+            <td><code>POST /report-runs/:runId/schedule-profile</code></td>
+            <td><strong>Saves the actual scheduled report profile.</strong> Stores cadence, timezone, windowing instructions, question execution plan, query template snapshot, and report template.</td>
+            <td>Forwards JSON body and <code>x-ui-user</code>.</td>
+          </tr>
+          <tr>
+            <td><code>GET /api/scheduled-reports</code></td>
+            <td><code>GET /scheduled-reports</code></td>
+            <td><strong>Lists all scheduled report profiles visible to the UI user.</strong> Powers the left tile grid on Scheduled Reports.</td>
+            <td>Forwards <code>x-ui-user</code> when present.</td>
+          </tr>
+          <tr>
+            <td><code>GET /api/scheduled-reports/:contractId</code></td>
+            <td><code>GET /scheduled-reports/:contractId</code></td>
+            <td><strong>Loads the detail view for one scheduled report.</strong> Includes profile, backing contract, and sorted run history.</td>
+            <td>Forwards <code>x-ui-user</code> when present.</td>
+          </tr>
+          <tr>
+            <td><code>POST /api/scheduled-reports/:contractId/status</code></td>
+            <td><code>POST /scheduled-reports/:contractId/status</code></td>
+            <td><strong>Pauses or reactivates a scheduled report.</strong> This is the route behind the pause/activate button and was the recent missing proxy bug.</td>
+            <td>Forwards JSON body and <code>x-ui-user</code>.</td>
+          </tr>
+        </tbody>
+      </table>
+    </div>
+  </section>
+
+  <section class="page">
+    <div class="section-tag">3. Database And Governance</div>
+    <h2>The proxy surface for source setup, governance, and safe querying</h2>
+    <p class="lede">
+      This is the largest proxy cluster. It supports the connection wizard, allowlist governance,
+      cataloging, business context capture, safe query execution, and the edit-connected-source view.
+    </p>
+    <div class="route-group">
+      <div class="route-group-header">
+        <div>
+          <h3>Database connection and governance proxies</h3>
+          <p>These routes sit behind the Source, Governance, and Activate steps on the Connect page.</p>
+        </div>
+        <div class="badge">12 routes</div>
+      </div>
+      <table>
+        <thead>
+          <tr>
+            <th>Web route</th>
+            <th>Upstream API</th>
+            <th>Explanation</th>
+            <th>Context</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr><td><code>GET /api/db/context</code></td><td><code>GET /connections/active</code></td><td><strong>Returns the active governed connection context.</strong> Used to show what source is currently connected.</td><td>Forwards <code>x-ui-user</code>.</td></tr>
+          <tr><td><code>GET /api/db/tables</code></td><td><code>GET /connections/tables</code></td><td><strong>Lists available tables for selection and governance.</strong> Used while building the allowlist.</td><td>Forwards <code>x-ui-user</code>.</td></tr>
+          <tr><td><code>POST /api/db/test</code></td><td><code>POST /connections/test</code></td><td><strong>Tests a database connection without activating it.</strong> Used in Step A2 before connect.</td><td>Forwards JSON body and <code>x-ui-user</code>.</td></tr>
+          <tr><td><code>POST /api/db/connect</code></td><td><code>POST /connections/connect</code></td><td><strong>Creates or activates the source connection for the user.</strong> This is the handoff from source setup into governance.</td><td>Forwards JSON body and <code>x-ui-user</code>.</td></tr>
+          <tr><td><code>POST /api/db/allowlist</code></td><td><code>POST /connections/allowlist</code></td><td><strong>Saves the governed allowlist for the connected source.</strong> This is the key safety boundary for what downstream queries may touch.</td><td>Forwards JSON body and <code>x-ui-user</code>.</td></tr>
+          <tr><td><code>POST /api/db/validate</code></td><td><code>POST /connections/validate</code></td><td><strong>Runs validation checks before activation.</strong> The web layer always sends an empty JSON body here.</td><td>Forwards <code>x-ui-user</code>. Body is forced to <code>{}</code>.</td></tr>
+          <tr><td><code>POST /api/db/fix-script</code></td><td><code>POST /connections/fix-script</code></td><td><strong>Requests a provider-specific fix script.</strong> Used when the connection needs remediation help.</td><td>Forwards JSON body and <code>x-ui-user</code>.</td></tr>
+          <tr><td><code>GET /api/db/query-logs</code></td><td><code>GET /connections/query-logs</code></td><td><strong>Fetches the governed query history.</strong> Useful for inspection and audit-oriented screens.</td><td>Forwards <code>x-ui-user</code>.</td></tr>
+          <tr><td><code>POST /api/db/query</code></td><td><code>POST /connections/query</code></td><td><strong>Runs a governed read-only query.</strong> Used for safe query testing, activation checks, and other preview actions.</td><td>Forwards JSON body and <code>x-ui-user</code>.</td></tr>
+          <tr><td><code>GET /api/db/catalog</code></td><td><code>GET /connections/catalog</code></td><td><strong>Returns the cataloged table and column metadata.</strong> Chat, scoping, and config flows all depend on this.</td><td>Forwards <code>x-ui-user</code>.</td></tr>
+          <tr><td><code>POST /api/db/catalog/refresh</code></td><td><code>POST /connections/catalog/refresh</code></td><td><strong>Forces a catalog refresh.</strong> Used when the user wants updated metadata after schema changes.</td><td>Forwards <code>x-ui-user</code>.</td></tr>
+          <tr><td><code>POST /api/db/catalogue</code></td><td><code>POST /connections/catalogue</code></td><td><strong>Starts cataloging after governance is saved.</strong> This is the route behind the cataloging loading popup in the connect flow.</td><td>Forwards <code>x-ui-user</code>.</td></tr>
+        </tbody>
+      </table>
+    </div>
+    <div class="route-group">
+      <div class="route-group-header">
+        <div>
+          <h3>Business context and disconnect proxies</h3>
+          <p>Small but important routes used after a connection is governed.</p>
+        </div>
+        <div class="badge">2 routes</div>
+      </div>
+      <table>
+        <thead>
+          <tr>
+            <th>Web route</th>
+            <th>Upstream API</th>
+            <th>Explanation</th>
+            <th>Context</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr><td><code>POST /api/db/business-context</code></td><td><code>POST /connections/business-context</code></td><td><strong>Saves business context at the connection layer.</strong> This feeds planning, metric interpretation, and better assumptions in scope clarification.</td><td>Forwards JSON body and <code>x-ui-user</code>.</td></tr>
+          <tr><td><code>POST /api/db/disconnect</code></td><td><code>POST /connections/disconnect</code></td><td><strong>Disconnects the governed source for the user.</strong> This powers the disconnect action from the edit-connected-databases view.</td><td>Forwards <code>x-ui-user</code>.</td></tr>
+        </tbody>
+      </table>
+    </div>
+  </section>
+
+  <section class="page">
+    <div class="section-tag">4. Config And Non-Proxy Routes</div>
+    <h2>Configuration proxies and the few routes that bypass the shared proxy helper</h2>
+    <p class="lede">
+      Not everything under <code>/api</code> uses <code>proxyToApi</code>. The web app uses direct API-client calls
+      for a small number of download and status routes where direct response handling is more convenient.
+    </p>
+    <div class="route-group">
+      <div class="route-group-header">
+        <div>
+          <h3>Configuration proxies</h3>
+          <p>Used by the Config page and by metric-definition and business-context settings flows.</p>
+        </div>
+        <div class="badge">4 routes</div>
+      </div>
+      <table>
+        <thead>
+          <tr>
+            <th>Web route</th>
+            <th>Upstream API</th>
+            <th>Explanation</th>
+            <th>Context</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr><td><code>GET /api/config/global</code></td><td><code>GET /config/global</code></td><td><strong>Loads the workspace-wide global config.</strong> This is not tied to one specific user in the proxy layer.</td><td>No <code>x-ui-user</code> forwarding here.</td></tr>
+          <tr><td><code>PUT /api/config/global</code></td><td><code>PUT /config/global</code></td><td><strong>Saves the workspace-wide global config.</strong> Used for shared metric and report consistency settings.</td><td>Forwards JSON body. No <code>x-ui-user</code>.</td></tr>
+          <tr><td><code>GET /api/config/user-settings</code></td><td><code>GET /config/user-settings</code></td><td><strong>Loads per-user settings.</strong> This is where user-specific metric definitions and business context can live.</td><td>Forwards <code>x-ui-user</code>.</td></tr>
+          <tr><td><code>PUT /api/config/user-settings</code></td><td><code>PUT /config/user-settings</code></td><td><strong>Saves per-user settings.</strong> This is the user-scoped counterpart to the global config routes.</td><td>Forwards JSON body and <code>x-ui-user</code>.</td></tr>
+        </tbody>
+      </table>
+    </div>
+    <div class="grid-2" style="margin-top: 24px;">
+      <div class="panel">
+        <h3>Direct route: run status</h3>
+        <p>
+          <code>GET /api/run-status/:runId</code> uses the web API client directly, not <code>proxyToApi</code>.
+          It calls <code>apiClient.getRunStatus(runId)</code> and returns the payload or a <code>502</code>.
+        </p>
+      </div>
+      <div class="panel">
+        <h3>Direct route: report downloads</h3>
+        <p>
+          <code>GET /api/runs/:runId/pdf</code> and <code>GET /api/runs/:runId/html</code> also bypass the shared proxy helper.
+          They use the web API client directly so the web app can preserve response headers and send PDF bytes or HTML text cleanly.
+        </p>
+      </div>
+    </div>
+    <div class="callout">
+      <strong>Why this distinction matters:</strong> if a bug affects a route under <code>/api/*</code>,
+      the first debugging question is whether it uses the shared proxy helper or the direct web API client.
+      The scheduled report pause bug was a shared-proxy omission. PDF and HTML fetch problems would live elsewhere.
+    </div>
+  </section>
+
+  <section class="page">
+    <div class="section-tag">5. Route-By-Route Summary</div>
+    <h2>One compact table you can scan quickly on Wednesday</h2>
+    <p class="lede">
+      This is the shortest possible summary: the browser route, the upstream API route, and the job it does.
+    </p>
+    <div class="route-group">
+      <div class="route-group-header">
+        <div>
+          <h3>Complete proxy inventory</h3>
+          <p>The entire current <code>proxyToApi</code> surface in one place.</p>
+        </div>
+        <div class="badge">24 routes</div>
+      </div>
+      <table>
+        <thead>
+          <tr>
+            <th>Web route</th>
+            <th>API route</th>
+            <th>Purpose</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr><td><code>GET /api/chat/sessions</code></td><td><code>/ui/chat-sessions</code></td><td>List saved chat sessions.</td></tr>
+          <tr><td><code>PUT /api/chat/sessions/:id</code></td><td><code>/ui/chat-sessions/:id</code></td><td>Update one chat session.</td></tr>
+          <tr><td><code>GET /api/runs/:runId/schedule-draft</code></td><td><code>/report-runs/:runId/schedule-draft</code></td><td>Draft the schedule modal.</td></tr>
+          <tr><td><code>POST /api/runs/:runId/schedule-profile</code></td><td><code>/report-runs/:runId/schedule-profile</code></td><td>Save a scheduled report profile.</td></tr>
+          <tr><td><code>GET /api/scheduled-reports</code></td><td><code>/scheduled-reports</code></td><td>List scheduled reports.</td></tr>
+          <tr><td><code>GET /api/scheduled-reports/:contractId</code></td><td><code>/scheduled-reports/:contractId</code></td><td>Load one scheduled report detail view.</td></tr>
+          <tr><td><code>POST /api/scheduled-reports/:contractId/status</code></td><td><code>/scheduled-reports/:contractId/status</code></td><td>Pause or activate a scheduled report.</td></tr>
+          <tr><td><code>GET /api/db/context</code></td><td><code>/connections/active</code></td><td>Fetch active connection context.</td></tr>
+          <tr><td><code>GET /api/db/tables</code></td><td><code>/connections/tables</code></td><td>Fetch tables for allowlisting.</td></tr>
+          <tr><td><code>POST /api/db/test</code></td><td><code>/connections/test</code></td><td>Test a DB connection.</td></tr>
+          <tr><td><code>POST /api/db/connect</code></td><td><code>/connections/connect</code></td><td>Connect a source.</td></tr>
+          <tr><td><code>POST /api/db/allowlist</code></td><td><code>/connections/allowlist</code></td><td>Save the governed allowlist.</td></tr>
+          <tr><td><code>POST /api/db/validate</code></td><td><code>/connections/validate</code></td><td>Validate before activation.</td></tr>
+          <tr><td><code>POST /api/db/fix-script</code></td><td><code>/connections/fix-script</code></td><td>Request a remediation script.</td></tr>
+          <tr><td><code>GET /api/db/query-logs</code></td><td><code>/connections/query-logs</code></td><td>Fetch governed query logs.</td></tr>
+          <tr><td><code>POST /api/db/query</code></td><td><code>/connections/query</code></td><td>Run a governed read-only query.</td></tr>
+          <tr><td><code>GET /api/db/catalog</code></td><td><code>/connections/catalog</code></td><td>Load catalog metadata.</td></tr>
+          <tr><td><code>POST /api/db/catalog/refresh</code></td><td><code>/connections/catalog/refresh</code></td><td>Refresh the catalog.</td></tr>
+          <tr><td><code>POST /api/db/catalogue</code></td><td><code>/connections/catalogue</code></td><td>Kick off cataloging after allowlist save.</td></tr>
+          <tr><td><code>POST /api/db/business-context</code></td><td><code>/connections/business-context</code></td><td>Save DB-level business context.</td></tr>
+          <tr><td><code>POST /api/db/disconnect</code></td><td><code>/connections/disconnect</code></td><td>Disconnect the source.</td></tr>
+          <tr><td><code>GET /api/config/global</code></td><td><code>/config/global</code></td><td>Read workspace config.</td></tr>
+          <tr><td><code>PUT /api/config/global</code></td><td><code>/config/global</code></td><td>Write workspace config.</td></tr>
+          <tr><td><code>GET /api/config/user-settings</code></td><td><code>/config/user-settings</code></td><td>Read user-scoped settings.</td></tr>
+          <tr><td><code>PUT /api/config/user-settings</code></td><td><code>/config/user-settings</code></td><td>Write user-scoped settings.</td></tr>
+        </tbody>
+      </table>
+    </div>
+    <p class="note">
+      Reference source: <code>apps/web/src/app.ts</code>, current as of March 23, 2026.
+    </p>
+  </section>
+</body>
+</html>

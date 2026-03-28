@@ -25,12 +25,29 @@ import {
 import { renderChatPage } from "./page";
 import { renderConnectionPage } from "./connect-page";
 import { renderLoginPage } from "./login-page";
+import { renderAdminLoggedOutPage, renderCustomerLoggedOutPage } from "./logout-page";
 import { renderUsageMetricsPage } from "./usage-page";
 import { renderGlobalConfigPage } from "./config-page";
 import { renderScheduledReportsPage } from "./scheduled-page";
+import { renderMarketingHomePage, renderMarketingPricingPage } from "./marketing-page";
+import { ensureMarketingBundle, readMarketingAsset, readStubMarketingAsset } from "./marketing-build";
+import {
+  renderAdminBillingPage,
+  renderAdminConnectionsPage,
+  renderAdminCustomersPage,
+  renderAdminDashboardPage,
+  renderAdminLoginPage,
+  renderAdminReportsPage,
+  renderAdminSchedulesPage,
+  renderAdminUsersPage
+} from "./admin-page";
 
 const DB_CONNECTION_GUIDE_HTML = readFileSync(
   new URL("../../../docs/DB_CONNECTION_GUIDE.html", import.meta.url),
+  "utf8"
+);
+const CLARITECT_LOGO_SVG = readFileSync(
+  new URL("./assets/claritect-logo.svg", import.meta.url),
   "utf8"
 );
 
@@ -39,6 +56,7 @@ export type WebAppDependencies = {
   fetch_impl?: typeof fetch;
   conversation_client?: ConversationClient;
   query_router?: QueryRouterClient;
+  marketing_asset_mode?: "build" | "stub";
 };
 
 class ChatStageError extends Error {
@@ -89,10 +107,12 @@ export function buildWebApp(options: WebAppDependencies = {}) {
     options.query_router ?? createQueryRouterClientFromEnv({ fetch_impl: options.fetch_impl });
   const authEnabled = isUiAuthEnabled();
   const orchestratorEnabled = isConversationOrchestratorEnabled();
+  const marketingAssetMode = options.marketing_asset_mode ?? "build";
 
   // Thread user identity into AsyncLocalStorage so apiClient headers resolve per-user
   app.addHook("preHandler", async (request) => {
-    const username = getAuthenticatedUsername(request.headers.cookie);
+    const pathname = request.url.split("?")[0];
+    const username = getRequestUsername(request.headers.cookie, pathname);
     if (username) {
       webUserContext.enterWith({ username });
     }
@@ -104,28 +124,54 @@ export function buildWebApp(options: WebAppDependencies = {}) {
     }
 
     const pathname = request.url.split("?")[0];
-    if (pathname === "/health" || pathname === "/login" || pathname === "/auth/login") {
+    if (isPublicPath(pathname)) {
       return;
     }
 
-    if (isAuthenticatedRequest(request.headers.cookie)) {
+    if (pathname.startsWith("/admin") || pathname.startsWith("/api/admin/")) {
+      if (isAdminAuthenticatedRequest(request.headers.cookie)) {
+        return;
+      }
+      if (pathname.startsWith("/api/")) {
+        return reply.code(401).send({ message: "Unauthorized" });
+      }
+      return reply.redirect("/admin/login");
+    }
+
+    if (isCustomerAuthenticatedRequest(request.headers.cookie)) {
       return;
     }
 
     if (pathname.startsWith("/api/") || pathname.startsWith("/auth/")) {
-      return reply.code(401).send({
-        message: "Unauthorized"
-      });
+      return reply.code(401).send({ message: "Unauthorized" });
     }
 
     return reply.redirect("/login");
   });
 
   app.get("/login", async (request, reply) => {
-    if (authEnabled && isAuthenticatedRequest(request.headers.cookie)) {
-      return reply.redirect("/");
+    if (authEnabled && isCustomerAuthenticatedRequest(request.headers.cookie)) {
+      return reply.redirect("/app");
+    }
+    if (authEnabled && isAdminAuthenticatedRequest(request.headers.cookie)) {
+      return reply.redirect("/admin");
     }
     return reply.type("text/html; charset=utf-8").send(renderLoginPage());
+  });
+
+  app.get("/admin/login", async (request, reply) => {
+    if (authEnabled && isAdminAuthenticatedRequest(request.headers.cookie)) {
+      return reply.redirect("/admin");
+    }
+    return reply.type("text/html; charset=utf-8").send(renderAdminLoginPage());
+  });
+
+  app.get("/logout", async (_request, reply) => {
+    return reply.type("text/html; charset=utf-8").send(renderCustomerLoggedOutPage());
+  });
+
+  app.get("/admin/logout", async (_request, reply) => {
+    return reply.type("text/html; charset=utf-8").send(renderAdminLoggedOutPage());
   });
 
   const LoginPayloadSchema = z.object({
@@ -178,6 +224,44 @@ export function buildWebApp(options: WebAppDependencies = {}) {
     return reply.code(200).send({ ok: true });
   });
 
+  app.post("/admin/auth/login", async (request, reply) => {
+    if (!authEnabled) {
+      return reply.code(200).send({ ok: true, bypassed: true });
+    }
+
+    const parsed = LoginPayloadSchema.safeParse(request.body ?? {});
+    if (!parsed.success) {
+      return reply.code(400).send({ message: "Invalid login payload" });
+    }
+
+    const username = parsed.data.username.trim();
+    const password = parsed.data.password;
+
+    let loginResponse: Response;
+    try {
+      loginResponse = await (options.fetch_impl ?? fetch)(`${apiBaseUrl}/ui/auth/admin/login`, {
+        method: "POST",
+        headers: {
+          "content-type": "application/json",
+          ...buildApiAuthHeader()
+        },
+        body: JSON.stringify({ username, password })
+      });
+    } catch {
+      return reply.code(502).send({ message: `Cannot reach API server at ${apiBaseUrl}.` });
+    }
+
+    if (!loginResponse.ok) {
+      return reply.code(401).send({ message: "Invalid admin credentials" });
+    }
+
+    reply.header("set-cookie", [
+      "claritect_admin_auth=1; Path=/; HttpOnly; SameSite=Lax; Max-Age=604800",
+      `claritect_admin_user=${encodeURIComponent(username)}; Path=/; HttpOnly; SameSite=Lax; Max-Age=604800`
+    ]);
+    return reply.code(200).send({ ok: true });
+  });
+
   app.post("/auth/logout", async (_request, reply) => {
     if (authEnabled) {
       reply.header(
@@ -188,10 +272,44 @@ export function buildWebApp(options: WebAppDependencies = {}) {
         ]
       );
     }
-    return reply.redirect("/login");
+    return reply.redirect("/logout");
+  });
+
+  app.post("/admin/auth/logout", async (_request, reply) => {
+    if (authEnabled) {
+      reply.header("set-cookie", [
+        "claritect_admin_auth=; Path=/; HttpOnly; SameSite=Lax; Expires=Thu, 01 Jan 1970 00:00:00 GMT",
+        "claritect_admin_user=; Path=/; HttpOnly; SameSite=Lax; Expires=Thu, 01 Jan 1970 00:00:00 GMT"
+      ]);
+    }
+    return reply.redirect("/admin/logout");
   });
 
   app.get("/health", async () => ({ status: "ok", service: "web" }));
+
+  app.get("/assets/claritect-logo.svg", async (_request, reply) => {
+    return reply.type("image/svg+xml; charset=utf-8").send(CLARITECT_LOGO_SVG);
+  });
+
+  app.get("/marketing-assets/*", async (request, reply) => {
+    const fileName = typeof request.params === "object" && request.params !== null && "*" in request.params
+      ? String((request.params as Record<string, unknown>)["*"] ?? "").trim()
+      : "";
+    if (fileName.length === 0) {
+      return reply.code(404).send({ message: "Marketing asset not found" });
+    }
+    const asset =
+      marketingAssetMode === "stub"
+        ? readStubMarketingAsset(fileName)
+        : await (async () => {
+            await ensureMarketingBundle();
+            return readMarketingAsset(fileName);
+          })();
+    if (!asset) {
+      return reply.code(404).send({ message: "Marketing asset not found" });
+    }
+    return reply.type(asset.contentType).send(asset.body);
+  });
   app.get("/api/chat/runtime", async () => ({
     provider: conversationClient.provider,
     mode: conversationClient.mode,
@@ -236,6 +354,16 @@ export function buildWebApp(options: WebAppDependencies = {}) {
   });
 
   app.get("/", async (_request, reply) => {
+    await ensureMarketingBundle();
+    return reply.type("text/html; charset=utf-8").send(renderMarketingHomePage());
+  });
+
+  app.get("/pricing", async (_request, reply) => {
+    await ensureMarketingBundle();
+    return reply.type("text/html; charset=utf-8").send(renderMarketingPricingPage());
+  });
+
+  app.get("/app", async (_request, reply) => {
     return reply.type("text/html; charset=utf-8").send(renderChatPage());
   });
 
@@ -257,6 +385,34 @@ export function buildWebApp(options: WebAppDependencies = {}) {
 
   app.get("/scheduled", async (_request, reply) => {
     return reply.type("text/html; charset=utf-8").send(renderScheduledReportsPage());
+  });
+
+  app.get("/admin", async (_request, reply) => {
+    return reply.type("text/html; charset=utf-8").send(renderAdminDashboardPage());
+  });
+
+  app.get("/admin/customers", async (_request, reply) => {
+    return reply.type("text/html; charset=utf-8").send(renderAdminCustomersPage());
+  });
+
+  app.get("/admin/users", async (_request, reply) => {
+    return reply.type("text/html; charset=utf-8").send(renderAdminUsersPage());
+  });
+
+  app.get("/admin/connections", async (_request, reply) => {
+    return reply.type("text/html; charset=utf-8").send(renderAdminConnectionsPage());
+  });
+
+  app.get("/admin/reports", async (_request, reply) => {
+    return reply.type("text/html; charset=utf-8").send(renderAdminReportsPage());
+  });
+
+  app.get("/admin/schedules", async (_request, reply) => {
+    return reply.type("text/html; charset=utf-8").send(renderAdminSchedulesPage());
+  });
+
+  app.get("/admin/billing", async (_request, reply) => {
+    return reply.type("text/html; charset=utf-8").send(renderAdminBillingPage());
   });
 
   app.post("/api/chat", async (request, reply) => {
@@ -866,6 +1022,126 @@ export function buildWebApp(options: WebAppDependencies = {}) {
     });
   });
 
+  app.get("/api/usage/summary", async (request, reply) => {
+    const username = getAuthenticatedUsername(request.headers.cookie);
+    return proxyToApi({
+      fetch_impl: options.fetch_impl,
+      api_base_url: apiBaseUrl,
+      method: "GET",
+      path: "/usage/summary",
+      additional_headers: username ? { "x-ui-user": username } : undefined,
+      reply
+    });
+  });
+
+  app.get("/api/usage/activity", async (request, reply) => {
+    const username = getAuthenticatedUsername(request.headers.cookie);
+    return proxyToApi({
+      fetch_impl: options.fetch_impl,
+      api_base_url: apiBaseUrl,
+      method: "GET",
+      path: "/usage/activity",
+      additional_headers: username ? { "x-ui-user": username } : undefined,
+      reply
+    });
+  });
+
+  app.get("/api/usage/ai", async (request, reply) => {
+    const username = getAuthenticatedUsername(request.headers.cookie);
+    return proxyToApi({
+      fetch_impl: options.fetch_impl,
+      api_base_url: apiBaseUrl,
+      method: "GET",
+      path: "/usage/ai",
+      additional_headers: username ? { "x-ui-user": username } : undefined,
+      reply
+    });
+  });
+
+  app.get("/api/admin/overview", async (request, reply) => {
+    const username = getAdminUsername(request.headers.cookie);
+    return proxyToApi({
+      fetch_impl: options.fetch_impl,
+      api_base_url: apiBaseUrl,
+      method: "GET",
+      path: "/admin/overview",
+      additional_headers: username ? { "x-ui-user": username } : undefined,
+      reply
+    });
+  });
+
+  app.get("/api/admin/customers", async (request, reply) => {
+    const username = getAdminUsername(request.headers.cookie);
+    return proxyToApi({
+      fetch_impl: options.fetch_impl,
+      api_base_url: apiBaseUrl,
+      method: "GET",
+      path: "/admin/customers",
+      additional_headers: username ? { "x-ui-user": username } : undefined,
+      reply
+    });
+  });
+
+  app.get("/api/admin/users", async (request, reply) => {
+    const username = getAdminUsername(request.headers.cookie);
+    return proxyToApi({
+      fetch_impl: options.fetch_impl,
+      api_base_url: apiBaseUrl,
+      method: "GET",
+      path: "/admin/users",
+      additional_headers: username ? { "x-ui-user": username } : undefined,
+      reply
+    });
+  });
+
+  app.get("/api/admin/connections", async (request, reply) => {
+    const username = getAdminUsername(request.headers.cookie);
+    return proxyToApi({
+      fetch_impl: options.fetch_impl,
+      api_base_url: apiBaseUrl,
+      method: "GET",
+      path: "/admin/connections",
+      additional_headers: username ? { "x-ui-user": username } : undefined,
+      reply
+    });
+  });
+
+  app.get("/api/admin/reports", async (request, reply) => {
+    const username = getAdminUsername(request.headers.cookie);
+    return proxyToApi({
+      fetch_impl: options.fetch_impl,
+      api_base_url: apiBaseUrl,
+      method: "GET",
+      path: "/admin/reports",
+      additional_headers: username ? { "x-ui-user": username } : undefined,
+      reply
+    });
+  });
+
+  app.get("/api/admin/schedules", async (request, reply) => {
+    const username = getAdminUsername(request.headers.cookie);
+    return proxyToApi({
+      fetch_impl: options.fetch_impl,
+      api_base_url: apiBaseUrl,
+      method: "GET",
+      path: "/admin/schedules",
+      additional_headers: username ? { "x-ui-user": username } : undefined,
+      reply
+    });
+  });
+
+  app.get("/api/admin/billing", async (request, reply) => {
+    const username = getAdminUsername(request.headers.cookie);
+    return proxyToApi({
+      fetch_impl: options.fetch_impl,
+      api_base_url: apiBaseUrl,
+      method: "GET",
+      path: "/admin/billing",
+      additional_headers: username ? { "x-ui-user": username } : undefined,
+      reply
+    });
+  });
+
   return app;
 }
 
@@ -1437,8 +1713,27 @@ function isUiAuthEnabled(): boolean {
   return raw !== "false" && raw !== "0" && raw !== "off";
 }
 
-function isAuthenticatedRequest(cookieHeader: string | undefined): boolean {
-  return getCookieValue(cookieHeader, "po_demo_auth") === "1" && getAuthenticatedUsername(cookieHeader) !== null;
+function isPublicPath(pathname: string): boolean {
+  return pathname === "/" ||
+    pathname === "/pricing" ||
+    pathname === "/health" ||
+    pathname === "/login" ||
+    pathname === "/logout" ||
+    pathname === "/auth/login" ||
+    pathname === "/admin/login" ||
+    pathname === "/admin/logout" ||
+    pathname === "/admin/auth/login" ||
+    pathname.startsWith("/marketing-assets/") ||
+    pathname === "/assets/claritect-logo.svg" ||
+    pathname === "/connect/guide";
+}
+
+function isCustomerAuthenticatedRequest(cookieHeader: string | undefined): boolean {
+  return getCookieValue(cookieHeader, "po_demo_auth") === "1" && getCustomerUsername(cookieHeader) !== null;
+}
+
+function isAdminAuthenticatedRequest(cookieHeader: string | undefined): boolean {
+  return getCookieValue(cookieHeader, "claritect_admin_auth") === "1" && getAdminUsername(cookieHeader) !== null;
 }
 
 async function proxyToApi(input: {
@@ -1502,8 +1797,32 @@ function buildApiAuthHeader(): Record<string, string> {
   return { "x-api-key": token };
 }
 
+function getRequestUsername(cookieHeader: string | undefined, pathname: string): string | null {
+  if (pathname.startsWith("/admin")) {
+    return getAdminUsername(cookieHeader);
+  }
+  return getCustomerUsername(cookieHeader);
+}
+
 function getAuthenticatedUsername(cookieHeader: string | undefined): string | null {
+  return getCustomerUsername(cookieHeader);
+}
+
+function getCustomerUsername(cookieHeader: string | undefined): string | null {
   const raw = getCookieValue(cookieHeader, "po_user");
+  if (!raw) {
+    return null;
+  }
+  try {
+    const decoded = decodeURIComponent(raw).trim();
+    return decoded.length > 0 ? decoded : null;
+  } catch {
+    return null;
+  }
+}
+
+function getAdminUsername(cookieHeader: string | undefined): string | null {
+  const raw = getCookieValue(cookieHeader, "claritect_admin_user");
   if (!raw) {
     return null;
   }

@@ -79,6 +79,30 @@ export const ReportRunDeliverySchema = z.object({
   error: z.string().min(1).nullable().default(null)
 });
 
+export const ReportRunTokenUsageSchema = z.object({
+  input_tokens: z.number().int().min(0),
+  output_tokens: z.number().int().min(0),
+  total_tokens: z.number().int().min(0),
+  by_agent: z.record(
+    z.string(),
+    z.object({
+      input_tokens: z.number().int().min(0),
+      output_tokens: z.number().int().min(0),
+      total_tokens: z.number().int().min(0)
+    })
+  ),
+  by_model: z
+    .record(
+      z.string(),
+      z.object({
+        input_tokens: z.number().int().min(0),
+        output_tokens: z.number().int().min(0),
+        total_tokens: z.number().int().min(0)
+      })
+    )
+    .default({})
+});
+
 export const ReportRunSchema = z.object({
   id: z.string().min(1),
   tenant_id: z.string().min(1).optional(),
@@ -92,6 +116,7 @@ export const ReportRunSchema = z.object({
   query_plan: z.record(z.string(), z.unknown()),
   exec_brief: z.record(z.string(), z.unknown()),
   report_html: z.string().optional(),
+  token_usage: ReportRunTokenUsageSchema.optional(),
   delivery: ReportRunDeliverySchema.optional()
 });
 
@@ -101,3 +126,4 @@ export type ReportRun = z.infer<typeof ReportRunSchema>;
 export type ReportContractDelivery = z.infer<typeof ReportContractDeliverySchema>;
 export type KpiWatchlistItem = z.infer<typeof KpiWatchlistItemSchema>;
 export type ReportRunDelivery = z.infer<typeof ReportRunDeliverySchema>;
+export type ReportRunTokenUsage = z.infer<typeof ReportRunTokenUsageSchema>;

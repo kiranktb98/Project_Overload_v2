@@ -2,7 +2,7 @@
 <html lang="en">
   <head>
     <meta charset="utf-8" />
-    <title>Project Overload DB Connection Guide</title>
+    <title>Claritect DB Connection Guide</title>
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <style>
       :root {
@@ -110,6 +110,20 @@
         letter-spacing: 0.08em;
       }
 
+      .hero-brand {
+        display: flex;
+        align-items: center;
+        gap: 14px;
+        margin-bottom: 12px;
+      }
+
+      .hero-brand img {
+        width: 76px;
+        height: 32px;
+        object-fit: contain;
+        display: block;
+      }
+
       .status {
         margin-top: 12px;
         padding: 12px 14px;
@@ -190,7 +204,10 @@
   <body>
     <div class="page">
       <section class="hero">
-        <div class="pill">Project Overload</div>
+        <div class="hero-brand">
+          <img src="/assets/claritect-logo.svg" alt="Claritect logo" />
+          <div class="pill">Claritect</div>
+        </div>
         <h1>Database Connection Guide</h1>
         <p>
           This guide covers the four supported source types in the connection wizard:
@@ -211,7 +228,7 @@
           <tr>
             <th>Step</th>
             <th>What you do</th>
-            <th>What Project Overload does</th>
+            <th>What Claritect does</th>
           </tr>
         </thead>
         <tbody>

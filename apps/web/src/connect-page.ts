@@ -1,29 +1,31 @@
+import { renderClaritectLogoImage } from "./brand";
+
 export function renderConnectionPage(): string {
   return `<!doctype html>
 <html lang="en">
   <head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
-    <title>Project Overload | Database Connection Wizard</title>
+    <title>Claritect | Data source setup</title>
     <style>
-      @import url("https://fonts.googleapis.com/css2?family=Mona+Sans:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;500&display=swap");
+      @import url("https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&display=swap");
 
       :root {
-        --ink: #edf4ff;
-        --ink-soft: #8ca2cb;
-        --ink-muted: #6076a1;
-        --line: rgba(104, 137, 206, 0.18);
-        --line-soft: rgba(116, 156, 238, 0.34);
-        --surface: rgba(8, 20, 52, 0.94);
-        --surface-strong: rgba(9, 24, 60, 0.98);
-        --primary: #66a7ff;
-        --primary-2: #6c6cff;
-        --primary-3: #7fd0ff;
+        --ink: #F5F3FF;
+        --ink-soft: #D7CFE6;
+        --ink-muted: #9D90BC;
+        --line: rgba(107, 92, 138, 0.28);
+        --line-soft: rgba(236, 72, 153, 0.24);
+        --surface: rgba(20, 15, 34, 0.94);
+        --surface-strong: rgba(31, 21, 49, 0.98);
+        --primary: #6C3AED;
+        --primary-2: #EC4899;
+        --primary-3: #EC4899;
         --warn: #f59f0b;
         --danger: #ef4444;
         --ok: #22c55e;
-        --shadow: 0 24px 60px rgba(1, 8, 28, 0.44);
-        --shadow-soft: 0 12px 32px rgba(3, 9, 27, 0.26);
+        --shadow: 0 24px 60px rgba(10, 6, 20, 0.48);
+        --shadow-soft: 0 12px 32px rgba(10, 6, 20, 0.32);
       }
 
       * { box-sizing: border-box; }
@@ -31,13 +33,13 @@ export function renderConnectionPage(): string {
       body {
         margin: 0;
         min-height: 100vh;
-        font-family: "Mona Sans", sans-serif;
+        font-family: Inter, "Sohne", "Suisse Intl", sans-serif;
         color: var(--ink);
         background:
-          radial-gradient(circle at 14% 10%, rgba(110, 165, 255, 0.17), transparent 24%),
-          radial-gradient(circle at 88% 8%, rgba(104, 92, 255, 0.15), transparent 26%),
-          radial-gradient(circle at 50% 100%, rgba(59, 132, 255, 0.1), transparent 30%),
-          linear-gradient(180deg, #020714 0%, #06112e 44%, #061533 100%);
+          radial-gradient(circle at 14% 10%, rgba(108, 58, 237, 0.22), transparent 24%),
+          radial-gradient(circle at 88% 8%, rgba(236, 72, 153, 0.15), transparent 26%),
+          radial-gradient(circle at 50% 100%, rgba(108, 58, 237, 0.12), transparent 30%),
+          linear-gradient(180deg, #0F0B1A 0%, #130F20 44%, #161122 100%);
       }
 
       body::before {
@@ -45,7 +47,7 @@ export function renderConnectionPage(): string {
         position: fixed;
         inset: 0;
         pointer-events: none;
-        background-image: linear-gradient(to right, rgba(108, 138, 214, 0.05) 1px, transparent 1px);
+        background-image: linear-gradient(to right, rgba(107, 92, 138, 0.08) 1px, transparent 1px);
         background-size: 60px 60px;
         mask-image: radial-gradient(circle at 50% 45%, rgba(0, 0, 0, 0.86), transparent 92%);
       }
@@ -56,8 +58,8 @@ export function renderConnectionPage(): string {
         inset: 0;
         pointer-events: none;
         background:
-          radial-gradient(circle at 18% 22%, rgba(115, 191, 255, 0.12), transparent 20%),
-          radial-gradient(circle at 78% 16%, rgba(120, 102, 255, 0.16), transparent 24%);
+          radial-gradient(circle at 18% 22%, rgba(108, 58, 237, 0.18), transparent 20%),
+          radial-gradient(circle at 78% 16%, rgba(236, 72, 153, 0.18), transparent 24%);
         filter: blur(34px);
         opacity: 0.9;
       }
@@ -83,7 +85,7 @@ export function renderConnectionPage(): string {
         border: 1px solid var(--line);
         border-radius: 28px;
         background:
-          linear-gradient(180deg, rgba(10, 22, 55, 0.98), rgba(5, 14, 36, 0.98)),
+          linear-gradient(180deg, rgba(20, 15, 34, 0.98), rgba(17, 12, 28, 0.98)),
           linear-gradient(180deg, rgba(255, 255, 255, 0.02), transparent);
         box-shadow: var(--shadow);
         display: flex;
@@ -98,7 +100,7 @@ export function renderConnectionPage(): string {
         inset: 0;
         pointer-events: none;
         background:
-          radial-gradient(circle at 20% 0%, rgba(118, 171, 255, 0.14), transparent 26%),
+          radial-gradient(circle at 20% 0%, rgba(108, 58, 237, 0.18), transparent 26%),
           linear-gradient(180deg, rgba(255, 255, 255, 0.04), transparent 30%);
       }
 
@@ -108,21 +110,26 @@ export function renderConnectionPage(): string {
         gap: 10px;
         padding: 8px 6px 14px;
         margin-bottom: 10px;
-        border-bottom: 1px solid rgba(130, 162, 231, 0.14);
+        border-bottom: 1px solid rgba(107, 92, 138, 0.24);
         position: relative;
         z-index: 1;
       }
 
       .platform-brand-badge {
-        width: 42px;
-        height: 42px;
-        border-radius: 15px;
-        display: grid;
-        place-items: center;
-        font-weight: 800;
-        color: #f3f8ff;
-        background: linear-gradient(145deg, var(--primary), var(--primary-2) 56%, var(--primary-3));
-        box-shadow: 0 14px 32px rgba(76, 122, 255, 0.34);
+        width: 56px;
+        height: 24px;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        flex-shrink: 0;
+      }
+
+      .platform-brand-badge img {
+        width: 100%;
+        height: 100%;
+        display: block;
+        object-fit: contain;
+        filter: drop-shadow(0 8px 20px rgba(118, 93, 255, 0.22));
       }
 
       .platform-brand strong {
@@ -136,7 +143,7 @@ export function renderConnectionPage(): string {
       .platform-brand span {
         display: block;
         margin-top: 2px;
-        font-family: "JetBrains Mono", monospace;
+        font-family: Inter, "Sohne", "Suisse Intl", sans-serif;
         font-size: 0.62rem;
         letter-spacing: 0.24em;
         text-transform: uppercase;
@@ -167,9 +174,9 @@ export function renderConnectionPage(): string {
         gap: 8px;
         padding: 11px 12px;
         border-radius: 14px;
-        color: #9eb3d9;
+        color: #E1DAF4;
         text-decoration: none;
-        border: 1px solid rgba(117, 148, 214, 0.06);
+        border: 1px solid rgba(107, 92, 138, 0.14);
         font-size: 0.84rem;
         font-weight: 600;
         transition: transform 140ms ease, border-color 140ms ease, background 140ms ease, color 140ms ease;
@@ -182,7 +189,7 @@ export function renderConnectionPage(): string {
         align-items: center;
         justify-content: center;
         flex-shrink: 0;
-        color: #6f8ac1;
+        color: #9D90BC;
       }
       .platform-link .link-icon svg {
         width: 16px;
@@ -196,15 +203,15 @@ export function renderConnectionPage(): string {
 
       .platform-link:hover {
         transform: translateX(2px);
-        background: rgba(33, 62, 129, 0.36);
-        border-color: rgba(112, 152, 244, 0.26);
+        background: rgba(108, 58, 237, 0.16);
+        border-color: rgba(236, 72, 153, 0.18);
       }
 
       .platform-link.active {
-        background: rgba(72, 99, 255, 0.9);
-        border-color: rgba(151, 191, 255, 0.4);
+        background: rgba(108, 58, 237, 0.92);
+        border-color: rgba(245, 243, 255, 0.22);
         color: #f3f8ff;
-        box-shadow: 0 14px 28px rgba(67, 93, 222, 0.28);
+        box-shadow: 0 14px 30px rgba(108, 58, 237, 0.24);
       }
 
       .platform-link.active .link-icon {
@@ -224,10 +231,10 @@ export function renderConnectionPage(): string {
         display: flex;
         align-items: center;
         gap: 10px;
-        border: 1px solid rgba(111, 147, 220, 0.14);
+        border: 1px solid rgba(107, 92, 138, 0.22);
         border-radius: 16px;
         padding: 11px 12px;
-        background: rgba(10, 24, 58, 0.76);
+        background: rgba(31, 21, 49, 0.82);
       }
 
       .platform-user-avatar {
@@ -236,15 +243,15 @@ export function renderConnectionPage(): string {
         border-radius: 11px;
         display: grid;
         place-items: center;
-        border: 1px solid #2f4d95;
-        color: #9cb3e3;
-        background: rgba(13, 31, 78, 0.9);
+        border: 1px solid rgba(108, 58, 237, 0.34);
+        color: #E1DAF4;
+        background: rgba(46, 28, 76, 0.92);
         box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.06);
       }
 
       .platform-user small {
         display: block;
-        color: #6e86bd;
+        color: #9D90BC;
         font-size: 0.63rem;
         text-transform: uppercase;
         letter-spacing: 0.12em;
@@ -261,10 +268,10 @@ export function renderConnectionPage(): string {
         align-items: center;
         justify-content: space-between;
         gap: 8px;
-        border: 1px solid rgba(111, 147, 220, 0.14);
+        border: 1px solid rgba(107, 92, 138, 0.22);
         border-radius: 16px;
         padding: 9px 11px 9px 12px;
-        background: rgba(7, 18, 45, 0.82);
+        background: rgba(24, 18, 39, 0.84);
       }
 
       .platform-support span {
@@ -279,12 +286,12 @@ export function renderConnectionPage(): string {
       }
 
       .logout-btn {
-        border: 1px solid rgba(122, 155, 226, 0.22);
+        border: 1px solid rgba(107, 92, 138, 0.28);
         border-radius: 12px;
-        background: rgba(16, 36, 84, 0.9);
-        color: #cfddff;
+        background: rgba(34, 25, 56, 0.94);
+        color: #F5F3FF;
         padding: 7px 10px;
-        font-family: "JetBrains Mono", monospace;
+        font-family: Inter, "Sohne", "Suisse Intl", sans-serif;
         font-size: 0.64rem;
         cursor: pointer;
       }
@@ -357,7 +364,7 @@ export function renderConnectionPage(): string {
       }
 
       .step-pill {
-        border: 1px solid rgba(120, 151, 221, 0.14);
+        border: 1px solid rgba(107, 92, 138, 0.22);
         border-radius: 16px;
         padding: 11px 12px;
         background: rgba(8, 23, 58, 0.74);
@@ -375,7 +382,7 @@ export function renderConnectionPage(): string {
         border: 1px solid #335899;
         display: grid;
         place-items: center;
-        font-family: "JetBrains Mono", monospace;
+        font-family: Inter, "Sohne", "Suisse Intl", sans-serif;
         font-size: 0.68rem;
       }
 
@@ -398,7 +405,7 @@ export function renderConnectionPage(): string {
         padding: 8px 10px;
         border-radius: 10px;
         font-size: 0.72rem;
-        font-family: "JetBrains Mono", monospace;
+        font-family: Inter, "Sohne", "Suisse Intl", sans-serif;
         transition: transform 140ms ease, border-color 140ms ease, background 140ms ease;
       }
 
@@ -421,11 +428,11 @@ export function renderConnectionPage(): string {
       }
 
       .mode-btn {
-        border: 1px solid rgba(120, 151, 221, 0.14);
+        border: 1px solid rgba(107, 92, 138, 0.22);
         border-radius: 16px;
         padding: 14px;
         text-align: left;
-        background: rgba(8, 22, 56, 0.7);
+        background: rgba(24, 18, 39, 0.78);
         color: #c8d9ff;
         cursor: pointer;
         box-shadow: var(--shadow-soft);
@@ -444,8 +451,8 @@ export function renderConnectionPage(): string {
       }
 
       .mode-btn.active {
-        border-color: rgba(151, 191, 255, 0.4);
-        background: rgba(72, 99, 255, 0.9);
+        border-color: rgba(245, 243, 255, 0.22);
+        background: rgba(108, 58, 237, 0.92);
         color: #ffffff;
       }
 
@@ -497,11 +504,11 @@ export function renderConnectionPage(): string {
       .source-option {
         position: relative;
         overflow: hidden;
-        border: 1px solid rgba(120, 151, 221, 0.14);
+        border: 1px solid rgba(107, 92, 138, 0.22);
         border-radius: 18px;
         padding: 18px;
         text-align: left;
-        background: rgba(8, 22, 56, 0.88);
+        background: rgba(24, 18, 39, 0.88);
         color: #d7e5ff;
         box-shadow: var(--shadow-soft);
       }
@@ -515,8 +522,8 @@ export function renderConnectionPage(): string {
       }
 
       .source-option.selected {
-        border-color: rgba(151, 191, 255, 0.4);
-        background: rgba(72, 99, 255, 0.9);
+        border-color: rgba(245, 243, 255, 0.22);
+        background: rgba(108, 58, 237, 0.92);
         color: #ffffff;
       }
 
@@ -546,13 +553,13 @@ export function renderConnectionPage(): string {
 
       .source-option-badge {
         border-radius: 999px;
-        border: 1px solid rgba(120, 151, 221, 0.2);
-        background: rgba(10, 24, 58, 0.7);
+        border: 1px solid rgba(107, 92, 138, 0.28);
+        background: rgba(31, 21, 49, 0.78);
         padding: 6px 10px;
         font-size: 0.64rem;
         letter-spacing: 0.08em;
         text-transform: uppercase;
-        color: #dbe7ff;
+        color: #F5F3FF;
       }
 
       .source-option.selected .source-option-badge {
@@ -569,10 +576,10 @@ export function renderConnectionPage(): string {
       }
 
       .source-details-card {
-        border: 1px solid rgba(120, 151, 221, 0.14);
+        border: 1px solid rgba(107, 92, 138, 0.22);
         border-radius: 18px;
         padding: 14px 16px;
-        background: rgba(9, 24, 58, 0.72);
+        background: rgba(31, 21, 49, 0.76);
         margin-bottom: 10px;
       }
 
@@ -581,10 +588,10 @@ export function renderConnectionPage(): string {
         align-items: center;
         gap: 8px;
         border-radius: 999px;
-        border: 1px solid rgba(120, 151, 221, 0.2);
-        background: rgba(10, 24, 58, 0.76);
+        border: 1px solid rgba(107, 92, 138, 0.28);
+        background: rgba(31, 21, 49, 0.82);
         padding: 8px 12px;
-        color: #dbe7ff;
+        color: #F5F3FF;
         font-size: 0.74rem;
         text-transform: uppercase;
         letter-spacing: 0.12em;
@@ -610,8 +617,8 @@ export function renderConnectionPage(): string {
         margin: 6px 0 10px;
         padding: 6px;
         border-radius: 16px;
-        border: 1px solid rgba(120, 151, 221, 0.14);
-        background: rgba(8, 22, 56, 0.66);
+        border: 1px solid rgba(107, 92, 138, 0.22);
+        background: rgba(24, 18, 39, 0.74);
       }
 
       .setup-mode-toggle .secondary {
@@ -619,8 +626,8 @@ export function renderConnectionPage(): string {
       }
 
       .setup-mode-toggle .secondary.active {
-        border-color: rgba(151, 191, 255, 0.4);
-        background: rgba(72, 99, 255, 0.9);
+        border-color: rgba(245, 243, 255, 0.22);
+        background: rgba(108, 58, 237, 0.92);
         color: #ffffff;
       }
 
@@ -670,9 +677,9 @@ export function renderConnectionPage(): string {
 
       .builder-tip,
       .builder-hint-card {
-        border: 1px solid rgba(120, 151, 221, 0.16);
+        border: 1px solid rgba(107, 92, 138, 0.24);
         border-radius: 16px;
-        background: rgba(8, 22, 56, 0.68);
+        background: rgba(24, 18, 39, 0.76);
         color: var(--ink-soft);
       }
 
@@ -707,10 +714,10 @@ export function renderConnectionPage(): string {
         gap: 8px;
         margin-bottom: 12px;
         border-radius: 999px;
-        border: 1px solid rgba(120, 151, 221, 0.18);
-        background: rgba(10, 24, 58, 0.68);
+        border: 1px solid rgba(107, 92, 138, 0.24);
+        background: rgba(31, 21, 49, 0.76);
         padding: 8px 12px;
-        color: #dbe7ff;
+        color: #F5F3FF;
         font-size: 0.72rem;
       }
 
@@ -731,7 +738,7 @@ export function renderConnectionPage(): string {
         padding: 12px 14px;
         text-align: left;
         font-size: 0.76rem;
-        border-bottom: 1px solid rgba(120, 151, 221, 0.12);
+        border-bottom: 1px solid rgba(107, 92, 138, 0.18);
       }
 
       .connections-table th {
@@ -791,7 +798,7 @@ export function renderConnectionPage(): string {
       textarea,
       button,
       select {
-        font-family: "JetBrains Mono", monospace;
+        font-family: Inter, "Sohne", "Suisse Intl", sans-serif;
       }
 
       input,
@@ -801,7 +808,7 @@ export function renderConnectionPage(): string {
         border-radius: 16px;
         border: 1px solid rgba(126, 160, 227, 0.16);
         padding: 11px 12px;
-        background: rgba(6, 18, 46, 0.9);
+        background: rgba(24, 18, 39, 0.92);
         color: #edf3ff;
       }
 
@@ -846,7 +853,7 @@ export function renderConnectionPage(): string {
         cursor: pointer;
         font-size: 0.76rem;
         border: 1px solid transparent;
-        color: #fff;
+        color: #F5F3FF;
         transition: transform 130ms ease, box-shadow 130ms ease, filter 130ms ease;
       }
 
@@ -864,8 +871,8 @@ export function renderConnectionPage(): string {
 
       .secondary {
         background: rgba(10, 28, 68, 0.96);
-        color: #dbe8ff;
-        border: 1px solid #2f4d95;
+        color: #F5F3FF;
+        border: 1px solid rgba(108, 58, 237, 0.34);
       }
 
       .warn {
@@ -914,9 +921,9 @@ export function renderConnectionPage(): string {
       }
 
       .kv .v {
-        font-family: "JetBrains Mono", monospace;
+        font-family: Inter, "Sohne", "Suisse Intl", sans-serif;
         font-size: 0.72rem;
-        color: #dbe7ff;
+        color: #F5F3FF;
         word-break: break-word;
       }
 
@@ -979,14 +986,14 @@ export function renderConnectionPage(): string {
       }
 
       .output {
-        border: 1px solid #2f4d95;
+        border: 1px solid rgba(108, 58, 237, 0.34);
         border-radius: 12px;
         padding: 10px;
         max-height: 360px;
         overflow: auto;
         background: linear-gradient(165deg, #0d214f 0%, #123266 70%, #163f77 100%);
         color: #dceafe;
-        font-family: "JetBrains Mono", monospace;
+        font-family: Inter, "Sohne", "Suisse Intl", sans-serif;
         font-size: 0.73rem;
         white-space: pre-wrap;
       }
@@ -1099,12 +1106,12 @@ export function renderConnectionPage(): string {
       .catalog-hero {
         position: relative;
         overflow: hidden;
-        border: 1px solid rgba(120, 151, 221, 0.14);
+        border: 1px solid rgba(107, 92, 138, 0.22);
         border-radius: 20px;
         padding: 22px;
         background:
-          linear-gradient(180deg, rgba(11, 25, 62, 0.98), rgba(7, 18, 45, 0.98)),
-          radial-gradient(circle at 100% 0%, rgba(102, 167, 255, 0.18), transparent 26%);
+          linear-gradient(180deg, rgba(20, 15, 34, 0.98), rgba(17, 12, 28, 0.98)),
+          radial-gradient(circle at 100% 0%, rgba(108, 58, 237, 0.16), transparent 26%);
       }
 
       .catalog-hero::before {
@@ -1141,8 +1148,8 @@ export function renderConnectionPage(): string {
         height: 54px;
         border-radius: 999px;
         border: 2px solid rgba(128, 144, 255, 0.18);
-        border-top-color: #7fd0ff;
-        border-right-color: #6c6cff;
+        border-top-color: #EC4899;
+        border-right-color: #EC4899;
         animation: spin 1.1s linear infinite;
         box-shadow: 0 0 34px rgba(102, 167, 255, 0.16);
       }
@@ -1162,10 +1169,10 @@ export function renderConnectionPage(): string {
       }
 
       .catalog-stat {
-        border: 1px solid rgba(120, 151, 221, 0.14);
+        border: 1px solid rgba(107, 92, 138, 0.22);
         border-radius: 16px;
         padding: 14px;
-        background: rgba(10, 24, 58, 0.72);
+        background: rgba(31, 21, 49, 0.78);
       }
 
       .catalog-stat small {
@@ -1292,16 +1299,16 @@ export function renderConnectionPage(): string {
       <div class="layout">
         <aside class="platform-panel">
           <div class="platform-brand">
-            <div class="platform-brand-badge">*</div>
+            <div class="platform-brand-badge">${renderClaritectLogoImage("platform-brand-logo")}</div>
             <div>
-              <strong>Project Overload</strong>
-              <span>Decision cockpit</span>
+              <strong>Claritect</strong>
+              <span>Decision intelligence</span>
             </div>
           </div>
           <div class="platform-section">Core Platform</div>
           <nav class="platform-nav">
-            <a class="platform-link" href="/"><span class="link-icon"><svg viewBox="0 0 24 24"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg></span>Chat Explorer</a>
-            <a class="platform-link" href="/usage"><span class="link-icon"><svg viewBox="0 0 24 24"><path d="M18 20V10"/><path d="M12 20V4"/><path d="M6 20v-6"/></svg></span>Usage Metrics</a>
+            <a class="platform-link" href="/app"><span class="link-icon"><svg viewBox="0 0 24 24"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg></span>Chat Explorer</a>
+            <a class="platform-link" href="/usage"><span class="link-icon"><svg viewBox="0 0 24 24"><path d="M18 20V10"/><path d="M12 20V4"/><path d="M6 20v-6"/></svg></span>Usage &amp; AI</a>
           </nav>
           <div class="platform-section">Infrastructure</div>
           <nav class="platform-nav">
@@ -1313,8 +1320,8 @@ export function renderConnectionPage(): string {
             <div class="platform-user">
               <div class="platform-user-avatar">@</div>
               <div>
-                <small>Admin Profile</small>
-                <strong>Project Owner</strong>
+                <small>Customer workspace</small>
+                <strong>Claritect User</strong>
               </div>
             </div>
             <div class="platform-support">

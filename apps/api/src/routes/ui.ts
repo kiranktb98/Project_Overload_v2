@@ -1,4 +1,4 @@
-import type { FastifyInstance, FastifyRequest } from "fastify";
+import type { FastifyInstance, FastifyReply, FastifyRequest } from "fastify";
 import { createHash } from "node:crypto";
 import { z } from "zod";
 import type { MetadataStore, PlatformUserRecord } from "../store";
@@ -52,58 +52,20 @@ const RagSearchPayloadSchema = z.object({
 
 export function registerUiRoutes(app: FastifyInstance, store: MetadataStore): void {
   app.post("/ui/auth/login", async (request, reply) => {
-    const context = resolveRequestContext(request);
-    const parsed = LoginPayloadSchema.safeParse(request.body ?? {});
-    if (!parsed.success) {
-      return reply.code(400).send({
-        message: "Invalid login payload",
-        issues: parsed.error.issues
-      });
-    }
+    return authenticateUiUser({
+      request,
+      reply,
+      store,
+      allowed_role: "customer"
+    });
+  });
 
-    const username = parsed.data.username;
-    let user = await store.getPlatformUserByUsername(username, context);
-
-    const demoUsers: Record<string, { id: string; password: string }> = {
-      test123: { id: "user_test123", password: "test123" },
-      krypton123: { id: "user_krypton123", password: "test123" },
-      test456: { id: "user_test456", password: "test456" }
-    };
-
-    const demo = demoUsers[username];
-    if (!user && demo) {
-      const hashed = await hashPassword(demo.password);
-      user = await store.upsertPlatformUser(
-        {
-          id: demo.id,
-          tenant_id: context.tenant_id,
-          username,
-          password_salt: hashed.salt,
-          password_hash: hashed.hash,
-          is_active: true
-        },
-        context
-      );
-    }
-
-    if (!user || !user.is_active) {
-      return reply.code(401).send({ message: "Invalid credentials" });
-    }
-
-    const isValid = await verifyPassword(parsed.data.password, user.password_salt, user.password_hash);
-    if (!isValid) {
-      return reply.code(401).send({ message: "Invalid credentials" });
-    }
-
-    await store.markPlatformUserLogin(user.id, context);
-
-    return reply.code(200).send({
-      ok: true,
-      user: {
-        id: user.id,
-        tenant_id: user.tenant_id,
-        username: user.username
-      }
+  app.post("/ui/auth/admin/login", async (request, reply) => {
+    return authenticateUiUser({
+      request,
+      reply,
+      store,
+      allowed_role: "admin"
     });
   });
 
@@ -253,6 +215,80 @@ export function registerUiRoutes(app: FastifyInstance, store: MetadataStore): vo
     );
 
     return reply.code(200).send({ chunks });
+  });
+}
+
+async function authenticateUiUser(input: {
+  request: FastifyRequest;
+  reply: FastifyReply;
+  store: MetadataStore;
+  allowed_role: "customer" | "admin";
+}) {
+  const context = resolveRequestContext(input.request);
+  const parsed = LoginPayloadSchema.safeParse(input.request.body ?? {});
+  if (!parsed.success) {
+    return input.reply.code(400).send({
+      message: "Invalid login payload",
+      issues: parsed.error.issues
+    });
+  }
+
+  const username = parsed.data.username;
+  let user = await input.store.getPlatformUserByUsername(username, context);
+
+  const demoUsers: Record<
+    string,
+    { id: string; password: string; role: "customer" | "admin"; display_name: string }
+  > = {
+    test123: { id: "user_test123", password: "test123", role: "customer", display_name: "Claritect User" },
+    krypton123: { id: "user_krypton123", password: "test123", role: "customer", display_name: "Krypton Test" },
+    test456: { id: "user_test456", password: "test456", role: "customer", display_name: "Test Analyst" },
+    claritect_admin: {
+      id: "user_claritect_admin",
+      password: "test123",
+      role: "admin",
+      display_name: "Claritect Admin"
+    }
+  };
+
+  const demo = demoUsers[username];
+  if (!user && demo) {
+    const hashed = await hashPassword(demo.password);
+    user = await input.store.upsertPlatformUser(
+      {
+        id: demo.id,
+        tenant_id: context.tenant_id,
+        username,
+        password_salt: hashed.salt,
+        password_hash: hashed.hash,
+        role: demo.role,
+        display_name: demo.display_name,
+        is_active: true
+      },
+      context
+    );
+  }
+
+  if (!user || !user.is_active || user.role !== input.allowed_role) {
+    return input.reply.code(401).send({ message: "Invalid credentials" });
+  }
+
+  const isValid = await verifyPassword(parsed.data.password, user.password_salt, user.password_hash);
+  if (!isValid) {
+    return input.reply.code(401).send({ message: "Invalid credentials" });
+  }
+
+  await input.store.markPlatformUserLogin(user.id, context);
+
+  return input.reply.code(200).send({
+    ok: true,
+    user: {
+      id: user.id,
+      tenant_id: user.tenant_id,
+      username: user.username,
+      role: user.role,
+      display_name: user.display_name
+    }
   });
 }
 

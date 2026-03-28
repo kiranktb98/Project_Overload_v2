@@ -36,6 +36,8 @@ export const ScheduledReportProfileSchema = z.object({
   timezone: z.string().min(1),
   day_of_week: z.number().int().min(0).max(6).nullable().default(null),
   day_of_month: z.number().int().min(1).max(28).nullable().default(null),
+  hour_local: z.number().int().min(0).max(23).default(9),
+  minute_local: z.number().int().min(0).max(59).default(0),
   hour_utc: z.number().int().min(0).max(23).default(9),
   minute_utc: z.number().int().min(0).max(59).default(0),
   schedule_cron: z.string().min(1),

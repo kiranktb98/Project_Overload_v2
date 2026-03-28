@@ -160,7 +160,17 @@ const TokenUsageReportSchema = z.object({
       output_tokens: z.number().int().min(0),
       total_tokens: z.number().int().min(0)
     })
-  )
+  ),
+  by_model: z
+    .record(
+      z.string(),
+      z.object({
+        input_tokens: z.number().int().min(0),
+        output_tokens: z.number().int().min(0),
+        total_tokens: z.number().int().min(0)
+      })
+    )
+    .default({})
 });
 
 export type PreparedQuestionPayload = z.infer<typeof PreparedQuestionPayloadSchema>;
@@ -953,7 +963,8 @@ export async function runReportContractPipeline(input: {
       kpi_results: kpiResults
     },
     exec_brief: execBrief,
-    report_html: html
+    report_html: html,
+    token_usage: tokenUsage.snapshot()
   });
 
   await input.store.createReportRun(run, storeContext);
@@ -5573,16 +5584,32 @@ type TokenUsageAccumulator = {
 
 function createTokenUsageAccumulator(): TokenUsageAccumulator {
   const byAgent = new Map<string, { input_tokens: number; output_tokens: number; total_tokens: number }>();
+  const byModel = new Map<string, { input_tokens: number; output_tokens: number; total_tokens: number }>();
 
   return {
     add(events: TokenUsageEvent[]) {
       for (const event of events) {
-        const key = event.agent;
-        const current = byAgent.get(key) ?? { input_tokens: 0, output_tokens: 0, total_tokens: 0 };
-        current.input_tokens += event.input_tokens;
-        current.output_tokens += event.output_tokens;
-        current.total_tokens += event.total_tokens;
-        byAgent.set(key, current);
+        const agentKey = event.agent;
+        const currentAgent = byAgent.get(agentKey) ?? {
+          input_tokens: 0,
+          output_tokens: 0,
+          total_tokens: 0
+        };
+        currentAgent.input_tokens += event.input_tokens;
+        currentAgent.output_tokens += event.output_tokens;
+        currentAgent.total_tokens += event.total_tokens;
+        byAgent.set(agentKey, currentAgent);
+
+        const modelKey = event.model;
+        const currentModel = byModel.get(modelKey) ?? {
+          input_tokens: 0,
+          output_tokens: 0,
+          total_tokens: 0
+        };
+        currentModel.input_tokens += event.input_tokens;
+        currentModel.output_tokens += event.output_tokens;
+        currentModel.total_tokens += event.total_tokens;
+        byModel.set(modelKey, currentModel);
       }
     },
     addReport(report: TokenUsageReport) {
@@ -5593,9 +5620,17 @@ function createTokenUsageAccumulator(): TokenUsageAccumulator {
         current.total_tokens += usage.total_tokens;
         byAgent.set(agent, current);
       }
+      for (const [model, usage] of Object.entries(report.by_model ?? {})) {
+        const current = byModel.get(model) ?? { input_tokens: 0, output_tokens: 0, total_tokens: 0 };
+        current.input_tokens += usage.input_tokens;
+        current.output_tokens += usage.output_tokens;
+        current.total_tokens += usage.total_tokens;
+        byModel.set(model, current);
+      }
     },
     snapshot() {
       const record: Record<string, { input_tokens: number; output_tokens: number; total_tokens: number }> = {};
+      const modelRecord: Record<string, { input_tokens: number; output_tokens: number; total_tokens: number }> = {};
       let inputTokens = 0;
       let outputTokens = 0;
       let totalTokens = 0;
@@ -5611,11 +5646,20 @@ function createTokenUsageAccumulator(): TokenUsageAccumulator {
         totalTokens += usage.total_tokens;
       }
 
+      for (const [model, usage] of byModel.entries()) {
+        modelRecord[model] = {
+          input_tokens: usage.input_tokens,
+          output_tokens: usage.output_tokens,
+          total_tokens: usage.total_tokens
+        };
+      }
+
       return TokenUsageReportSchema.parse({
         input_tokens: inputTokens,
         output_tokens: outputTokens,
         total_tokens: totalTokens,
-        by_agent: record
+        by_agent: record,
+        by_model: modelRecord
       });
     }
   };

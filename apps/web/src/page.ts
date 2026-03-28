@@ -1,29 +1,31 @@
+import { renderClaritectLogoImage } from "./brand";
+
 export function renderChatPage(): string {
   return `<!doctype html>
 <html lang="en">
   <head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
-    <title>Project Overload | Report Contract Chat</title>
+    <title>Claritect | Decision workspace</title>
     <style>
-      @import url("https://fonts.googleapis.com/css2?family=Mona+Sans:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;500&display=swap");
+      @import url("https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&display=swap");
 
       :root {
-        --ink: #edf4ff;
-        --ink-soft: #8ca2cb;
-        --ink-muted: #6076a1;
-        --panel: rgba(6, 16, 42, 0.92);
-        --panel-2: rgba(8, 21, 56, 0.96);
-        --panel-3: rgba(12, 28, 70, 0.94);
-        --line: rgba(104, 137, 206, 0.18);
-        --line-soft: rgba(116, 156, 238, 0.34);
-        --accent: #66a7ff;
-        --accent-2: #6c6cff;
-        --accent-3: #7fd0ff;
-        --accent-soft: rgba(102, 167, 255, 0.18);
-        --glow: rgba(108, 111, 255, 0.36);
-        --shadow: 0 24px 60px rgba(1, 8, 28, 0.44);
-        --shadow-soft: 0 12px 32px rgba(3, 9, 27, 0.26);
+        --ink: #F5F3FF;
+        --ink-soft: #D7CFE6;
+        --ink-muted: #9D90BC;
+        --panel: rgba(20, 15, 34, 0.92);
+        --panel-2: rgba(26, 18, 42, 0.96);
+        --panel-3: rgba(31, 21, 49, 0.94);
+        --line: rgba(107, 92, 138, 0.28);
+        --line-soft: rgba(236, 72, 153, 0.24);
+        --accent: #6C3AED;
+        --accent-2: #EC4899;
+        --accent-3: #EC4899;
+        --accent-soft: rgba(108, 58, 237, 0.16);
+        --glow: rgba(236, 72, 153, 0.22);
+        --shadow: 0 24px 60px rgba(10, 6, 20, 0.48);
+        --shadow-soft: 0 12px 32px rgba(10, 6, 20, 0.32);
       }
 
       * {
@@ -33,13 +35,13 @@ export function renderChatPage(): string {
       body {
         margin: 0;
         min-height: 100vh;
-        font-family: "Mona Sans", sans-serif;
+        font-family: Inter, "Sohne", "Suisse Intl", sans-serif;
         color: var(--ink);
         background:
-          radial-gradient(circle at 14% 10%, rgba(110, 165, 255, 0.17), transparent 24%),
-          radial-gradient(circle at 88% 8%, rgba(104, 92, 255, 0.15), transparent 26%),
-          radial-gradient(circle at 50% 100%, rgba(59, 132, 255, 0.1), transparent 30%),
-          linear-gradient(180deg, #020714 0%, #06112e 44%, #061533 100%);
+          radial-gradient(circle at 14% 10%, rgba(108, 58, 237, 0.22), transparent 24%),
+          radial-gradient(circle at 88% 8%, rgba(236, 72, 153, 0.15), transparent 26%),
+          radial-gradient(circle at 50% 100%, rgba(108, 58, 237, 0.12), transparent 30%),
+          linear-gradient(180deg, #0F0B1A 0%, #130F20 44%, #161122 100%);
       }
 
       body::before {
@@ -49,7 +51,7 @@ export function renderChatPage(): string {
         pointer-events: none;
         background-image: linear-gradient(
           to right,
-          rgba(108, 138, 214, 0.05) 1px,
+          rgba(107, 92, 138, 0.08) 1px,
           transparent 1px
         );
         background-size: 60px 60px;
@@ -62,8 +64,8 @@ export function renderChatPage(): string {
         inset: 0;
         pointer-events: none;
         background:
-          radial-gradient(circle at 18% 22%, rgba(115, 191, 255, 0.12), transparent 20%),
-          radial-gradient(circle at 78% 16%, rgba(120, 102, 255, 0.16), transparent 24%);
+          radial-gradient(circle at 18% 22%, rgba(108, 58, 237, 0.18), transparent 20%),
+          radial-gradient(circle at 78% 16%, rgba(236, 72, 153, 0.18), transparent 24%);
         filter: blur(34px);
         opacity: 0.9;
       }
@@ -95,7 +97,7 @@ export function renderChatPage(): string {
         border: 1px solid var(--line);
         border-radius: 28px;
         background:
-          linear-gradient(180deg, rgba(10, 22, 55, 0.98), rgba(5, 14, 36, 0.98)),
+          linear-gradient(180deg, rgba(20, 15, 34, 0.98), rgba(17, 12, 28, 0.98)),
           linear-gradient(180deg, rgba(255, 255, 255, 0.02), transparent);
         box-shadow: var(--shadow);
         display: flex;
@@ -110,7 +112,7 @@ export function renderChatPage(): string {
         inset: 0;
         pointer-events: none;
         background:
-          radial-gradient(circle at 20% 0%, rgba(118, 171, 255, 0.14), transparent 26%),
+          radial-gradient(circle at 20% 0%, rgba(108, 58, 237, 0.18), transparent 26%),
           linear-gradient(180deg, rgba(255, 255, 255, 0.04), transparent 30%);
       }
 
@@ -120,21 +122,26 @@ export function renderChatPage(): string {
         gap: 10px;
         padding: 8px 6px 14px;
         margin-bottom: 10px;
-        border-bottom: 1px solid rgba(130, 162, 231, 0.14);
+        border-bottom: 1px solid rgba(107, 92, 138, 0.24);
         position: relative;
         z-index: 1;
       }
 
       .platform-brand-badge {
-        width: 42px;
-        height: 42px;
-        border-radius: 15px;
-        display: grid;
-        place-items: center;
-        font-weight: 800;
-        color: #f3f8ff;
-        background: linear-gradient(145deg, var(--accent), var(--accent-2) 56%, var(--accent-3));
-        box-shadow: 0 14px 32px rgba(76, 122, 255, 0.34);
+        width: 56px;
+        height: 24px;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        flex-shrink: 0;
+      }
+
+      .platform-brand-badge img {
+        width: 100%;
+        height: 100%;
+        display: block;
+        object-fit: contain;
+        filter: drop-shadow(0 8px 20px rgba(118, 93, 255, 0.22));
       }
 
       .platform-brand strong {
@@ -148,7 +155,7 @@ export function renderChatPage(): string {
       .platform-brand span {
         display: block;
         margin-top: 2px;
-        font-family: "JetBrains Mono", monospace;
+        font-family: Inter, "Sohne", "Suisse Intl", sans-serif;
         font-size: 0.62rem;
         letter-spacing: 0.24em;
         text-transform: uppercase;
@@ -179,9 +186,9 @@ export function renderChatPage(): string {
         gap: 8px;
         padding: 11px 12px;
         border-radius: 14px;
-        color: #9eb3d9;
+        color: #E1DAF4;
         text-decoration: none;
-        border: 1px solid rgba(117, 148, 214, 0.06);
+        border: 1px solid rgba(107, 92, 138, 0.14);
         font-size: 0.84rem;
         font-weight: 600;
         transition: transform 140ms ease, border-color 140ms ease, background 140ms ease, color 140ms ease;
@@ -194,7 +201,7 @@ export function renderChatPage(): string {
         align-items: center;
         justify-content: center;
         flex-shrink: 0;
-        color: #6f8ac1;
+        color: #9D90BC;
       }
       .platform-link .link-icon svg {
         width: 16px;
@@ -208,15 +215,15 @@ export function renderChatPage(): string {
 
       .platform-link:hover {
         transform: translateX(2px);
-        background: rgba(33, 62, 129, 0.36);
-        border-color: rgba(112, 152, 244, 0.26);
+        background: rgba(108, 58, 237, 0.16);
+        border-color: rgba(236, 72, 153, 0.18);
       }
 
       .platform-link.active {
-        background: rgba(72, 99, 255, 0.9);
-        border-color: rgba(151, 191, 255, 0.4);
+        background: rgba(108, 58, 237, 0.92);
+        border-color: rgba(245, 243, 255, 0.22);
         color: #f3f8ff;
-        box-shadow: 0 14px 28px rgba(67, 93, 222, 0.28);
+        box-shadow: 0 14px 30px rgba(108, 58, 237, 0.24);
       }
 
       .platform-link.active .link-icon {
@@ -236,10 +243,10 @@ export function renderChatPage(): string {
         display: flex;
         align-items: center;
         gap: 10px;
-        border: 1px solid rgba(111, 147, 220, 0.14);
+        border: 1px solid rgba(107, 92, 138, 0.22);
         border-radius: 16px;
         padding: 11px 12px;
-        background: rgba(10, 24, 58, 0.76);
+        background: rgba(31, 21, 49, 0.82);
       }
 
       .platform-user-avatar {
@@ -248,15 +255,15 @@ export function renderChatPage(): string {
         border-radius: 11px;
         display: grid;
         place-items: center;
-        border: 1px solid #2f4d95;
-        color: #9cb3e3;
-        background: rgba(13, 31, 78, 0.9);
+        border: 1px solid rgba(108, 58, 237, 0.34);
+        color: #E1DAF4;
+        background: rgba(46, 28, 76, 0.92);
         box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.06);
       }
 
       .platform-user small {
         display: block;
-        color: #6e86bd;
+        color: #9D90BC;
         font-size: 0.63rem;
         text-transform: uppercase;
         letter-spacing: 0.12em;
@@ -273,10 +280,10 @@ export function renderChatPage(): string {
         align-items: center;
         justify-content: space-between;
         gap: 8px;
-        border: 1px solid rgba(111, 147, 220, 0.14);
+        border: 1px solid rgba(107, 92, 138, 0.22);
         border-radius: 16px;
         padding: 9px 11px 9px 12px;
-        background: rgba(7, 18, 45, 0.82);
+        background: rgba(24, 18, 39, 0.84);
       }
 
       .platform-support span {
@@ -291,12 +298,12 @@ export function renderChatPage(): string {
       }
 
       .logout-btn {
-        border: 1px solid rgba(122, 155, 226, 0.22);
+        border: 1px solid rgba(107, 92, 138, 0.28);
         border-radius: 12px;
-        background: rgba(16, 36, 84, 0.9);
-        color: #cfddff;
+        background: rgba(34, 25, 56, 0.94);
+        color: #F5F3FF;
         padding: 7px 10px;
-        font-family: "JetBrains Mono", monospace;
+        font-family: Inter, "Sohne", "Suisse Intl", sans-serif;
         font-size: 0.64rem;
         cursor: pointer;
       }
@@ -305,7 +312,7 @@ export function renderChatPage(): string {
         position: relative;
         border: 1px solid var(--line);
         border-radius: 28px;
-        background: linear-gradient(180deg, rgba(8, 20, 50, 0.98), rgba(5, 15, 38, 0.98));
+        background: linear-gradient(180deg, rgba(20, 15, 34, 0.98), rgba(17, 12, 28, 0.98));
         box-shadow: var(--shadow);
         backdrop-filter: blur(16px);
         display: flex;
@@ -325,7 +332,7 @@ export function renderChatPage(): string {
         pointer-events: none;
         background:
           linear-gradient(180deg, rgba(255, 255, 255, 0.04), transparent 24%),
-          radial-gradient(circle at 100% 0%, rgba(102, 167, 255, 0.12), transparent 28%);
+          radial-gradient(circle at 100% 0%, rgba(108, 58, 237, 0.16), transparent 28%);
       }
 
       .history-title {
@@ -336,7 +343,7 @@ export function renderChatPage(): string {
         padding: 10px 10px 12px;
         margin-bottom: 2px;
         border-radius: 16px;
-        border-bottom: 1px solid rgba(126, 159, 228, 0.12);
+        border-bottom: 1px solid rgba(107, 92, 138, 0.22);
         position: relative;
         z-index: 1;
       }
@@ -370,7 +377,7 @@ export function renderChatPage(): string {
         font-size: 0.92rem;
         line-height: 1;
         cursor: pointer;
-        color: #d7e6ff;
+        color: #F5F3FF;
         background: rgba(28, 66, 150, 0.96);
         box-shadow: 0 10px 20px rgba(38, 78, 164, 0.2);
       }
@@ -391,7 +398,7 @@ export function renderChatPage(): string {
         font-size: 0.88rem;
         line-height: 1;
         cursor: pointer;
-        color: #d7e6ff;
+        color: #F5F3FF;
         background: rgba(12, 31, 78, 0.9);
         box-shadow: 0 10px 20px rgba(19, 36, 85, 0.18);
         transition: background 160ms ease, border-color 160ms ease, transform 160ms ease;
@@ -418,7 +425,7 @@ export function renderChatPage(): string {
         min-height: 0;
         scrollbar-gutter: stable;
         scrollbar-width: thin;
-        scrollbar-color: #1c3f85 #081b45;
+        scrollbar-color: rgba(108, 58, 237, 0.68) rgba(24, 18, 39, 0.88);
         transition: opacity 180ms ease, transform 180ms ease;
       }
 
@@ -427,17 +434,17 @@ export function renderChatPage(): string {
       }
 
       .history-list::-webkit-scrollbar-thumb {
-        background: #1c3f85;
+        background: rgba(108, 58, 237, 0.72);
         border-radius: 999px;
       }
 
       .history-empty {
-        border: 1px dashed rgba(123, 156, 226, 0.26);
+        border: 1px dashed rgba(107, 92, 138, 0.28);
         border-radius: 16px;
         padding: 14px;
         color: var(--ink-soft);
         font-size: 0.74rem;
-        background: rgba(10, 23, 57, 0.4);
+        background: rgba(24, 18, 39, 0.46);
       }
 
       .history-item {
@@ -445,8 +452,8 @@ export function renderChatPage(): string {
         text-align: left;
         padding: 12px 12px 11px;
         border-radius: 16px;
-        border: 1px solid rgba(115, 145, 213, 0.1);
-        background: rgba(10, 24, 58, 0.92);
+        border: 1px solid rgba(107, 92, 138, 0.18);
+        background: rgba(31, 21, 49, 0.92);
         color: inherit;
         cursor: pointer;
         transition: border-color 130ms ease, transform 130ms ease, background 130ms ease, box-shadow 130ms ease;
@@ -454,16 +461,16 @@ export function renderChatPage(): string {
       }
 
       .history-item.active {
-        border-color: rgba(132, 183, 255, 0.34);
-        background: rgba(42, 67, 163, 0.92);
+        border-color: rgba(236, 72, 153, 0.24);
+        background: rgba(108, 58, 237, 0.28);
         box-shadow:
-          inset 0 0 0 1px rgba(134, 168, 255, 0.14),
-          0 16px 30px rgba(29, 49, 115, 0.34);
+          inset 0 0 0 1px rgba(245, 243, 255, 0.08),
+          0 16px 30px rgba(108, 58, 237, 0.2);
       }
 
       .history-item:hover {
         transform: translateY(-1px);
-        border-color: rgba(105, 154, 255, 0.28);
+        border-color: rgba(107, 92, 138, 0.26);
       }
 
       .history-item-head {
@@ -479,7 +486,7 @@ export function renderChatPage(): string {
       }
 
       .history-item time {
-        font-family: "JetBrains Mono", monospace;
+        font-family: Inter, "Sohne", "Suisse Intl", sans-serif;
         color: var(--ink-muted);
         font-size: 0.65rem;
       }
@@ -534,11 +541,11 @@ export function renderChatPage(): string {
         left: 50%;
         transform: translateX(-50%) rotate(180deg);
         writing-mode: vertical-rl;
-        font-family: "JetBrains Mono", monospace;
+        font-family: Inter, "Sohne", "Suisse Intl", sans-serif;
         font-size: 0.62rem;
         letter-spacing: 0.18em;
         text-transform: uppercase;
-        color: #6f86b8;
+        color: #9D90BC;
       }
 
       .chat-shell {
@@ -596,16 +603,20 @@ export function renderChatPage(): string {
       }
 
       .chat-head-mark {
-        width: 34px;
-        height: 34px;
-        border-radius: 12px;
-        border: 1px solid rgba(127, 171, 255, 0.28);
-        background: linear-gradient(135deg, var(--accent), var(--accent-2) 58%, var(--accent-3));
-        display: grid;
-        place-items: center;
-        font-weight: 800;
-        color: #fff;
-        box-shadow: 0 12px 26px rgba(82, 102, 255, 0.28);
+        width: 44px;
+        height: 18px;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        flex-shrink: 0;
+      }
+
+      .chat-head-mark img {
+        width: 100%;
+        height: 100%;
+        display: block;
+        object-fit: contain;
+        filter: drop-shadow(0 8px 18px rgba(118, 93, 255, 0.2));
       }
 
       .chat-head-copy strong {
@@ -617,7 +628,7 @@ export function renderChatPage(): string {
       .chat-subtitle {
         display: block;
         margin-top: 1px;
-        font-family: "JetBrains Mono", monospace;
+        font-family: Inter, "Sohne", "Suisse Intl", sans-serif;
         font-size: 0.6rem;
         text-transform: uppercase;
         letter-spacing: 0.18em;
@@ -637,19 +648,19 @@ export function renderChatPage(): string {
         border: 1px solid #2b4d98;
         background: rgba(16, 35, 83, 0.88);
         color: #afc3f3;
-        font-family: "JetBrains Mono", monospace;
+        font-family: Inter, "Sohne", "Suisse Intl", sans-serif;
         font-size: 0.72rem;
         cursor: default;
       }
 
       .status {
-        font-family: "JetBrains Mono", monospace;
+        font-family: Inter, "Sohne", "Suisse Intl", sans-serif;
         font-size: 0.62rem;
         color: var(--ink-soft);
         padding: 6px 10px 5px;
         border-radius: 999px;
-        border: 1px solid #29498e;
-        background: rgba(10, 29, 70, 0.88);
+        border: 1px solid rgba(107, 92, 138, 0.28);
+        background: rgba(39, 28, 63, 0.94);
       }
 
       .messages {
@@ -672,7 +683,7 @@ export function renderChatPage(): string {
           border-radius: 22px;
           border: 1px solid rgba(118, 152, 226, 0.16);
           background:
-            linear-gradient(180deg, rgba(10, 24, 58, 0.9), rgba(7, 18, 45, 0.92)),
+            linear-gradient(180deg, rgba(31, 21, 49, 0.92), rgba(24, 18, 39, 0.94)),
             radial-gradient(circle at 0% 0%, rgba(112, 178, 255, 0.1), transparent 28%);
           box-shadow: var(--shadow-soft);
         }
@@ -712,7 +723,7 @@ export function renderChatPage(): string {
 
       .bubble.user {
         margin-left: auto;
-        color: #f8fbff;
+        color: #F5F3FF;
         background: #3f63d8;
         border: 1px solid rgba(153, 184, 255, 0.28);
         box-shadow:
@@ -723,7 +734,7 @@ export function renderChatPage(): string {
       }
 
       .bubble.assistant {
-        background: linear-gradient(160deg, rgba(9, 24, 58, 0.96), rgba(6, 18, 46, 0.96));
+        background: linear-gradient(160deg, rgba(31, 21, 49, 0.96), rgba(24, 18, 39, 0.96));
         border: 1px solid rgba(122, 156, 225, 0.14);
         box-shadow: 0 9px 22px rgba(1, 8, 26, 0.34);
       }
@@ -750,7 +761,7 @@ export function renderChatPage(): string {
       }
 
       .bubble.assistant code {
-        font-family: "JetBrains Mono", monospace;
+        font-family: Inter, "Sohne", "Suisse Intl", sans-serif;
         font-size: 0.83em;
         background: rgba(106, 129, 209, 0.2);
         padding: 1px 6px;
@@ -764,7 +775,7 @@ export function renderChatPage(): string {
         border: 1px solid rgba(40, 69, 142, 0.55);
         background: rgba(4, 14, 38, 0.9);
         color: #b8cff1;
-        font-family: "JetBrains Mono", monospace;
+        font-family: Inter, "Sohne", "Suisse Intl", sans-serif;
         font-size: 0.8rem;
         line-height: 1.5;
         overflow-x: auto;
@@ -1092,7 +1103,7 @@ export function renderChatPage(): string {
         color: #8dafdd;
         border-radius: 999px;
         padding: 6px 12px;
-        font-family: "JetBrains Mono", monospace;
+        font-family: Inter, "Sohne", "Suisse Intl", sans-serif;
         font-size: 0.67rem;
         cursor: pointer;
         transition: background 0.15s, color 0.15s, border-color 0.15s;
@@ -1157,7 +1168,7 @@ export function renderChatPage(): string {
         font-size: 0.85rem;
         font-weight: 600;
         color: #aec6f0;
-        font-family: "JetBrains Mono", monospace;
+        font-family: Inter, "Sohne", "Suisse Intl", sans-serif;
       }
 
       .queries-modal-close {
@@ -1485,8 +1496,8 @@ export function renderChatPage(): string {
         border: 1px solid rgba(126, 160, 227, 0.16);
         padding: 14px 15px 13px;
         min-height: 52px;
-        background: rgba(6, 18, 46, 0.9);
-        font-family: "JetBrains Mono", monospace;
+        background: rgba(24, 18, 39, 0.92);
+        font-family: Inter, "Sohne", "Suisse Intl", sans-serif;
         font-size: 0.8rem;
         color: #edf3ff;
         resize: none;
@@ -1507,7 +1518,7 @@ export function renderChatPage(): string {
         cursor: pointer;
         color: #ffffff;
         background: #4f87ff;
-        font-family: "Mona Sans", sans-serif;
+        font-family: Inter, "Sohne", "Suisse Intl", sans-serif;
         font-weight: 700;
         letter-spacing: 0;
         box-shadow: 0 14px 30px var(--glow);
@@ -1549,7 +1560,7 @@ export function renderChatPage(): string {
         border-radius: 999px;
         background: #4c40ff;
         color: #ffffff;
-        font-family: "JetBrains Mono", monospace;
+        font-family: Inter, "Sohne", "Suisse Intl", sans-serif;
         font-size: 0.73rem;
         padding: 7px 12px;
         cursor: pointer;
@@ -1638,16 +1649,16 @@ export function renderChatPage(): string {
       <div class="layout" id="workspace-layout">
         <aside class="platform-panel">
           <div class="platform-brand">
-            <div class="platform-brand-badge">*</div>
+            <div class="platform-brand-badge">${renderClaritectLogoImage("platform-brand-logo")}</div>
             <div>
-              <strong>Project Overload</strong>
-              <span>Decision cockpit</span>
+              <strong>Claritect</strong>
+              <span>Decision intelligence</span>
             </div>
           </div>
           <div class="platform-section">Core Platform</div>
           <nav class="platform-nav">
-            <a class="platform-link active" href="/"><span class="link-icon"><svg viewBox="0 0 24 24"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg></span>Chat Explorer</a>
-            <a class="platform-link" href="/usage"><span class="link-icon"><svg viewBox="0 0 24 24"><path d="M18 20V10"/><path d="M12 20V4"/><path d="M6 20v-6"/></svg></span>Usage Metrics</a>
+            <a class="platform-link active" href="/app"><span class="link-icon"><svg viewBox="0 0 24 24"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg></span>Chat Explorer</a>
+            <a class="platform-link" href="/usage"><span class="link-icon"><svg viewBox="0 0 24 24"><path d="M18 20V10"/><path d="M12 20V4"/><path d="M6 20v-6"/></svg></span>Usage &amp; AI</a>
           </nav>
           <div class="platform-section">Infrastructure</div>
           <nav class="platform-nav">
@@ -1659,8 +1670,8 @@ export function renderChatPage(): string {
             <div class="platform-user">
               <div class="platform-user-avatar">@</div>
               <div>
-                <small>Admin Profile</small>
-                <strong>Project Owner</strong>
+                <small>Customer workspace</small>
+                <strong>Claritect User</strong>
               </div>
             </div>
             <div class="platform-support">
@@ -1689,7 +1700,7 @@ export function renderChatPage(): string {
         <main class="chat-shell">
           <header class="chat-head">
             <div class="chat-head-left">
-              <div class="chat-head-mark">*</div>
+              <div class="chat-head-mark">${renderClaritectLogoImage("chat-head-logo", "Claritect")}</div>
               <div class="chat-head-copy">
                 <strong id="chat-session-title">New Chat</strong>
                 <span class="chat-subtitle">Decision intelligence workspace</span>
@@ -1762,11 +1773,11 @@ export function renderChatPage(): string {
                       <input id="schedule-monthday" type="number" min="1" max="28" value="1" />
                     </div>
                     <div class="schedule-field">
-                      <label for="schedule-hour">Hour (UTC)</label>
+                      <label for="schedule-hour">Local hour</label>
                       <input id="schedule-hour" type="number" min="0" max="23" value="9" />
                     </div>
                     <div class="schedule-field">
-                      <label for="schedule-minute">Minute (UTC)</label>
+                      <label for="schedule-minute">Local minute</label>
                       <input id="schedule-minute" type="number" min="0" max="59" value="0" />
                     </div>
                   </div>
@@ -1790,7 +1801,7 @@ export function renderChatPage(): string {
                 </aside>
               </div>
               <div class="schedule-modal-footer">
-                <div class="schedule-footer-note" id="schedule-footer-note">We’ll save the cadence, question-level rerun logic, query templates, and the current HTML template snapshot.</div>
+                <div class="schedule-footer-note" id="schedule-footer-note">We'll save the cadence, question-level rerun logic, query templates, and the current HTML template snapshot.</div>
                 <div class="schedule-footer-actions">
                   <button class="schedule-btn" id="schedule-cancel" type="button">Cancel</button>
                   <button class="schedule-btn primary" id="schedule-save" type="button">Save schedule</button>
@@ -2274,7 +2285,7 @@ export function renderChatPage(): string {
 
         function renderSessionTitle() {
           const active = getActiveChat();
-          chatSessionTitleEl.textContent = active ? active.title : "Project Overload";
+          chatSessionTitleEl.textContent = active ? active.title : "Claritect";
         }
 
         function setChatState(chatId, nextState) {
@@ -3622,7 +3633,7 @@ export function renderChatPage(): string {
                   const copyBtn = document.createElement("button");
                   copyBtn.type = "button";
                   copyBtn.textContent = "Copy query";
-                  copyBtn.style.cssText = "padding:7px 10px;border-radius:10px;border:1px solid rgba(108,143,225,0.28);background:rgba(15,30,70,0.92);color:#dbe8ff;font:600 0.74rem/1 'Mona Sans',sans-serif;cursor:pointer;";
+                  copyBtn.style.cssText = "padding:7px 10px;border-radius:10px;border:1px solid rgba(107, 92, 138, 0.28);background:rgba(34, 25, 56, 0.94);color:#F5F3FF;font:600 0.74rem/1 Inter, 'S�hne', 'Suisse Intl', sans-serif;cursor:pointer;";
                   copyBtn.addEventListener("click", async function () {
                     const copied = await copyTextToClipboard(sqls[0].trim());
                     copyBtn.textContent = copied ? "Copied" : "Copy failed";
@@ -3636,14 +3647,14 @@ export function renderChatPage(): string {
                     const editBtn = document.createElement("button");
                     editBtn.type = "button";
                     editBtn.textContent = "Edit query";
-                    editBtn.style.cssText = "padding:7px 10px;border-radius:10px;border:1px solid rgba(115,170,255,0.34);background:rgba(53,86,188,0.2);color:#f5f8ff;font:600 0.74rem/1 'Mona Sans',sans-serif;cursor:pointer;";
+                    editBtn.style.cssText = "padding:7px 10px;border-radius:10px;border:1px solid rgba(236, 72, 153, 0.24);background:rgba(108, 58, 237, 0.18);color:#F5F3FF;font:600 0.74rem/1 Inter, 'S�hne', 'Suisse Intl', sans-serif;cursor:pointer;";
                     actions.appendChild(editBtn);
 
                     const editorWrap = document.createElement("div");
                     editorWrap.style.cssText = "display:none;margin-top:10px;";
                     const editor = document.createElement("textarea");
                     editor.value = sqls[0].trim();
-                    editor.style.cssText = "width:100%;min-height:140px;padding:12px 13px;border-radius:14px;border:1px solid rgba(94,128,215,0.28);background:rgba(6,16,42,0.96);color:#dfeaff;font:0.8rem/1.55 'JetBrains Mono',monospace;resize:vertical;";
+                    editor.style.cssText = "width:100%;min-height:140px;padding:12px 13px;border-radius:14px;border:1px solid rgba(107, 92, 138, 0.24);background:rgba(18, 13, 31, 0.96);color:#F5F3FF;font:0.8rem/1.55 Inter, 'Sohne', 'Suisse Intl', sans-serif;resize:vertical;";
                     editorWrap.appendChild(editor);
 
                     const editorActions = document.createElement("div");
@@ -3652,7 +3663,7 @@ export function renderChatPage(): string {
                     const saveBtn = document.createElement("button");
                     saveBtn.type = "button";
                     saveBtn.textContent = "Save query";
-                    saveBtn.style.cssText = "padding:8px 12px;border-radius:10px;border:0;background:#5f75ff;color:#f8fbff;font:700 0.76rem/1 'Mona Sans',sans-serif;cursor:pointer;";
+                    saveBtn.style.cssText = "padding:8px 12px;border-radius:10px;border:0;background:#6C3AED;color:#F5F3FF;font:700 0.76rem/1 Inter, 'S�hne', 'Suisse Intl', sans-serif;cursor:pointer;";
                     saveBtn.addEventListener("click", function () {
                       const updated = String(editor.value || "").trim();
                       if (!updated) {
@@ -3669,7 +3680,7 @@ export function renderChatPage(): string {
                     const cancelBtn = document.createElement("button");
                     cancelBtn.type = "button";
                     cancelBtn.textContent = "Cancel";
-                    cancelBtn.style.cssText = "padding:8px 12px;border-radius:10px;border:1px solid rgba(108,143,225,0.28);background:rgba(15,30,70,0.92);color:#dbe8ff;font:600 0.76rem/1 'Mona Sans',sans-serif;cursor:pointer;";
+                    cancelBtn.style.cssText = "padding:8px 12px;border-radius:10px;border:1px solid rgba(107, 92, 138, 0.28);background:rgba(34, 25, 56, 0.94);color:#F5F3FF;font:600 0.76rem/1 'Mona Sans',sans-serif;cursor:pointer;";
                     cancelBtn.addEventListener("click", function () {
                       editorWrap.style.display = "none";
                       editBtn.style.display = "";
@@ -3801,7 +3812,7 @@ export function renderChatPage(): string {
           const hour = scheduleHourEl ? Math.max(0, Math.min(23, Number(scheduleHourEl.value) || 0)) : 0;
           const minute = scheduleMinuteEl ? Math.max(0, Math.min(59, Number(scheduleMinuteEl.value) || 0)) : 0;
           const questionPlan = getScheduleQuestionPlan();
-          const cadenceBits = [formatScheduleFrequencyLabel(frequency), "at " + String(hour).padStart(2, "0") + ":" + String(minute).padStart(2, "0") + " UTC"];
+          const cadenceBits = [formatScheduleFrequencyLabel(frequency), "at " + String(hour).padStart(2, "0") + ":" + String(minute).padStart(2, "0") + " local time"];
           if (frequency === "weekly") {
             cadenceBits.push("on " + formatScheduleWeekday(scheduleWeekdayEl ? scheduleWeekdayEl.value : ""));
           } else if (frequency === "monthly" || frequency === "quarterly") {
@@ -3877,8 +3888,8 @@ export function renderChatPage(): string {
           const lines = [
             "Scheduled report saved.",
             "",
-            "Cadence: " + formatScheduleFrequencyLabel((understanding && understanding.frequency) || "monthly") + " in " + ((understanding && understanding.timezone) || "UTC"),
-            "Cron: " + ((understanding && understanding.schedule_cron) || "-")
+            "Cadence: " + formatScheduleFrequencyLabel((understanding && understanding.frequency) || "monthly"),
+            "Run time: " + (((understanding && understanding.local_run_time) || "-") + " in " + (((understanding && understanding.timezone) || "UTC")))
           ];
           if (questions.length > 0) {
             lines.push("");
@@ -3937,10 +3948,10 @@ export function renderChatPage(): string {
               scheduleTimezoneEl.value = payload.timezone || (payload.defaults && payload.defaults.timezone) || "UTC";
             }
             if (scheduleHourEl) {
-              scheduleHourEl.value = String((payload.defaults && payload.defaults.hour_utc) ?? 9);
+              scheduleHourEl.value = String((payload.defaults && (payload.defaults.hour_local ?? payload.defaults.hour_utc)) ?? 9);
             }
             if (scheduleMinuteEl) {
-              scheduleMinuteEl.value = String((payload.defaults && payload.defaults.minute_utc) ?? 0);
+              scheduleMinuteEl.value = String((payload.defaults && (payload.defaults.minute_local ?? payload.defaults.minute_utc)) ?? 0);
             }
             if (scheduleWeekdayEl) {
               scheduleWeekdayEl.value = "1";
@@ -3984,8 +3995,8 @@ export function renderChatPage(): string {
           const payload = {
             frequency,
             timezone,
-            hour_utc: scheduleHourEl ? Math.max(0, Math.min(23, Number(scheduleHourEl.value) || 0)) : 0,
-            minute_utc: scheduleMinuteEl ? Math.max(0, Math.min(59, Number(scheduleMinuteEl.value) || 0)) : 0,
+            hour_local: scheduleHourEl ? Math.max(0, Math.min(23, Number(scheduleHourEl.value) || 0)) : 0,
+            minute_local: scheduleMinuteEl ? Math.max(0, Math.min(59, Number(scheduleMinuteEl.value) || 0)) : 0,
             windowing_instructions:
               scheduleWindowingEl && scheduleWindowingEl.value.trim().length > 0
                 ? scheduleWindowingEl.value.trim()
@@ -4048,7 +4059,7 @@ export function renderChatPage(): string {
             });
             if (existing) {
               activateChat(existing.id);
-              window.history.replaceState({}, "", "/");
+              window.history.replaceState({}, "", "/app");
               return;
             }
 
@@ -4099,7 +4110,7 @@ export function renderChatPage(): string {
           } catch (error) {
             appendMessage("assistant", error instanceof Error ? error.message : "Unable to load scheduled run.", null, null, { trackForNaming: false });
           } finally {
-            window.history.replaceState({}, "", "/");
+            window.history.replaceState({}, "", "/app");
           }
         }
 

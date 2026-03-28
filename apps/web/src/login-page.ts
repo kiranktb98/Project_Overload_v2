@@ -1,26 +1,28 @@
+import { renderClaritectLogoImage } from "./brand";
+
 export function renderLoginPage(): string {
   return `<!doctype html>
 <html lang="en">
   <head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
-    <title>Project Overload | Login</title>
+    <title>Claritect | Customer login</title>
     <style>
-      @import url("https://fonts.googleapis.com/css2?family=Mona+Sans:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;500&display=swap");
+      @import url("https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&display=swap");
 
       :root {
-        --ink: #edf4ff;
-        --ink-soft: #8ca2cb;
-        --ink-muted: #6076a1;
-        --line: rgba(104, 137, 206, 0.18);
-        --line-soft: rgba(116, 156, 238, 0.34);
-        --surface: rgba(5, 13, 34, 0.96);
-        --surface-2: rgba(8, 21, 54, 0.94);
-        --primary: #66a7ff;
-        --primary-2: #6c6cff;
-        --primary-3: #7fd0ff;
-        --shadow: 0 30px 70px rgba(2, 9, 28, 0.58);
-        --shadow-soft: 0 18px 40px rgba(3, 9, 27, 0.28);
+        --ink: #F5F3FF;
+        --ink-soft: #D7CFE6;
+        --ink-muted: #9D90BC;
+        --line: rgba(107, 92, 138, 0.28);
+        --line-soft: rgba(236, 72, 153, 0.24);
+        --surface: rgba(20, 15, 34, 0.96);
+        --surface-2: rgba(26, 18, 42, 0.94);
+        --primary: #6C3AED;
+        --primary-2: #EC4899;
+        --primary-3: #EC4899;
+        --shadow: 0 30px 70px rgba(10, 6, 20, 0.58);
+        --shadow-soft: 0 18px 40px rgba(10, 6, 20, 0.34);
       }
 
       * { box-sizing: border-box; }
@@ -28,13 +30,13 @@ export function renderLoginPage(): string {
       body {
         margin: 0;
         min-height: 100vh;
-        font-family: "Mona Sans", sans-serif;
+        font-family: Inter, "Sohne", "Suisse Intl", sans-serif;
         color: var(--ink);
         background:
-          radial-gradient(circle at 14% 12%, rgba(110, 165, 255, 0.18), transparent 24%),
-          radial-gradient(circle at 88% 10%, rgba(104, 92, 255, 0.15), transparent 26%),
-          radial-gradient(circle at 50% 100%, rgba(59, 132, 255, 0.12), transparent 30%),
-          linear-gradient(180deg, #020714 0%, #06112e 44%, #061533 100%);
+          radial-gradient(circle at 14% 12%, rgba(108, 58, 237, 0.22), transparent 24%),
+          radial-gradient(circle at 88% 10%, rgba(236, 72, 153, 0.15), transparent 26%),
+          radial-gradient(circle at 50% 100%, rgba(108, 58, 237, 0.12), transparent 30%),
+          linear-gradient(180deg, #0F0B1A 0%, #130F20 44%, #161122 100%);
       }
 
       body::before {
@@ -42,7 +44,7 @@ export function renderLoginPage(): string {
         position: fixed;
         inset: 0;
         pointer-events: none;
-        background-image: linear-gradient(to right, rgba(108, 138, 214, 0.05) 1px, transparent 1px);
+        background-image: linear-gradient(to right, rgba(107, 92, 138, 0.08) 1px, transparent 1px);
         background-size: 60px 60px;
         mask-image: radial-gradient(circle at 50% 45%, rgba(0, 0, 0, 0.86), transparent 92%);
       }
@@ -53,8 +55,8 @@ export function renderLoginPage(): string {
         inset: 0;
         pointer-events: none;
         background:
-          radial-gradient(circle at 18% 22%, rgba(115, 191, 255, 0.12), transparent 20%),
-          radial-gradient(circle at 78% 16%, rgba(120, 102, 255, 0.16), transparent 24%);
+          radial-gradient(circle at 18% 22%, rgba(108, 58, 237, 0.18), transparent 20%),
+          radial-gradient(circle at 78% 16%, rgba(236, 72, 153, 0.18), transparent 24%);
         filter: blur(34px);
         opacity: 0.9;
       }
@@ -82,7 +84,7 @@ export function renderLoginPage(): string {
         border-radius: 30px;
         padding: 30px 30px 26px;
         background:
-          linear-gradient(180deg, rgba(10, 22, 55, 0.98), rgba(5, 14, 36, 0.98)),
+          linear-gradient(180deg, rgba(20, 15, 34, 0.98), rgba(17, 12, 28, 0.98)),
           linear-gradient(180deg, rgba(255, 255, 255, 0.02), transparent);
         box-shadow: var(--shadow);
       }
@@ -93,7 +95,7 @@ export function renderLoginPage(): string {
         inset: 0;
         pointer-events: none;
         background:
-          radial-gradient(circle at 14% 0%, rgba(118, 171, 255, 0.16), transparent 26%),
+          radial-gradient(circle at 14% 0%, rgba(108, 58, 237, 0.18), transparent 26%),
           linear-gradient(180deg, rgba(255, 255, 255, 0.04), transparent 32%);
       }
 
@@ -109,7 +111,7 @@ export function renderLoginPage(): string {
         font-size: 0.64rem;
         text-transform: uppercase;
         letter-spacing: 0.24em;
-        color: #7fd0ff;
+        color: #EC4899;
       }
 
       .hero h1 {
@@ -140,10 +142,10 @@ export function renderLoginPage(): string {
         align-items: center;
         gap: 8px;
         border-radius: 999px;
-        border: 1px solid rgba(120, 151, 221, 0.2);
-        background: rgba(10, 24, 58, 0.76);
+        border: 1px solid rgba(107, 92, 138, 0.28);
+        background: rgba(31, 21, 49, 0.82);
         padding: 9px 14px;
-        color: #dbe7ff;
+        color: #F5F3FF;
         font-size: 0.82rem;
         font-weight: 600;
       }
@@ -156,10 +158,10 @@ export function renderLoginPage(): string {
       }
 
       .hero-card {
-        border: 1px solid rgba(120, 151, 221, 0.14);
+        border: 1px solid rgba(107, 92, 138, 0.22);
         border-radius: 20px;
         padding: 16px;
-        background: linear-gradient(160deg, rgba(8, 22, 56, 0.72), rgba(6, 18, 46, 0.88));
+        background: linear-gradient(160deg, rgba(31, 21, 49, 0.78), rgba(24, 18, 39, 0.9));
         box-shadow: var(--shadow-soft);
       }
 
@@ -202,19 +204,24 @@ export function renderLoginPage(): string {
         gap: 12px;
         margin-bottom: 18px;
         padding-bottom: 16px;
-        border-bottom: 1px solid rgba(130, 162, 231, 0.14);
+        border-bottom: 1px solid rgba(107, 92, 138, 0.24);
       }
 
       .badge {
-        width: 42px;
-        height: 42px;
-        border-radius: 15px;
-        display: grid;
-        place-items: center;
-        font-weight: 800;
-        color: #f3f8ff;
-        background: linear-gradient(145deg, var(--primary), var(--primary-2) 56%, var(--primary-3));
-        box-shadow: 0 14px 32px rgba(76, 122, 255, 0.34);
+        width: 56px;
+        height: 24px;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        flex-shrink: 0;
+      }
+
+      .badge img {
+        width: 100%;
+        height: 100%;
+        display: block;
+        object-fit: contain;
+        filter: drop-shadow(0 10px 22px rgba(118, 93, 255, 0.24));
       }
 
       .brand-copy strong {
@@ -228,7 +235,7 @@ export function renderLoginPage(): string {
       .brand-copy span {
         display: block;
         margin-top: 4px;
-        font-family: "JetBrains Mono", monospace;
+        font-family: Inter, "Sohne", "Suisse Intl", sans-serif;
         font-size: 0.66rem;
         letter-spacing: 0.24em;
         text-transform: uppercase;
@@ -259,32 +266,32 @@ export function renderLoginPage(): string {
       input {
         width: 100%;
         border-radius: 14px;
-        border: 1px solid rgba(111, 149, 220, 0.24);
+        border: 1px solid rgba(107, 92, 138, 0.28);
         padding: 13px 14px;
-        background: rgba(8, 22, 53, 0.76);
+        background: rgba(24, 18, 39, 0.84);
         color: #edf3ff;
-        font-family: "JetBrains Mono", monospace;
+        font-family: Inter, "Sohne", "Suisse Intl", sans-serif;
         font-size: 0.82rem;
       }
 
       input:focus {
         outline: none;
-        border-color: #75a6ff;
-        box-shadow: 0 0 0 4px rgba(88, 143, 236, 0.2);
+        border-color: #EC4899;
+        box-shadow: 0 0 0 4px rgba(108, 58, 237, 0.18);
       }
 
       button {
         margin-top: 18px;
         width: 100%;
-        border: 1px solid rgba(128, 144, 255, 0.48);
+        border: 1px solid rgba(107, 92, 138, 0.32);
         border-radius: 14px;
         padding: 13px 14px;
-        color: #fff;
+        color: #F5F3FF;
         cursor: pointer;
-        font-family: "Mona Sans", sans-serif;
+        font-family: Inter, "Sohne", "Suisse Intl", sans-serif;
         font-weight: 700;
-        background: #4f3eff;
-        box-shadow: 0 12px 28px rgba(92, 92, 255, 0.28);
+        background: #6C3AED;
+        box-shadow: 0 12px 28px rgba(108, 58, 237, 0.24);
       }
 
       .status {
@@ -298,12 +305,12 @@ export function renderLoginPage(): string {
         margin-top: 14px;
         font-size: 0.72rem;
         color: var(--ink-soft);
-        font-family: "JetBrains Mono", monospace;
+        font-family: Inter, "Sohne", "Suisse Intl", sans-serif;
         line-height: 1.6;
       }
 
       .hint strong {
-        color: #dce7ff;
+        color: #F5F3FF;
       }
 
       .hint-grid {
@@ -313,10 +320,10 @@ export function renderLoginPage(): string {
       }
 
       .hint-card {
-        border: 1px solid rgba(120, 151, 221, 0.14);
+        border: 1px solid rgba(107, 92, 138, 0.22);
         border-radius: 16px;
         padding: 12px 14px;
-        background: rgba(10, 24, 58, 0.68);
+        background: rgba(31, 21, 49, 0.76);
       }
 
       .hint-card small {
@@ -373,9 +380,9 @@ export function renderLoginPage(): string {
       <div class="layout">
         <section class="hero">
           <div class="hero-copy">
-            <span class="eyebrow">Decision cockpit</span>
+            <span class="eyebrow">Decision intelligence</span>
             <h1>Launch governed analytics from one live workspace.</h1>
-            <p>Project Overload keeps scoping, governed SQL, report generation, and follow-up decision support in one premium operating surface so teams can move quickly without losing trust in the evidence.</p>
+            <p>Claritect keeps scoping, governed SQL, report generation, and follow-up decision support in one premium operating surface so teams can move quickly without losing trust in the evidence.</p>
             <div class="hero-pills">
               <span class="hero-pill">Scoped analysis</span>
               <span class="hero-pill">Governed SQL</span>
@@ -403,14 +410,14 @@ export function renderLoginPage(): string {
 
         <main class="card">
           <div class="brand">
-            <div class="badge">*</div>
+            <div class="badge">${renderClaritectLogoImage("brand-logo")}</div>
             <div class="brand-copy">
-              <strong>Project Overload</strong>
-              <span>Operator access</span>
+              <strong>Claritect</strong>
+              <span>Customer access</span>
             </div>
           </div>
           <h2>Sign in to continue</h2>
-          <p class="sub">Access Chat Explorer, Data Sources, Usage Metrics, and Global Config from the same governed workspace.</p>
+          <p class="sub">Access the chat workspace, data sources, usage insights, scheduled reports, and global definitions from the same governed surface.</p>
           <form id="login-form">
             <label for="username">Username</label>
             <input id="username" name="username" autocomplete="username" required />
@@ -455,7 +462,7 @@ export function renderLoginPage(): string {
             return;
           }
 
-          window.location.href = "/";
+          window.location.href = "/app";
         });
       })();
     </script>

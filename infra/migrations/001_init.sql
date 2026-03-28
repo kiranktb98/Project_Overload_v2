@@ -92,10 +92,25 @@ CREATE TABLE IF NOT EXISTS platform_users (
   username TEXT NOT NULL,
   password_salt TEXT NOT NULL,
   password_hash TEXT NOT NULL,
+  role TEXT NOT NULL DEFAULT 'customer',
+  display_name TEXT NULL,
   is_active BOOLEAN NOT NULL DEFAULT TRUE,
   created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
   last_login_at TIMESTAMPTZ NULL,
   UNIQUE (tenant_id, username)
+);
+
+ALTER TABLE platform_users
+  ADD COLUMN IF NOT EXISTS role TEXT NOT NULL DEFAULT 'customer';
+
+ALTER TABLE platform_users
+  ADD COLUMN IF NOT EXISTS display_name TEXT NULL;
+
+CREATE TABLE IF NOT EXISTS customer_accounts (
+  tenant_id TEXT PRIMARY KEY,
+  payload JSONB NOT NULL,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 
 CREATE TABLE IF NOT EXISTS chat_sessions (
@@ -122,6 +137,8 @@ INSERT INTO platform_users (
   username,
   password_salt,
   password_hash,
+  role,
+  display_name,
   is_active
 )
 VALUES (
@@ -130,9 +147,60 @@ VALUES (
   'test123',
   '99abe147221b66a4b3323aa942e6d2f4',
   '09ba67974ef96ca0ff5d6bde095bf986d9e1030fb5cffff66ee2cbc9c5aae603077464b8f8994b583b2f0f01b0d29b48db23345cc04d6ccf0e413d66b965237d',
+  'customer',
+  'Claritect User',
   TRUE
 )
 ON CONFLICT (tenant_id, username) DO NOTHING;
+
+INSERT INTO platform_users (
+  id,
+  tenant_id,
+  username,
+  password_salt,
+  password_hash,
+  role,
+  display_name,
+  is_active
+)
+VALUES (
+  'user_claritect_admin',
+  'default',
+  'claritect_admin',
+  '99abe147221b66a4b3323aa942e6d2f4',
+  '09ba67974ef96ca0ff5d6bde095bf986d9e1030fb5cffff66ee2cbc9c5aae603077464b8f8994b583b2f0f01b0d29b48db23345cc04d6ccf0e413d66b965237d',
+  'admin',
+  'Claritect Admin',
+  TRUE
+)
+ON CONFLICT (tenant_id, username) DO NOTHING;
+
+INSERT INTO customer_accounts (tenant_id, payload)
+VALUES (
+  'default',
+  '{
+    "tenant_id":"default",
+    "name":"Claritect Pilot",
+    "plan_tier":"Growth",
+    "status":"active",
+    "primary_contact_name":"Claritect Team",
+    "primary_contact_email":"owner@example.com",
+    "billing_status":"current",
+    "renewal_date":null,
+    "owner":"Claritect Team",
+    "notes":"Default seeded customer account.",
+    "entitlements":{
+      "seats":10,
+      "scheduled_reports":24,
+      "monthly_runs":250,
+      "ai_budget_usd":null,
+      "feature_flags":["marketing_site","admin_console","scheduled_reports","business_case"]
+    },
+    "created_at":"2026-01-01T00:00:00.000Z",
+    "updated_at":"2026-01-01T00:00:00.000Z"
+  }'::jsonb
+)
+ON CONFLICT (tenant_id) DO NOTHING;
 
 -- Local analytics fixture dataset for deterministic report testing.
 CREATE SCHEMA IF NOT EXISTS analytics;

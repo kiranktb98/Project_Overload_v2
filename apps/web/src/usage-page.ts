@@ -1,22 +1,24 @@
+import { renderClaritectLogoImage } from "./brand";
+
 export function renderUsageMetricsPage(): string {
   return `<!doctype html>
 <html lang="en">
   <head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
-    <title>Project Overload | Usage Metrics</title>
+    <title>Claritect | Usage and AI balance</title>
     <style>
-      @import url("https://fonts.googleapis.com/css2?family=Mona+Sans:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;500&display=swap");
+      @import url("https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&display=swap");
 
       :root {
-        --ink: #edf4ff;
-        --ink-soft: #8ca2cb;
-        --ink-muted: #6076a1;
-        --line: rgba(104, 137, 206, 0.18);
-        --line-soft: rgba(116, 156, 238, 0.34);
-        --glow: rgba(108, 111, 255, 0.36);
-        --shadow: 0 24px 60px rgba(1, 8, 28, 0.44);
-        --shadow-soft: 0 12px 32px rgba(3, 9, 27, 0.26);
+        --ink: #F5F3FF;
+        --ink-soft: #D7CFE6;
+        --ink-muted: #9D90BC;
+        --line: rgba(107, 92, 138, 0.28);
+        --line-soft: rgba(236, 72, 153, 0.24);
+        --glow: rgba(236, 72, 153, 0.22);
+        --shadow: 0 24px 60px rgba(10, 6, 20, 0.48);
+        --shadow-soft: 0 12px 32px rgba(10, 6, 20, 0.32);
       }
 
       * { box-sizing: border-box; }
@@ -24,13 +26,13 @@ export function renderUsageMetricsPage(): string {
       body {
         margin: 0;
         min-height: 100vh;
-        font-family: "Mona Sans", sans-serif;
+        font-family: Inter, "Sohne", "Suisse Intl", sans-serif;
         color: var(--ink);
         background:
-          radial-gradient(circle at 14% 10%, rgba(110, 165, 255, 0.17), transparent 24%),
-          radial-gradient(circle at 88% 8%, rgba(104, 92, 255, 0.15), transparent 26%),
-          radial-gradient(circle at 50% 100%, rgba(59, 132, 255, 0.1), transparent 30%),
-          linear-gradient(180deg, #020714 0%, #06112e 44%, #061533 100%);
+          radial-gradient(circle at 14% 10%, rgba(108, 58, 237, 0.22), transparent 24%),
+          radial-gradient(circle at 88% 8%, rgba(236, 72, 153, 0.15), transparent 26%),
+          radial-gradient(circle at 50% 100%, rgba(108, 58, 237, 0.12), transparent 30%),
+          linear-gradient(180deg, #0F0B1A 0%, #130F20 44%, #161122 100%);
       }
 
       body::before {
@@ -38,7 +40,7 @@ export function renderUsageMetricsPage(): string {
         position: fixed;
         inset: 0;
         pointer-events: none;
-        background-image: linear-gradient(to right, rgba(108, 138, 214, 0.05) 1px, transparent 1px);
+        background-image: linear-gradient(to right, rgba(107, 92, 138, 0.08) 1px, transparent 1px);
         background-size: 60px 60px;
         mask-image: radial-gradient(circle at 50% 45%, rgba(0, 0, 0, 0.86), transparent 92%);
       }
@@ -49,8 +51,8 @@ export function renderUsageMetricsPage(): string {
         inset: 0;
         pointer-events: none;
         background:
-          radial-gradient(circle at 18% 22%, rgba(115, 191, 255, 0.12), transparent 20%),
-          radial-gradient(circle at 78% 16%, rgba(120, 102, 255, 0.16), transparent 24%);
+          radial-gradient(circle at 18% 22%, rgba(108, 58, 237, 0.18), transparent 20%),
+          radial-gradient(circle at 78% 16%, rgba(236, 72, 153, 0.18), transparent 24%);
         filter: blur(34px);
         opacity: 0.9;
       }
@@ -72,7 +74,7 @@ export function renderUsageMetricsPage(): string {
         border: 1px solid var(--line);
         border-radius: 28px;
         background:
-          linear-gradient(180deg, rgba(10, 22, 55, 0.98), rgba(5, 14, 36, 0.98)),
+          linear-gradient(180deg, rgba(20, 15, 34, 0.98), rgba(17, 12, 28, 0.98)),
           linear-gradient(180deg, rgba(255, 255, 255, 0.02), transparent);
         box-shadow: var(--shadow);
         display: flex;
@@ -87,7 +89,7 @@ export function renderUsageMetricsPage(): string {
         inset: 0;
         pointer-events: none;
         background:
-          radial-gradient(circle at 20% 0%, rgba(118, 171, 255, 0.14), transparent 26%),
+          radial-gradient(circle at 20% 0%, rgba(108, 58, 237, 0.18), transparent 26%),
           linear-gradient(180deg, rgba(255, 255, 255, 0.04), transparent 30%);
       }
 
@@ -97,21 +99,26 @@ export function renderUsageMetricsPage(): string {
         gap: 10px;
         padding: 8px 6px 14px;
         margin-bottom: 10px;
-        border-bottom: 1px solid rgba(130, 162, 231, 0.14);
+        border-bottom: 1px solid rgba(107, 92, 138, 0.24);
         position: relative;
         z-index: 1;
       }
 
       .platform-brand-badge {
-        width: 42px;
-        height: 42px;
-        border-radius: 15px;
-        display: grid;
-        place-items: center;
-        font-weight: 800;
-        color: #f3f8ff;
-        background: linear-gradient(145deg, #66a7ff, #6c6cff 56%, #7fd0ff);
-        box-shadow: 0 14px 32px rgba(76, 122, 255, 0.34);
+        width: 56px;
+        height: 24px;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        flex-shrink: 0;
+      }
+
+      .platform-brand-badge img {
+        width: 100%;
+        height: 100%;
+        display: block;
+        object-fit: contain;
+        filter: drop-shadow(0 8px 20px rgba(118, 93, 255, 0.22));
       }
 
       .platform-brand strong {
@@ -125,7 +132,7 @@ export function renderUsageMetricsPage(): string {
       .platform-brand span {
         display: block;
         margin-top: 2px;
-        font-family: "JetBrains Mono", monospace;
+        font-family: Inter, "Sohne", "Suisse Intl", sans-serif;
         font-size: 0.62rem;
         letter-spacing: 0.24em;
         text-transform: uppercase;
@@ -156,9 +163,9 @@ export function renderUsageMetricsPage(): string {
         gap: 8px;
         padding: 11px 12px;
         border-radius: 14px;
-        color: #9eb3d9;
+        color: #E1DAF4;
         text-decoration: none;
-        border: 1px solid rgba(117, 148, 214, 0.06);
+        border: 1px solid rgba(107, 92, 138, 0.14);
         font-size: 0.84rem;
         font-weight: 600;
         transition: transform 140ms ease, border-color 140ms ease, background 140ms ease, color 140ms ease;
@@ -171,7 +178,7 @@ export function renderUsageMetricsPage(): string {
         align-items: center;
         justify-content: center;
         flex-shrink: 0;
-        color: #6f8ac1;
+        color: #9D90BC;
       }
       .platform-link .link-icon svg {
         width: 16px;
@@ -185,15 +192,15 @@ export function renderUsageMetricsPage(): string {
 
       .platform-link:hover {
         transform: translateX(2px);
-        background: rgba(33, 62, 129, 0.36);
-        border-color: rgba(112, 152, 244, 0.26);
+        background: rgba(108, 58, 237, 0.16);
+        border-color: rgba(236, 72, 153, 0.18);
       }
 
       .platform-link.active {
-        background: rgba(72, 99, 255, 0.9);
-        border-color: rgba(151, 191, 255, 0.4);
+        background: rgba(108, 58, 237, 0.92);
+        border-color: rgba(245, 243, 255, 0.22);
         color: #f3f8ff;
-        box-shadow: 0 14px 28px rgba(67, 93, 222, 0.28);
+        box-shadow: 0 14px 30px rgba(108, 58, 237, 0.24);
       }
 
       .platform-link.active .link-icon {
@@ -213,10 +220,10 @@ export function renderUsageMetricsPage(): string {
         display: flex;
         align-items: center;
         gap: 10px;
-        border: 1px solid rgba(111, 147, 220, 0.14);
+        border: 1px solid rgba(107, 92, 138, 0.22);
         border-radius: 16px;
         padding: 11px 12px;
-        background: rgba(10, 24, 58, 0.76);
+        background: rgba(31, 21, 49, 0.82);
       }
 
       .platform-user-avatar {
@@ -225,15 +232,15 @@ export function renderUsageMetricsPage(): string {
         border-radius: 11px;
         display: grid;
         place-items: center;
-        border: 1px solid #2f4d95;
-        color: #9cb3e3;
-        background: rgba(12, 29, 72, 0.9);
+        border: 1px solid rgba(108, 58, 237, 0.34);
+        color: #E1DAF4;
+        background: rgba(46, 28, 76, 0.92);
         box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.06);
       }
 
       .platform-user small {
         display: block;
-        color: #6e86bd;
+        color: #9D90BC;
         font-size: 0.63rem;
         text-transform: uppercase;
         letter-spacing: 0.12em;
@@ -250,10 +257,10 @@ export function renderUsageMetricsPage(): string {
         align-items: center;
         justify-content: space-between;
         gap: 8px;
-        border: 1px solid rgba(111, 147, 220, 0.14);
+        border: 1px solid rgba(107, 92, 138, 0.22);
         border-radius: 16px;
         padding: 9px 11px 9px 12px;
-        background: rgba(7, 18, 45, 0.82);
+        background: rgba(24, 18, 39, 0.84);
       }
 
       .platform-support span {
@@ -268,12 +275,12 @@ export function renderUsageMetricsPage(): string {
       }
 
       .logout-btn {
-        border: 1px solid rgba(122, 155, 226, 0.22);
+        border: 1px solid rgba(107, 92, 138, 0.28);
         border-radius: 12px;
-        background: rgba(16, 36, 84, 0.9);
-        color: #cfddff;
+        background: rgba(34, 25, 56, 0.94);
+        color: #F5F3FF;
         padding: 7px 10px;
-        font-family: "JetBrains Mono", monospace;
+        font-family: Inter, "Sohne", "Suisse Intl", sans-serif;
         font-size: 0.64rem;
         cursor: pointer;
       }
@@ -282,8 +289,8 @@ export function renderUsageMetricsPage(): string {
         border: 1px solid var(--line);
         border-radius: 32px;
         background:
-          linear-gradient(180deg, rgba(5, 12, 34, 0.98), rgba(3, 10, 26, 0.99)),
-          radial-gradient(circle at 100% 0%, rgba(113, 122, 255, 0.12), transparent 24%);
+          linear-gradient(180deg, rgba(20, 15, 34, 0.98), rgba(17, 12, 28, 0.99)),
+          radial-gradient(circle at 100% 0%, rgba(108, 58, 237, 0.16), transparent 24%);
         box-shadow: var(--shadow);
         padding: 20px 22px 22px;
       }
@@ -313,17 +320,17 @@ export function renderUsageMetricsPage(): string {
         font-size: 0.62rem;
         text-transform: uppercase;
         letter-spacing: 0.22em;
-        color: #7fd0ff;
+        color: #EC4899;
       }
 
       .badge {
-        font-family: "JetBrains Mono", monospace;
+        font-family: Inter, "Sohne", "Suisse Intl", sans-serif;
         font-size: 0.62rem;
         color: var(--ink-soft);
         padding: 6px 10px 5px;
         border-radius: 999px;
-        border: 1px solid #29498e;
-        background: rgba(10, 29, 70, 0.88);
+        border: 1px solid rgba(107, 92, 138, 0.28);
+        background: rgba(39, 28, 63, 0.94);
       }
 
       .cards {
@@ -334,9 +341,9 @@ export function renderUsageMetricsPage(): string {
       }
 
       .card {
-        border: 1px solid rgba(120, 151, 221, 0.14);
+        border: 1px solid rgba(107, 92, 138, 0.22);
         border-radius: 18px;
-        background: linear-gradient(160deg, rgba(8, 22, 56, 0.86), rgba(6, 18, 46, 0.9));
+        background: linear-gradient(160deg, rgba(31, 21, 49, 0.84), rgba(24, 18, 39, 0.9));
         padding: 12px;
         box-shadow: var(--shadow-soft);
       }
@@ -349,14 +356,14 @@ export function renderUsageMetricsPage(): string {
       }
 
       .card strong {
-        font-family: "JetBrains Mono", monospace;
+        font-family: Inter, "Sohne", "Suisse Intl", sans-serif;
         font-size: 1rem;
       }
 
       .table-wrap {
-        border: 1px solid rgba(120, 151, 221, 0.14);
+        border: 1px solid rgba(107, 92, 138, 0.22);
         border-radius: 18px;
-        background: rgba(8, 22, 56, 0.68);
+        background: rgba(24, 18, 39, 0.76);
         overflow: auto;
       }
 
@@ -370,12 +377,12 @@ export function renderUsageMetricsPage(): string {
         padding: 10px;
         font-size: 0.75rem;
         text-align: left;
-        border-bottom: 1px solid rgba(105, 140, 212, 0.15);
+        border-bottom: 1px solid rgba(107, 92, 138, 0.18);
       }
 
       th {
         color: var(--ink-soft);
-        font-family: "JetBrains Mono", monospace;
+        font-family: Inter, "Sohne", "Suisse Intl", sans-serif;
       }
 
       @media (max-width: 1080px) {
@@ -392,16 +399,16 @@ export function renderUsageMetricsPage(): string {
       <div class="layout">
         <aside class="platform-panel">
           <div class="platform-brand">
-            <div class="platform-brand-badge">*</div>
+            <div class="platform-brand-badge">${renderClaritectLogoImage("platform-brand-logo")}</div>
             <div>
-              <strong>Project Overload</strong>
-              <span>Decision cockpit</span>
+              <strong>Claritect</strong>
+              <span>Decision intelligence</span>
             </div>
           </div>
           <div class="platform-section">Core Platform</div>
           <nav class="platform-nav">
-            <a class="platform-link" href="/"><span class="link-icon"><svg viewBox="0 0 24 24"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg></span>Chat Explorer</a>
-            <a class="platform-link active" href="/usage"><span class="link-icon"><svg viewBox="0 0 24 24"><path d="M18 20V10"/><path d="M12 20V4"/><path d="M6 20v-6"/></svg></span>Usage Metrics</a>
+            <a class="platform-link" href="/app"><span class="link-icon"><svg viewBox="0 0 24 24"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg></span>Chat Explorer</a>
+            <a class="platform-link active" href="/usage"><span class="link-icon"><svg viewBox="0 0 24 24"><path d="M18 20V10"/><path d="M12 20V4"/><path d="M6 20v-6"/></svg></span>Usage &amp; AI</a>
           </nav>
           <div class="platform-section">Infrastructure</div>
           <nav class="platform-nav">
@@ -413,8 +420,8 @@ export function renderUsageMetricsPage(): string {
             <div class="platform-user">
               <div class="platform-user-avatar">@</div>
               <div>
-                <small>Admin Profile</small>
-                <strong>Project Owner</strong>
+                <small>Customer workspace</small>
+                <strong>Claritect User</strong>
               </div>
             </div>
             <div class="platform-support">
@@ -430,10 +437,10 @@ export function renderUsageMetricsPage(): string {
           <div class="content-head">
             <div>
               <span class="eyebrow">Operations</span>
-              <h1>Usage Metrics</h1>
-              <p class="sub">Operational metrics for query execution through the governed data plane.</p>
+              <h1>Usage &amp; AI Balance</h1>
+              <p class="sub">Track governed query activity, report execution, schedules, token usage, and remaining OpenRouter credits from one customer-facing operations page.</p>
             </div>
-            <span class="badge">Live Metrics</span>
+            <span class="badge">Live Usage</span>
           </div>
 
           <section class="cards">
@@ -443,7 +450,22 @@ export function renderUsageMetricsPage(): string {
             <article class="card"><small>Avg Latency</small><strong id="m-latency">0ms</strong></article>
           </section>
 
+          <section class="cards" style="margin-top:12px;">
+            <article class="card"><small>Total Report Runs</small><strong id="r-total">0</strong></article>
+            <article class="card"><small>Scheduled Runs</small><strong id="r-scheduled">0</strong></article>
+            <article class="card"><small>Success Rate</small><strong id="r-success">0%</strong></article>
+            <article class="card"><small>Active Schedules</small><strong id="r-active-schedules">0</strong></article>
+          </section>
+
+          <section class="cards" style="margin-top:12px;">
+            <article class="card"><small>OpenRouter Credits</small><strong id="ai-balance">Unavailable</strong></article>
+            <article class="card"><small>Total Tokens</small><strong id="ai-total">0</strong></article>
+            <article class="card"><small>Last 24 Hours</small><strong id="ai-24h">0</strong></article>
+            <article class="card"><small>Last 7 Days</small><strong id="ai-7d">0</strong></article>
+          </section>
+
           <section class="table-wrap">
+            <h2 style="margin:0 0 14px;font-size:1rem;">Recent query activity</h2>
             <table>
               <thead>
                 <tr>
@@ -459,12 +481,72 @@ export function renderUsageMetricsPage(): string {
               </tbody>
             </table>
           </section>
+
+          <section class="table-wrap" style="margin-top:14px;">
+            <h2 style="margin:0 0 14px;font-size:1rem;">Recent report runs</h2>
+            <table>
+              <thead>
+                <tr>
+                  <th>Timestamp</th>
+                  <th>Run ID</th>
+                  <th>Trigger</th>
+                  <th>Status</th>
+                  <th>Contract</th>
+                </tr>
+              </thead>
+              <tbody id="report-rows">
+                <tr><td colspan="5">Loading report activity...</td></tr>
+              </tbody>
+            </table>
+          </section>
+
+          <section class="table-wrap" style="margin-top:14px;">
+            <h2 style="margin:0 0 14px;font-size:1rem;">AI usage by agent</h2>
+            <table>
+              <thead>
+                <tr>
+                  <th>Agent</th>
+                  <th>Input</th>
+                  <th>Output</th>
+                  <th>Total</th>
+                </tr>
+              </thead>
+              <tbody id="ai-agent-rows">
+                <tr><td colspan="4">Loading AI usage...</td></tr>
+              </tbody>
+            </table>
+          </section>
+
+          <section class="table-wrap" style="margin-top:14px;">
+            <h2 style="margin:0 0 14px;font-size:1rem;">AI usage by model</h2>
+            <table>
+              <thead>
+                <tr>
+                  <th>Model</th>
+                  <th>Input</th>
+                  <th>Output</th>
+                  <th>Total</th>
+                </tr>
+              </thead>
+              <tbody id="ai-model-rows">
+                <tr><td colspan="4">Loading AI usage...</td></tr>
+              </tbody>
+            </table>
+          </section>
         </main>
       </div>
     </div>
 
     <script>
       (() => {
+        function esc(value) {
+          return String(value ?? "")
+            .replace(/&/g, "&amp;")
+            .replace(/</g, "&lt;")
+            .replace(/>/g, "&gt;")
+            .replace(/\\"/g, "&quot;")
+            .replace(/'/g, "&#39;");
+        }
         function toNumber(value) {
           const n = Number(value);
           return Number.isFinite(n) ? n : 0;
@@ -477,47 +559,113 @@ export function renderUsageMetricsPage(): string {
 
         async function load() {
           const tbody = document.getElementById("usage-rows");
-          const response = await fetch("/api/db/query-logs");
-          const payload = await response.json();
-          if (!response.ok || !payload || !Array.isArray(payload.logs)) {
+          const reportTbody = document.getElementById("report-rows");
+          const agentTbody = document.getElementById("ai-agent-rows");
+          const modelTbody = document.getElementById("ai-model-rows");
+          const [summaryResponse, activityResponse, aiResponse] = await Promise.all([
+            fetch("/api/usage/summary"),
+            fetch("/api/usage/activity"),
+            fetch("/api/usage/ai")
+          ]);
+          const summaryPayload = await summaryResponse.json();
+          const activityPayload = await activityResponse.json();
+          const aiPayload = await aiResponse.json();
+
+          if (!summaryResponse.ok || !activityResponse.ok) {
             tbody.innerHTML = "<tr><td colspan=\\"5\\">Unable to load metrics.</td></tr>";
+            reportTbody.innerHTML = "<tr><td colspan=\\"5\\">Unable to load report activity.</td></tr>";
             return;
           }
 
-          const logs = payload.logs.slice().reverse();
-          const total = logs.length;
-          const ok = logs.filter((entry) => String(entry.status || "") === "ok").length;
-          const avgRows = total === 0 ? 0 : logs.reduce((sum, entry) => sum + toNumber(entry.row_count), 0) / total;
-          const avgLatency = total === 0 ? 0 : logs.reduce((sum, entry) => sum + toNumber(entry.execution_ms), 0) / total;
+          const summary = summaryPayload.summary || {};
+          const governed = summary.governed_queries || {};
+          const reports = summary.reports || {};
+          const schedules = summary.schedules || {};
+          const logs = Array.isArray(activityPayload.queries) ? activityPayload.queries : [];
+          const runs = Array.isArray(activityPayload.runs) ? activityPayload.runs : [];
+          const balance = aiPayload.balance || {};
+          const aiUsage = aiPayload.usage || {};
+          const byAgent = aiUsage.by_agent || {};
+          const byModel = aiUsage.by_model || {};
 
-          document.getElementById("m-total").textContent = String(total);
-          document.getElementById("m-success").textContent = (total === 0 ? 0 : Math.round((ok / total) * 100)) + "%";
-          document.getElementById("m-rows").textContent = Math.round(avgRows).toLocaleString();
-          document.getElementById("m-latency").textContent = Math.round(avgLatency) + "ms";
+          document.getElementById("m-total").textContent = String(toNumber(governed.total));
+          document.getElementById("m-success").textContent = Math.round(toNumber(governed.success_rate) * 100) + "%";
+          document.getElementById("m-rows").textContent = Math.round(toNumber(governed.average_rows)).toLocaleString();
+          document.getElementById("m-latency").textContent = Math.round(toNumber(governed.average_latency_ms)) + "ms";
+          document.getElementById("r-total").textContent = String(toNumber(reports.total_runs));
+          document.getElementById("r-scheduled").textContent = String(toNumber(reports.scheduled_runs));
+          document.getElementById("r-success").textContent = Math.round(toNumber(reports.success_rate) * 100) + "%";
+          document.getElementById("r-active-schedules").textContent = String(toNumber(schedules.active));
+          document.getElementById("ai-balance").textContent =
+            balance.remaining_credits == null ? "Unavailable" : Number(balance.remaining_credits).toFixed(2);
+          document.getElementById("ai-total").textContent = Math.round(toNumber(aiUsage.total_tokens)).toLocaleString();
+          document.getElementById("ai-24h").textContent = Math.round(toNumber(aiUsage.last_24h_tokens)).toLocaleString();
+          document.getElementById("ai-7d").textContent = Math.round(toNumber(aiUsage.last_7d_tokens)).toLocaleString();
 
-          if (total === 0) {
+          if (logs.length === 0) {
             tbody.innerHTML = "<tr><td colspan=\\"5\\">No queries executed yet.</td></tr>";
-            return;
+          } else {
+            tbody.innerHTML = logs.slice(0, 120).map((entry) => {
+              const id = String(entry.id || "-");
+              const status = String(entry.status || "-");
+              const rows = toNumber(entry.row_count).toLocaleString();
+              const latency = Math.round(toNumber(entry.execution_ms)) + "ms";
+              return "<tr>" +
+                "<td>" + fmtTs(entry.timestamp) + "</td>" +
+                "<td><code>" + esc(id) + "</code></td>" +
+                "<td>" + esc(status) + "</td>" +
+                "<td>" + rows + "</td>" +
+                "<td>" + latency + "</td>" +
+                "</tr>";
+            }).join("");
           }
 
-          tbody.innerHTML = logs.slice(0, 120).map((entry) => {
-            const id = String(entry.id || "-");
-            const status = String(entry.status || "-");
-            const rows = toNumber(entry.row_count).toLocaleString();
-            const latency = Math.round(toNumber(entry.execution_ms)) + "ms";
-            return "<tr>" +
-              "<td>" + fmtTs(entry.timestamp) + "</td>" +
-              "<td><code>" + id + "</code></td>" +
-              "<td>" + status + "</td>" +
-              "<td>" + rows + "</td>" +
-              "<td>" + latency + "</td>" +
-              "</tr>";
-          }).join("");
+          if (runs.length === 0) {
+            reportTbody.innerHTML = "<tr><td colspan=\\"5\\">No report runs yet.</td></tr>";
+          } else {
+            reportTbody.innerHTML = runs.map((entry) => {
+              return "<tr>" +
+                "<td>" + fmtTs(entry.finished_at || entry.started_at) + "</td>" +
+                "<td><code>" + esc(entry.id || "-") + "</code></td>" +
+                "<td>" + esc(entry.trigger || "-") + "</td>" +
+                "<td>" + esc(entry.status || "-") + "</td>" +
+                "<td><code>" + esc(entry.contract_id || "-") + "</code></td>" +
+                "</tr>";
+            }).join("");
+          }
+
+          const renderUsageRows = function (target, record, emptyCopy) {
+            const entries = Object.entries(record || {}).sort((left, right) => {
+              return toNumber(right[1] && right[1].total_tokens) - toNumber(left[1] && left[1].total_tokens);
+            });
+            if (entries.length === 0) {
+              target.innerHTML = "<tr><td colspan=\\"4\\">" + emptyCopy + "</td></tr>";
+              return;
+            }
+            target.innerHTML = entries.slice(0, 12).map((entry) => {
+              const usage = entry[1] || {};
+              return "<tr>" +
+                "<td><code>" + esc(entry[0]) + "</code></td>" +
+                "<td>" + Math.round(toNumber(usage.input_tokens)).toLocaleString() + "</td>" +
+                "<td>" + Math.round(toNumber(usage.output_tokens)).toLocaleString() + "</td>" +
+                "<td>" + Math.round(toNumber(usage.total_tokens)).toLocaleString() + "</td>" +
+                "</tr>";
+            }).join("");
+          };
+
+          renderUsageRows(agentTbody, byAgent, "No AI agent usage captured yet.");
+          renderUsageRows(modelTbody, byModel, "No model usage captured yet.");
         }
 
         load().catch(() => {
           const tbody = document.getElementById("usage-rows");
           tbody.innerHTML = "<tr><td colspan=\\"5\\">Unable to load metrics.</td></tr>";
+          const reportTbody = document.getElementById("report-rows");
+          reportTbody.innerHTML = "<tr><td colspan=\\"5\\">Unable to load report activity.</td></tr>";
+          const agentTbody = document.getElementById("ai-agent-rows");
+          const modelTbody = document.getElementById("ai-model-rows");
+          agentTbody.innerHTML = "<tr><td colspan=\\"4\\">Unable to load AI usage.</td></tr>";
+          modelTbody.innerHTML = "<tr><td colspan=\\"4\\">Unable to load AI usage.</td></tr>";
         });
       })();
     </script>

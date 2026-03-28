@@ -1,0 +1,332 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Claritect - Launch Checklist</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link href="https://fonts.googleapis.com/css2?family=Nunito+Sans:wght@600;700;800&family=Nunito+Text:wght@400;600;700&display=swap" rel="stylesheet" />
+    <style>
+      :root {
+        --base: #0F0B1A;
+        --accent-a: #6C3AED;
+        --accent-b: #EC4899;
+        --output: #F5F3FF;
+        --soft: #B8AFCA;
+        --muted: #8B7FA6;
+        --panel: rgba(23, 18, 38, 0.94);
+        --line: rgba(167, 146, 214, 0.18);
+        --green: #34D399;
+      }
+      * { box-sizing: border-box; margin: 0; padding: 0; }
+      @page { size: A4; margin: 0; }
+      html, body {
+        width: 210mm;
+        background: var(--base);
+        color: var(--output);
+        font-family: "Nunito Text", "Segoe UI", sans-serif;
+        -webkit-print-color-adjust: exact;
+        print-color-adjust: exact;
+      }
+      .page {
+        width: 210mm;
+        min-height: 297mm;
+        padding: 34px 40px 28px;
+        position: relative;
+        page-break-after: always;
+        background:
+          radial-gradient(circle at 80% 10%, rgba(108, 58, 237, 0.10), transparent 35%),
+          radial-gradient(circle at 15% 90%, rgba(236, 72, 153, 0.06), transparent 30%),
+          var(--base);
+      }
+      .page:last-child { page-break-after: auto; }
+      .page::before {
+        content: "";
+        position: absolute;
+        inset: 16px;
+        border: 1px solid rgba(245, 243, 255, 0.04);
+        border-radius: 22px;
+        pointer-events: none;
+      }
+      .header {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        margin-bottom: 20px;
+        padding-bottom: 12px;
+        border-bottom: 1px solid var(--line);
+      }
+      .brand-name { font-family: "Nunito Sans", sans-serif; font-weight: 800; font-size: 16px; }
+      .page-label { font-size: 10px; color: var(--muted); letter-spacing: 0.15em; text-transform: uppercase; }
+      .page-title {
+        font-family: "Nunito Sans", sans-serif;
+        font-weight: 800;
+        font-size: 24px;
+        line-height: 1.15;
+        margin-bottom: 4px;
+      }
+      .page-subtitle {
+        font-size: 11.5px;
+        color: #d3c8ec;
+        line-height: 1.5;
+        margin-bottom: 18px;
+      }
+      h3 {
+        font-family: "Nunito Sans", sans-serif;
+        font-weight: 800;
+        font-size: 13px;
+        margin-bottom: 8px;
+        margin-top: 16px;
+        color: var(--output);
+        display: flex;
+        align-items: center;
+        gap: 8px;
+      }
+      h3:first-of-type { margin-top: 0; }
+      h3 .badge {
+        font-size: 8px;
+        letter-spacing: 0.12em;
+        text-transform: uppercase;
+        padding: 3px 8px;
+        border-radius: 99px;
+        font-weight: 700;
+      }
+      h3 .badge.p1 { background: rgba(236, 72, 153, 0.2); color: #f9a8d4; }
+      h3 .badge.p2 { background: rgba(108, 58, 237, 0.2); color: #c4b5fd; }
+      h3 .badge.p3 { background: rgba(107, 92, 138, 0.2); color: var(--soft); }
+
+      .checklist {
+        list-style: none;
+        padding: 0;
+        display: flex;
+        flex-direction: column;
+        gap: 0;
+        margin-bottom: 12px;
+      }
+      .checklist li {
+        font-size: 10.5px;
+        color: #d3c8ec;
+        line-height: 1.4;
+        padding: 5px 0 5px 26px;
+        position: relative;
+        border-bottom: 1px solid rgba(167, 146, 214, 0.06);
+      }
+      .checklist li:last-child { border-bottom: none; }
+      .checklist li::before {
+        content: "";
+        position: absolute;
+        left: 0;
+        top: 7px;
+        width: 14px;
+        height: 14px;
+        border-radius: 4px;
+        border: 1.5px solid rgba(167, 146, 214, 0.35);
+        background: rgba(255,255,255,0.02);
+      }
+      .checklist li strong {
+        color: var(--output);
+        font-weight: 700;
+      }
+      .checklist li .note {
+        color: var(--muted);
+        font-size: 9.5px;
+      }
+
+      .summary-bar {
+        display: grid;
+        grid-template-columns: repeat(4, 1fr);
+        gap: 10px;
+        margin-bottom: 18px;
+      }
+      .summary-card {
+        background: var(--panel);
+        border: 1px solid var(--line);
+        border-radius: 12px;
+        padding: 12px;
+        text-align: center;
+      }
+      .summary-card .num {
+        font-family: "Nunito Sans", sans-serif;
+        font-weight: 800;
+        font-size: 22px;
+        display: block;
+        background: linear-gradient(135deg, var(--accent-a), var(--accent-b));
+        -webkit-background-clip: text;
+        -webkit-text-fill-color: transparent;
+      }
+      .summary-card .lbl {
+        font-size: 9px;
+        color: var(--muted);
+        text-transform: uppercase;
+        letter-spacing: 0.1em;
+      }
+    </style>
+  </head>
+  <body>
+
+    <!-- ═══════════ PAGE 1 ═══════════ -->
+    <div class="page">
+      <header class="header">
+        <span class="brand-name">Claritect</span>
+        <span class="page-label">Launch Checklist</span>
+      </header>
+
+      <h2 class="page-title">Launch readiness checklist</h2>
+      <p class="page-subtitle">Everything that needs to be in place before taking a $499+/month payment from a real company.</p>
+
+      <div class="summary-bar">
+        <div class="summary-card"><span class="num">47</span><span class="lbl">Total items</span></div>
+        <div class="summary-card"><span class="num">7</span><span class="lbl">Sections</span></div>
+        <div class="summary-card"><span class="num">P1</span><span class="lbl">Do first</span></div>
+        <div class="summary-card"><span class="num">P3</span><span class="lbl">Can wait</span></div>
+      </div>
+
+      <h3>Product — Demo must be flawless <span class="badge p1">Priority 1</span></h3>
+      <ul class="checklist">
+        <li><strong>Demo database with sample data</strong> — pre-loaded Postgres with realistic sales, finance, pipeline, support tables. 5-6 tables minimum.</li>
+        <li><strong>One-click demo flow</strong> — prospect clicks "Try a live demo" &rarr; sees a real question answered against sample data &rarr; report in under 60 seconds.</li>
+        <li><strong>Connection onboarding wizard</strong> — paste connection string &rarr; discover tables &rarr; confirm scope &rarr; done. Must feel safe and fast.</li>
+        <li><strong>Read-only enforcement visible in UI</strong> — show the SQL that ran. Show it's SELECT only. This is the #1 objection. Address it before they ask.</li>
+        <li><strong>Report quality at consultant level</strong> — professional formatting, charts, findings, and actionable recommendations. This is what they pay for.</li>
+        <li><strong>PDF export working</strong> — every report downloadable as a polished PDF they can forward to their board.</li>
+        <li><strong>Email delivery</strong> — reports delivered to inbox, not just viewable in the app.</li>
+        <li><strong>Scheduled reports end-to-end</strong> — set a weekly schedule, receive report on time. This is the sticky feature that prevents churn.</li>
+        <li><strong>Follow-up / clarification flow</strong> — after a report, user asks "Why did churn spike in March?" and gets a grounded follow-up.</li>
+        <li><strong>Error handling</strong> — LLM failure, DB timeout, or empty results show a professional message, never a stack trace.</li>
+        <li><strong>Progress indicators</strong> — for a 20-30s pipeline, show: "Scoping your question..." &rarr; "Analyzing data..." &rarr; "Building report..." Not a spinner.</li>
+        <li><strong>Mobile-responsive reports</strong> — executives read reports on their phone at 11pm.</li>
+      </ul>
+
+      <h3>Security &amp; trust <span class="badge p1">Priority 1</span></h3>
+      <ul class="checklist">
+        <li><strong>SSL/TLS everywhere</strong> — HTTPS on all endpoints. Encrypted database connections.</li>
+        <li><strong>Read-only SQL guarantee documented</strong> — written policy and technical enforcement. Visible in the product.</li>
+        <li><strong>Data handling policy</strong> — what do you store? Query results? For how long? Write it down, publish it.</li>
+        <li><strong>Query audit log</strong> — every SQL query run, when, by whom, visible to the customer. Your governance differentiator.</li>
+        <li><strong>Terms of Service</strong> — reviewed by a lawyer. Covers data handling, liability, SLA commitments.</li>
+        <li><strong>Privacy Policy</strong> — GDPR-aware even outside EU. Your customers' customers may be in the EU.</li>
+        <li><strong>Security one-pager PDF</strong> — 1-page answering: "How does Claritect handle our data?" Pre-empts the security review.</li>
+        <li><strong>SOC 2 readiness</strong> <span class="note">— not SOC 2 itself yet. Access logging, encryption at rest, audit trail. Document your practices.</span></li>
+      </ul>
+    </div>
+
+    <!-- ═══════════ PAGE 2 ═══════════ -->
+    <div class="page">
+      <header class="header">
+        <span class="brand-name">Claritect</span>
+        <span class="page-label">Launch Checklist (cont.)</span>
+      </header>
+
+      <h3>Infrastructure — Production-ready <span class="badge p1">Priority 1</span></h3>
+      <ul class="checklist">
+        <li><strong>Production deployment</strong> — proper VPS or cloud instance with a deploy pipeline. Not running on your laptop.</li>
+        <li><strong>Custom domain</strong> — app.claritect.ai or similar. Not a platform subdomain.</li>
+        <li><strong>Automated daily backups</strong> — DB snapshots. Test a restore at least once before launch.</li>
+        <li><strong>Uptime monitoring</strong> — Uptime Robot (free) or Better Uptime. Know before your customer does.</li>
+        <li><strong>Error alerting</strong> — Sentry or similar. Get notified when the API, LLM, or worker breaks.</li>
+        <li><strong>Usage metering per tenant</strong> — track queries per tenant per month. Required for caps and overage billing.</li>
+        <li><strong>Rate limiting per tenant</strong> — prevent one user from burning your entire OpenRouter quota.</li>
+        <li><strong>Environment separation</strong> — production + staging at minimum. Never test on the live system.</li>
+      </ul>
+
+      <h3>Website &amp; marketing <span class="badge p2">Priority 2</span></h3>
+      <ul class="checklist">
+        <li><strong>Marketing homepage</strong> <span class="note">— in progress</span></li>
+        <li><strong>Pricing page</strong> <span class="note">— in progress</span></li>
+        <li><strong>One-pager pitch PDF</strong> <span class="note">— done</span></li>
+        <li><strong>3 example reports on website</strong> — a finance report, an ops report, and a business case. Show what Claritect delivers. These sell harder than copy.</li>
+        <li><strong>30-second product video</strong> — screen recording: question typed &rarr; report appears. Embed on homepage hero.</li>
+        <li><strong>2-3 minute demo video</strong> — full walkthrough for people who want depth. YouTube + embed on site.</li>
+        <li><strong>Blog with 2-3 SEO articles</strong> — "How to automate executive reporting", "AI vs hiring a data analyst", etc.</li>
+        <li><strong>Favicon, Open Graph tags, meta descriptions</strong> — looks professional when shared on Slack, Twitter, email previews.</li>
+      </ul>
+
+      <h3>Sales process <span class="badge p1">Priority 1</span></h3>
+      <ul class="checklist">
+        <li><strong>Pilot booking flow</strong> — "Book a Live Pilot" &rarr; Calendly or Cal.com &rarr; 30-min slot. Zero friction.</li>
+        <li><strong>Pilot demo script</strong> — what you walk through in 30 minutes. Rehearsed 5+ times. Demo with sample data first, then offer to connect their data live.</li>
+        <li><strong>5 killer demo questions prepared</strong> — Finance: margin shift. Ops: supplier underperformance. Product: release impact. Strategy: APAC business case. Scheduled: weekly pipeline summary.</li>
+        <li><strong>Backup demo recording</strong> — if live demo fails (LLM timeout), switch to a pre-recorded walkthrough seamlessly.</li>
+        <li><strong>Follow-up email template</strong> — sent within 1 hour of pilot. Summary of what you showed, link to their report, pricing, next steps.</li>
+        <li><strong>Proposal template</strong> — 1-page PDF: what they get, price, timeline, terms. Not a 20-page SOW.</li>
+        <li><strong>ROI calculation ready</strong> — "You spend X on consulting today. Claritect gives you the same for $499/month." Have the math on screen.</li>
+        <li><strong>CRM</strong> <span class="note">— even a spreadsheet. Track: who, what stage, follow-up date. Graduate to HubSpot free at 20+ leads.</span></li>
+      </ul>
+    </div>
+
+    <!-- ═══════════ PAGE 3 ═══════════ -->
+    <div class="page">
+      <header class="header">
+        <span class="brand-name">Claritect</span>
+        <span class="page-label">Launch Checklist (cont.)</span>
+      </header>
+
+      <h3>Legal &amp; billing <span class="badge p2">Priority 2</span></h3>
+      <ul class="checklist">
+        <li><strong>Business entity registered</strong> — you're charging $500+/month. You need a proper company (LLC / Ltd).</li>
+        <li><strong>Business bank account</strong> — separate from personal. Required for Stripe payouts.</li>
+        <li><strong>Stripe account verified</strong> — test a real payment end-to-end. Set up the 3 subscription plans.</li>
+        <li><strong>Professional invoices</strong> — Stripe generates these, but verify they have your logo and look right.</li>
+        <li><strong>Cancellation flow</strong> — how does a customer cancel? Make it easy. Don't be the product that's hard to leave.</li>
+        <li><strong>Refund policy</strong> — "Not happy in the first 30 days? Full refund." Reduces purchase risk significantly.</li>
+        <li><strong>Contract template</strong> — simple SaaS agreement. Month-to-month to reduce friction. Annual discount (2 months free) available.</li>
+      </ul>
+
+      <h3>Post-launch — first 30 days <span class="badge p3">Priority 3</span></h3>
+      <ul class="checklist">
+        <li><strong>Customer onboarding email sequence</strong> — after sign-up: connect DB &rarr; first report &rarr; set up schedule &rarr; add team members. Automated 4-email drip.</li>
+        <li><strong>Weekly check-in with first 5 customers</strong> — 15-min call. "What's working? What's not?" This feedback is gold.</li>
+        <li><strong>Usage dashboard for yourself</strong> — see per-tenant: queries this month, LLM cost, reports generated. Spot problems before customers complain.</li>
+        <li><strong>Collect testimonials</strong> — ask happy customers for a 2-sentence quote. Use on website and PH listing.</li>
+      </ul>
+
+      <h3 style="margin-top:28px; font-size:16px;">Execution order</h3>
+      <p class="page-subtitle" style="margin-bottom:12px">Don't try to do everything at once. Ship in this order:</p>
+
+      <div style="display:grid; grid-template-columns:1fr 1fr; gap:10px;">
+        <div style="background:var(--panel); border:1px solid var(--line); border-radius:14px; padding:14px;">
+          <div style="font-family:'Nunito Sans',sans-serif; font-weight:800; font-size:12px; margin-bottom:8px; color:var(--accent-b);">Week 1-2: Foundation</div>
+          <ul class="checklist" style="margin-bottom:0">
+            <li>Demo database + demo flow</li>
+            <li>Production deployment + domain</li>
+            <li>Stripe billing</li>
+            <li>Pilot booking (Calendly)</li>
+            <li>Pilot script rehearsed</li>
+          </ul>
+        </div>
+        <div style="background:var(--panel); border:1px solid var(--line); border-radius:14px; padding:14px;">
+          <div style="font-family:'Nunito Sans',sans-serif; font-weight:800; font-size:12px; margin-bottom:8px; color:var(--accent-b);">Week 3-4: Trust &amp; credibility</div>
+          <ul class="checklist" style="margin-bottom:0">
+            <li>Security one-pager</li>
+            <li>Terms of Service + Privacy Policy</li>
+            <li>3 example reports on website</li>
+            <li>Product video (30s + 3min)</li>
+            <li>Usage metering + rate limiting</li>
+          </ul>
+        </div>
+        <div style="background:var(--panel); border:1px solid var(--line); border-radius:14px; padding:14px;">
+          <div style="font-family:'Nunito Sans',sans-serif; font-weight:800; font-size:12px; margin-bottom:8px; color:var(--accent-a);">Week 5-6: Go to market</div>
+          <ul class="checklist" style="margin-bottom:0">
+            <li>Product Hunt launch</li>
+            <li>Show HN post</li>
+            <li>Cold email batch 1</li>
+            <li>Community posting begins</li>
+            <li>Google Ads live</li>
+          </ul>
+        </div>
+        <div style="background:var(--panel); border:1px solid var(--line); border-radius:14px; padding:14px;">
+          <div style="font-family:'Nunito Sans',sans-serif; font-weight:800; font-size:12px; margin-bottom:8px; color:var(--accent-a);">Week 7-8: Iterate</div>
+          <ul class="checklist" style="margin-bottom:0">
+            <li>First customer onboarded</li>
+            <li>Weekly check-ins running</li>
+            <li>Blog posts + SEO</li>
+            <li>Newsletter sponsorship</li>
+            <li>Collect first testimonials</li>
+          </ul>
+        </div>
+      </div>
+    </div>
+
+  </body>
+</html>

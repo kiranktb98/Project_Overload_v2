@@ -23,15 +23,48 @@ export type StoreRequestContext = {
   tenant_id: string;
 };
 
+export type PlatformUserRole = "customer" | "admin";
+
 export type PlatformUserRecord = {
   id: string;
   tenant_id: string;
   username: string;
   password_salt: string;
   password_hash: string;
+  role: PlatformUserRole;
+  display_name: string | null;
   is_active: boolean;
   created_at: string;
   last_login_at: string | null;
+};
+
+export type CustomerAccountRecord = {
+  tenant_id: string;
+  name: string;
+  plan_tier: string;
+  status: "active" | "trial" | "paused" | "churned";
+  primary_contact_name: string | null;
+  primary_contact_email: string | null;
+  billing_status: "trialing" | "current" | "past_due" | "canceled";
+  renewal_date: string | null;
+  owner: string | null;
+  notes: string;
+  entitlements: {
+    seats: number;
+    scheduled_reports: number;
+    monthly_runs: number;
+    ai_budget_usd: number | null;
+    feature_flags: string[];
+  };
+  created_at: string;
+  updated_at: string;
+};
+
+export type SystemStateRecord = {
+  state_key: string;
+  tenant_id: string;
+  payload: Record<string, unknown>;
+  updated_at: string;
 };
 
 export type ChatSessionMessageRecord = {
@@ -128,10 +161,23 @@ export interface MetadataStore {
 
   setSystemState(key: string, payload: Record<string, unknown> | null, context?: StoreRequestContext): Promise<void>;
   getSystemState(key: string, context?: StoreRequestContext): Promise<Record<string, unknown> | null>;
+  listSystemStatesByKey(key: string): Promise<SystemStateRecord[]>;
 
   upsertPlatformUser(payload: Omit<PlatformUserRecord, "created_at" | "last_login_at">, context?: StoreRequestContext): Promise<PlatformUserRecord>;
   getPlatformUserByUsername(username: string, context?: StoreRequestContext): Promise<PlatformUserRecord | null>;
+  listPlatformUsers(context?: StoreRequestContext): Promise<PlatformUserRecord[]>;
   markPlatformUserLogin(userId: string, context?: StoreRequestContext): Promise<void>;
+
+  upsertCustomerAccount(
+    payload: Omit<CustomerAccountRecord, "created_at" | "updated_at">,
+    context?: StoreRequestContext
+  ): Promise<CustomerAccountRecord>;
+  listCustomerAccounts(): Promise<CustomerAccountRecord[]>;
+  getCustomerAccountByTenantId(tenantId: string): Promise<CustomerAccountRecord | null>;
+
+  listAllReportContracts(): Promise<ReportContract[]>;
+  listAllReportRuns(): Promise<ReportRun[]>;
+  listAllScheduledReportProfiles(): Promise<ScheduledReportProfileRecord[]>;
 
   listChatSessions(userId: string, context?: StoreRequestContext): Promise<ChatSessionRecord[]>;
   upsertChatSession(

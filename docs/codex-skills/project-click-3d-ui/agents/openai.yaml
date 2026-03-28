@@ -1,0 +1,4 @@
+interface:
+  display_name: "Project Click 3D UI"
+  short_description: "Luxury R3F and GSAP marketing surfaces for Project Click."
+  default_prompt: "Build or refine Project Click pages with a premium 3D direction using React Three Fiber, drei, and GSAP."

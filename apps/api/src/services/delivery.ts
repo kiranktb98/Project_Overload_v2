@@ -35,8 +35,8 @@ export async function deliverReportRun(input: {
     };
   }
 
-  const subject = `[Project Overload] ${input.contract.name} (${input.run.id})`;
-  const from = process.env.DELIVERY_FROM_EMAIL?.trim() || "reports@project-overload.local";
+  const subject = `[Claritect] ${input.contract.name} (${input.run.id})`;
+  const from = process.env.DELIVERY_FROM_EMAIL?.trim() || "reports@claritect.local";
   const html = buildDeliveryHtml(input.contract, input.exec_brief, input.run);
   const fetcher = input.fetch_impl ?? fetch;
 

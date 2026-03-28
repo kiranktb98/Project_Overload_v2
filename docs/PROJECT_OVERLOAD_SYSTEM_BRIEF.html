@@ -1,0 +1,548 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Application System Brief</title>
+    <style>
+      :root {
+        color-scheme: light;
+        --text: #162033;
+        --muted: #4c5b74;
+        --border: #d7deea;
+        --soft: #f4f7fb;
+        --accent: #244f9e;
+      }
+
+      * {
+        box-sizing: border-box;
+      }
+
+      body {
+        margin: 0;
+        font-family: Arial, Helvetica, sans-serif;
+        color: var(--text);
+        background: white;
+        line-height: 1.45;
+      }
+
+      .page {
+        width: 210mm;
+        margin: 0 auto;
+        padding: 18mm 16mm 18mm;
+      }
+
+      h1,
+      h2,
+      h3 {
+        margin: 0 0 8px;
+        line-height: 1.2;
+      }
+
+      h1 {
+        font-size: 28px;
+      }
+
+      h2 {
+        font-size: 19px;
+        margin-top: 24px;
+        padding-bottom: 6px;
+        border-bottom: 1px solid var(--border);
+      }
+
+      h3 {
+        font-size: 15px;
+        margin-top: 16px;
+      }
+
+      p,
+      li,
+      td,
+      th {
+        font-size: 12px;
+      }
+
+      p {
+        margin: 0 0 10px;
+      }
+
+      .lede {
+        font-size: 13px;
+        color: var(--muted);
+        margin-top: 6px;
+      }
+
+      .meta {
+        margin-top: 10px;
+        padding: 10px 12px;
+        border: 1px solid var(--border);
+        background: var(--soft);
+      }
+
+      .grid {
+        display: grid;
+        grid-template-columns: 1fr 1fr;
+        gap: 12px;
+      }
+
+      .card {
+        border: 1px solid var(--border);
+        background: #fbfcfe;
+        padding: 10px 12px;
+      }
+
+      .card h3 {
+        margin-top: 0;
+      }
+
+      ul {
+        margin: 6px 0 10px 18px;
+        padding: 0;
+      }
+
+      ol {
+        margin: 6px 0 10px 20px;
+        padding: 0;
+      }
+
+      table {
+        width: 100%;
+        border-collapse: collapse;
+        margin-top: 10px;
+      }
+
+      th,
+      td {
+        border: 1px solid var(--border);
+        padding: 7px 8px;
+        vertical-align: top;
+        text-align: left;
+      }
+
+      th {
+        background: #eef3fb;
+      }
+
+      .small {
+        color: var(--muted);
+        font-size: 11px;
+      }
+
+      .section-note {
+        padding: 10px 12px;
+        border-left: 3px solid var(--accent);
+        background: #f7faff;
+        margin: 10px 0 12px;
+      }
+
+      code {
+        font-family: "Courier New", Courier, monospace;
+        font-size: 11px;
+        background: #f0f4fa;
+        padding: 1px 4px;
+        border-radius: 3px;
+      }
+
+      .footer {
+        margin-top: 28px;
+        padding-top: 8px;
+        border-top: 1px solid var(--border);
+        color: var(--muted);
+        font-size: 11px;
+      }
+    </style>
+  </head>
+  <body>
+    <main class="page">
+      <h1>Application System Brief</h1>
+      <p class="lede">
+        Repo-backed product and architecture summary of the current application implementation.
+        This brief is based on the codebase snapshot available on March 26, 2026.
+      </p>
+
+      <div class="meta">
+        <p><strong>Product position:</strong> AI data architect + governed report builder + scheduled narrative reporting system.</p>
+        <p><strong>Primary promise:</strong> define an analysis once in chat, govern the data safely, generate a business-consumable report, and optionally run that report again on a deterministic schedule.</p>
+        <p><strong>Core rule set:</strong> read-only data access, SELECT-only SQL, evidence row cap of 200 rows, deterministic cron scheduling, and customer-facing outputs that stay structured and comparable over time.</p>
+      </div>
+
+      <h2>1. What the Application Is</h2>
+      <p>
+        The application is an analytics product built around contracts rather than dashboards. A user connects a source,
+        asks for a report in natural language, works through scope clarifications, runs governed data preparation and analysis,
+        and receives a narrative HTML/PDF report. That run can then be used for report Q&amp;A, business case analysis, and scheduled reruns.
+      </p>
+      <p>
+        The product is designed to behave like an analyst and reporting system layered on top of governed warehouse access. It is not meant to write back to customer data, replace warehouse compute, or bypass governance.
+      </p>
+
+      <h2>2. Current User-Facing Surfaces</h2>
+      <table>
+        <thead>
+          <tr>
+            <th>Surface</th>
+            <th>Route</th>
+            <th>Purpose</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr>
+            <td>Login</td>
+            <td><code>/login</code></td>
+            <td>Workspace authentication.</td>
+          </tr>
+          <tr>
+            <td>Chat</td>
+            <td><code>/</code></td>
+            <td>Main operating surface for single query, scoped multi-query analysis, report generation, clarification, business case work, and scheduled-report follow-up.</td>
+          </tr>
+          <tr>
+            <td>Connect</td>
+            <td><code>/connect</code></td>
+            <td>Guided source onboarding, governance setup, cataloging, activation, and edit/disconnect management.</td>
+          </tr>
+          <tr>
+            <td>Connection Guide</td>
+            <td><code>/connect/guide</code></td>
+            <td>HTML help guide for connecting supported databases and handling TLS issues.</td>
+          </tr>
+          <tr>
+            <td>Usage Metrics</td>
+            <td><code>/usage</code></td>
+            <td>Operational query-log and governed usage view.</td>
+          </tr>
+          <tr>
+            <td>Global Config</td>
+            <td><code>/config</code></td>
+            <td>Business context and metric-definition management used by planning and reporting agents.</td>
+          </tr>
+          <tr>
+            <td>Scheduled Reports</td>
+            <td><code>/scheduled</code></td>
+            <td>View saved scheduled report profiles, inspect run history, pause/activate schedules, and reopen a scheduled run in chat.</td>
+          </tr>
+        </tbody>
+      </table>
+
+      <h2>3. High-Level Architecture</h2>
+      <div class="grid">
+        <section class="card">
+          <h3>Web app</h3>
+          <p>The web app is the main operator surface. It renders chat, connection setup, config, usage metrics, and scheduled reports. It also proxies many API calls so the browser talks to the web layer instead of the API directly for most session and product flows.</p>
+        </section>
+        <section class="card">
+          <h3>API app</h3>
+          <p>The API owns contract creation, run preparation, run execution, scheduling endpoints, business case and report clarification routes, report artifact serving, and metadata persistence.</p>
+        </section>
+        <section class="card">
+          <h3>Worker</h3>
+          <p>The worker refreshes locked report schedules, computes deterministic due jobs from cron + timezone, queues them, dispatches scheduled or retry runs, and records retry/dead-letter events.</p>
+        </section>
+        <section class="card">
+          <h3>Shared packages</h3>
+          <p>Shared packages define schemas, contracts, scheduling types, orchestration state, guardrails, report rendering, SQL policy checks, and LLM client interfaces.</p>
+        </section>
+      </div>
+
+      <div class="section-note">
+        <strong>Core domain objects:</strong> <code>ReportContract</code>, <code>ReportRun</code>, <code>ScheduledReportProfile</code>, semantic entities/fields/relationships/metrics/dimensions, and persisted chat sessions.
+      </div>
+
+      <h2>4. End-to-End Operating Flow</h2>
+      <ol>
+        <li>User connects a governed data source through the Connect flow.</li>
+        <li>User optionally sets shared business context and metric definitions in Global Config.</li>
+        <li>User starts a chat and asks for either a single analysis or a multi-question report.</li>
+        <li>The conversation/orchestration layer scopes questions, asks clarifications, and suggests optional related questions when appropriate.</li>
+        <li>When scope is ready, the user runs data preparation. Prepared queries can be reviewed, copied, and edited before final analysis.</li>
+        <li>The report contract is prepared and then executed through the pipeline.</li>
+        <li>The product generates an HTML report, offers PDF download, and unlocks report clarification and business case follow-ups.</li>
+        <li>The user can optionally schedule the report, which stores cadence, question rerun logic, query templates, and the HTML template snapshot.</li>
+        <li>The worker reruns the locked contract on schedule and injects change notes versus the last comparable run.</li>
+      </ol>
+
+      <h2>5. AI Agents and Deterministic Tools</h2>
+      <table>
+        <thead>
+          <tr>
+            <th>Component</th>
+            <th>Role</th>
+            <th>Current status</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr><td>Agent A - Contract Builder</td><td>Turns user intent into a report contract.</td><td>Documented in agent map.</td></tr>
+          <tr><td>Agent B - Semantic Mapper</td><td>Maps user language to governed semantic objects.</td><td>Documented in agent map.</td></tr>
+          <tr><td>Agent C - Planner / Data Architect</td><td>Breaks work into plan steps and query strategy.</td><td>Active.</td></tr>
+          <tr><td>Tool T1 - SQL Policy Engine</td><td>SELECT-only enforcement, allowlist/schema enforcement, limit insertion.</td><td>Deterministic guardrail.</td></tr>
+          <tr><td>Tool T2 - Data Plane Executor</td><td>Runs governed SQL against the connected source.</td><td>Deterministic runtime.</td></tr>
+          <tr><td>Agent D - Evidence Reducer &amp; Batch Controller</td><td>Controls batch evidence handling and reduction.</td><td>Active in pipeline.</td></tr>
+          <tr><td>Agent E - Batch Analyst</td><td>Answers scoped questions from prepared evidence.</td><td>Active.</td></tr>
+          <tr><td>Batch Forecast Agent</td><td>Forecast-specialized batch analysis using the same model family as batch analyst.</td><td>Active.</td></tr>
+          <tr><td>Agent F - Aggregator</td><td>Builds concise business summary structure across analyses.</td><td>Active.</td></tr>
+          <tr><td>Agent G - Renderer / Composer</td><td>Generates customer-facing HTML report sections.</td><td>Active.</td></tr>
+          <tr><td>Agent H - QA / Judge</td><td>Quality and consistency checks for report output.</td><td>Active in overall pipeline design.</td></tr>
+          <tr><td>Agent I - Data Preparation</td><td>Prepares safe, reduced evidence before analysis.</td><td>Active.</td></tr>
+          <tr><td>Agent J - Payload QA</td><td>Answers run-payload questions from a generated run.</td><td>Active.</td></tr>
+          <tr><td>Report Clarification Agent</td><td>Answers questions grounded in report HTML, exec brief, analysis payloads, metric definitions, and business context.</td><td>Active.</td></tr>
+          <tr><td>Batch Business Case Agent</td><td>Builds a detailed business case for selected actionable recommendations and can request more evidence.</td><td>Active.</td></tr>
+          <tr><td>Conversation Orchestrator</td><td>Controls chat state, route selection, scope clarification, button-driven transitions, and session naming.</td><td>Active.</td></tr>
+          <tr><td>Query Router</td><td>Chooses workflow path and helps interpret scoping turns.</td><td>Active.</td></tr>
+        </tbody>
+      </table>
+
+      <h2>6. Current Model Stack</h2>
+      <p>The default runtime provider is OpenRouter. The current repo defaults are:</p>
+      <table>
+        <thead>
+          <tr>
+            <th>Area</th>
+            <th>Current model</th>
+            <th>Notes</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr><td>Conversation orchestration</td><td><code>openai/gpt-5.4</code></td><td>Main chat/orchestration surface.</td></tr>
+          <tr><td>Batch analyst</td><td><code>openai/gpt-5.4</code></td><td>Deep analysis model.</td></tr>
+          <tr><td>Forecast analyst</td><td><code>openai/gpt-5.4</code></td><td>Explicitly shares analyst model selection.</td></tr>
+          <tr><td>Report composer</td><td><code>openai/gpt-5.4</code></td><td>HTML report generation.</td></tr>
+          <tr><td>Report clarification</td><td><code>openai/gpt-5.4</code></td><td>Answers grounded questions on generated reports.</td></tr>
+          <tr><td>Business case</td><td><code>openai/gpt-5.4</code></td><td>Produces business case outputs and clarification prompts.</td></tr>
+          <tr><td>Query strategist</td><td><code>anthropic/claude-opus-4.6</code></td><td>Query planning and support-query generation.</td></tr>
+          <tr><td>Data preparation</td><td><code>anthropic/claude-opus-4.6</code></td><td>Preparation-oriented planning.</td></tr>
+          <tr><td>Query router / single-query helpers</td><td><code>anthropic/claude-opus-4.6</code></td><td>Front-door routing and scoped interpretation.</td></tr>
+          <tr><td>Embeddings</td><td><code>openai/text-embedding-3-small</code></td><td>Chat retrieval memory.</td></tr>
+          <tr><td>Rerank</td><td><code>openai/gpt-4.1-mini</code></td><td>RAG support.</td></tr>
+        </tbody>
+      </table>
+
+      <h2>7. Database Connectivity and Governance</h2>
+      <p>
+        The product currently supports four user-facing source types in the Connect UI:
+        Postgres, MySQL, Snowflake, and BigQuery. At runtime, the connection manager also recognizes Supabase and Neon as Postgres-compatible providers.
+      </p>
+
+      <h3>Connection wizard</h3>
+      <ol>
+        <li><strong>Source:</strong> choose provider, then enter provider-specific connection details.</li>
+        <li><strong>Governance:</strong> validate tables/columns and save the allowlist.</li>
+        <li><strong>Cataloging:</strong> the UI shows a cataloging/loading step and table/column counts.</li>
+        <li><strong>Activate:</strong> run a safe sample query and submit the source for governed use.</li>
+      </ol>
+
+      <h3>Edit mode</h3>
+      <p>
+        The connection UI also supports an edit/manage path for existing sources. Users can inspect connected-source details, review allowlisted objects, change governance, and disconnect.
+      </p>
+
+      <h3>Guardrails on data access</h3>
+      <ul>
+        <li>Write access is explicitly denied. The system enforces <code>deny_write: true</code>.</li>
+        <li>SQL must remain SELECT-only.</li>
+        <li>Queries are checked against allowlisted relations and schemas.</li>
+        <li>A row cap is applied in the governed execution path.</li>
+        <li>Query logs and audit events are persisted for usage and operational review.</li>
+      </ul>
+
+      <h2>8. Semantic, Config, and Context Layers</h2>
+      <p>The product has an explicit semantic store for:</p>
+      <ul>
+        <li>entities</li>
+        <li>fields</li>
+        <li>relationships</li>
+        <li>metrics</li>
+        <li>dimensions</li>
+      </ul>
+      <p>
+        In addition, the Global Config surface lets the team maintain shared business context and metric definitions. These definitions are carried into scoping, query strategy, analyst interpretation, report composition, and follow-up agents.
+      </p>
+
+      <h2>9. Chat and Analysis Flows</h2>
+      <div class="grid">
+        <section class="card">
+          <h3>Single-query flow</h3>
+          <p>The user asks one analytical question. The router selects the appropriate direct analysis path and returns a governed answer.</p>
+        </section>
+        <section class="card">
+          <h3>Multi-query scoped flow</h3>
+          <p>The user describes a report, the chat breaks it into atomic questions, asks clarifications, supports add/remove/include-suggestion edits, then unlocks data preparation and final analysis.</p>
+        </section>
+      </div>
+
+      <h3>Data preparation step</h3>
+      <p>
+        Before final analysis, the user can run data preparation. This produces prepared payloads, validation notes, sample rows, and query previews. Each prepared query can be copied or edited before final analysis, and those overrides are persisted into the contract as <code>prepared_query_overrides</code>.
+      </p>
+
+      <h3>Post-run actions</h3>
+      <p>After a report is generated, the chat exposes:</p>
+      <ul>
+        <li>Ask clarifications on the report</li>
+        <li>Ask for business case analysis</li>
+        <li>Schedule this report</li>
+      </ul>
+
+      <h2>10. Report Generation Pipeline</h2>
+      <ol>
+        <li>Load the contract and effective context.</li>
+        <li>Resolve scoped questions, clarifications, and any saved overrides.</li>
+        <li>Generate or refine strategy queries.</li>
+        <li>Run SQL guardrails and governed execution.</li>
+        <li>Reduce evidence to at most 200 rows.</li>
+        <li>Produce analyst outputs per question.</li>
+        <li>Build summaries, KPI checks, and change notes versus the previous comparable run.</li>
+        <li>Compose HTML report output.</li>
+        <li>Serve HTML directly and render downloadable PDF from that HTML.</li>
+        <li>Persist artifacts and audit events.</li>
+      </ol>
+
+      <p>
+        The HTML composer is instructed to reuse a previous HTML template when available for scheduled reruns. It is also told to add a concise “What changed since last run” subsection when change-summary notes are present.
+      </p>
+
+      <h2>11. Report Outputs and Follow-Ups</h2>
+      <h3>HTML and PDF</h3>
+      <p>
+        The canonical customer-facing report artifact is HTML. The product also provides a PDF download endpoint by rendering that HTML to PDF. If PDF generation fails at runtime, the API can fall back to downloadable HTML.
+      </p>
+
+      <h3>Report clarification flow</h3>
+      <p>
+        The report clarification agent answers grounded follow-up questions using the report HTML, exec brief, per-question summaries, analysis payloads, prepared payloads, metric definitions, and business context.
+      </p>
+
+      <h3>Business case flow</h3>
+      <p>
+        The business case flow first extracts only genuinely actionable recommendations from a report run. If nothing in the report qualifies as a business-case-worthy recommendation, the system returns no candidates. If a candidate exists, the business case agent can ask for assumption clarifications, optionally request more governed evidence through the query strategist/data plane path, and then produce a structured business case.
+      </p>
+
+      <h2>12. Scheduled Reports</h2>
+      <p>
+        A completed run can be turned into a scheduled report profile. The scheduler stores more than just cadence. It stores the intended future behavior of each question and enough state to make reruns stable.
+      </p>
+
+      <table>
+        <thead>
+          <tr>
+            <th>Stored with schedule</th>
+            <th>Why it matters</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr>
+            <td>Frequency, timezone, cron</td>
+            <td>Deterministic recurrence.</td>
+          </tr>
+          <tr>
+            <td>Windowing instructions</td>
+            <td>Explains how date windows should roll forward on future runs.</td>
+          </tr>
+          <tr>
+            <td>Additional instructions</td>
+            <td>Captures any special operator notes for future reruns.</td>
+          </tr>
+          <tr>
+            <td>Question execution plan</td>
+            <td>Preserves how each scoped question should behave on future runs.</td>
+          </tr>
+          <tr>
+            <td>Query template snapshot</td>
+            <td>Carries forward the source-run query logic for reuse.</td>
+          </tr>
+          <tr>
+            <td>Report template HTML snapshot</td>
+            <td>Lets the composer reuse the prior report structure and style.</td>
+          </tr>
+        </tbody>
+      </table>
+
+      <p>
+        The Scheduled Reports page presents report profiles as tiles, lets users inspect detail and run history, reopen a completed run in chat, and pause or reactivate the schedule. Paused schedules clear the active cron on the contract until they are reactivated.
+      </p>
+
+      <h2>13. Worker Runtime and Deterministic Scheduling</h2>
+      <p>
+        The worker uses a deterministic scheduler. It parses 5-field cron, validates timezone names, computes the next eligible run minute-by-minute, and registers only locked contracts with an active schedule. On each tick it:
+      </p>
+      <ol>
+        <li>refreshes schedules from the API</li>
+        <li>collects due jobs</li>
+        <li>enqueues them</li>
+        <li>dispatches runs through the API</li>
+        <li>applies exponential retry backoff</li>
+        <li>moves permanently failing jobs to a dead-letter list</li>
+      </ol>
+
+      <h2>14. Persistence and Storage</h2>
+      <p>The metadata layer stores:</p>
+      <ul>
+        <li>semantic records</li>
+        <li>report contracts and contract versions</li>
+        <li>report runs</li>
+        <li>scheduled report profiles</li>
+        <li>platform users</li>
+        <li>chat sessions and their message history</li>
+        <li>RAG chunks for chat retrieval</li>
+        <li>audit logs</li>
+      </ul>
+      <p>
+        The repo includes both a Postgres-backed metadata store and an in-memory implementation for tests and local runtime scenarios.
+      </p>
+
+      <h2>15. Current Web-to-API Boundary</h2>
+      <p>
+        The web app acts as a thin product-facing layer in front of the API for most browser-used flows, including chat sessions, scheduling, database/governance routes, and config. Some report artifact routes, such as run status, HTML, and PDF fetches, use direct API-client handling instead of the generic proxy helper.
+      </p>
+
+      <h2>16. Supported Operational Features Today</h2>
+      <ul>
+        <li>Authentication and persisted chat history</li>
+        <li>Single-query and scoped multi-query analysis</li>
+        <li>Governed source connection and allowlisting</li>
+        <li>Business context and metric-definition management</li>
+        <li>Prepared query preview, copy, and edit before final analysis</li>
+        <li>HTML report generation and PDF download</li>
+        <li>Grounded report clarification Q&amp;A</li>
+        <li>Business case generation for actionable recommendations</li>
+        <li>Scheduled report creation, inspection, pause/reactivate, and rerun support</li>
+        <li>Usage metrics and auditability of governed SQL</li>
+      </ul>
+
+      <h2>17. Core Constraints and Guardrails</h2>
+      <ul>
+        <li>No customer-database write access.</li>
+        <li>SELECT-only SQL enforcement.</li>
+        <li>Evidence row cap of 200 rows.</li>
+        <li>Deterministic scheduling with cron + timezone.</li>
+        <li>Business-consumable output structure with consistent sections.</li>
+        <li>Change-oriented reporting against prior comparable runs when available.</li>
+      </ul>
+
+      <h2>18. Local Development and Validation</h2>
+      <p>Repo-documented local setup includes:</p>
+      <ul>
+        <li><code>pnpm install</code></li>
+        <li><code>pnpm approve-builds</code></li>
+        <li><code>docker compose -f infra/docker-compose.yml up -d</code></li>
+        <li><code>pnpm db:migrate</code></li>
+        <li><code>pnpm dev</code></li>
+        <li><code>pnpm test</code></li>
+      </ul>
+      <p>
+        The standard runtime split is web on port 3000, API on port 4000, with Postgres and Redis provided through the local Docker composition.
+      </p>
+
+      <h2>19. Summary of What Exists Today</h2>
+      <p>
+        The application already has the shape of a real governed analytics product rather than a prototype chatbot. The main pieces are present: governed data connection, scoped chat analysis, data preparation, report generation, follow-up report Q&amp;A, business case analysis, deterministic scheduling, rerun reuse, and operational storage around contracts, runs, sessions, and audit history.
+      </p>
+      <p>
+        The most important product idea visible in the repo today is that the system is built around reusable report contracts and scheduled reruns rather than ad hoc isolated answers. The codebase already reflects that direction in the contract schema, run pipeline, schedule profiles, and worker runtime.
+      </p>
+
+      <div class="footer">
+        Generated from the current repo snapshot. Source references used for this brief include <code>README.md</code>, <code>PRD.md</code>, <code>ARCHITECTURE.md</code>, <code>docs/AGENT_MAP.md</code>, web/app routes, API routes, scheduling types, worker runtime, and current environment defaults in <code>.env.example</code>.
+      </div>
+    </main>
+  </body>
+</html>

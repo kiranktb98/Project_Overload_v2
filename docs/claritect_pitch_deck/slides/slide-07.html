@@ -1,0 +1,213 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Claritect Pitch Deck - Slide 7</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link href="https://fonts.googleapis.com/css2?family=Nunito+Sans:wght@600;700;800&family=Nunito+Text:wght@400;600;700&display=swap" rel="stylesheet" />
+    <style>
+      :root {
+        --base: #0F0B1A;
+        --accent-a: #6C3AED;
+        --accent-b: #EC4899;
+        --input: #6B5C8A;
+        --output: #F5F3FF;
+        --soft: #B8AFCA;
+        --panel: rgba(23, 18, 38, 0.94);
+        --line: rgba(167, 146, 214, 0.18);
+      }
+      * { box-sizing: border-box; }
+      @page { size: 13.333in 7.5in; margin: 0; }
+      html, body {
+        margin: 0;
+        width: 1600px;
+        height: 900px;
+        overflow: hidden;
+        background: var(--base);
+        color: var(--output);
+        font-family: "Nunito Text", "Segoe UI", sans-serif;
+      }
+      body { position: relative; }
+      .slide {
+        position: relative;
+        width: 100%;
+        height: 100%;
+        padding: 58px 72px 54px;
+        display: flex;
+        flex-direction: column;
+        justify-content: space-between;
+        background:
+          radial-gradient(circle at 78% 18%, rgba(108, 58, 237, 0.18), transparent 30%),
+          radial-gradient(circle at 18% 84%, rgba(236, 72, 153, 0.14), transparent 28%),
+          linear-gradient(180deg, rgba(255,255,255,0.02), rgba(255,255,255,0.01)),
+          var(--base);
+      }
+      .slide::before {
+        content: "";
+        position: absolute;
+        inset: 22px;
+        border: 1px solid rgba(245, 243, 255, 0.06);
+        border-radius: 28px;
+        pointer-events: none;
+      }
+      .topbar {
+        position: relative;
+        z-index: 2;
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 20px;
+      }
+      .brand { display: flex; align-items: center; gap: 14px; }
+      .brand-text { display: flex; flex-direction: column; gap: 2px; }
+      .brand-name { font-family: "Nunito Sans", sans-serif; font-weight: 800; font-size: 22px; letter-spacing: 0.02em; }
+      .brand-kicker { color: var(--soft); opacity: 0.82; font-size: 11px; letter-spacing: 0.24em; text-transform: uppercase; }
+      .content {
+        position: relative;
+        z-index: 2;
+        display: flex;
+        flex-direction: column;
+        gap: 20px;
+        margin-top: 20px;
+        flex: 1;
+      }
+      .eyebrow { color: #cbbcf1; text-transform: uppercase; letter-spacing: 0.28em; font-size: 12px; font-weight: 700; }
+      .headline {
+        font-family: "Nunito Sans", sans-serif;
+        font-weight: 800;
+        font-size: 54px;
+        line-height: 1.03;
+        max-width: 1120px;
+        margin: 0;
+      }
+      .subtitle { margin: 0; font-size: 22px; line-height: 1.4; color: #d3c8ec; max-width: 1150px; }
+      .body { margin-top: 8px; display: flex; flex-direction: column; gap: 18px; }
+      .hero-grid, .closing-grid { display: grid; grid-template-columns: 1.15fr 0.85fr; gap: 30px; align-items: end; min-height: 470px; }
+      .hero-copy, .closing-copy { display: flex; flex-direction: column; gap: 22px; }
+      .hero-badges { display: flex; flex-wrap: wrap; gap: 12px; }
+      .hero-badges span, .bottom-strip div, .guardrail-band span {
+        border: 1px solid rgba(245,243,255,0.12);
+        background: rgba(255,255,255,0.035);
+        color: var(--output);
+        padding: 10px 14px;
+        border-radius: 999px;
+        font-size: 15px;
+        font-weight: 700;
+      }
+      .hero-note { font-size: 24px; line-height: 1.5; max-width: 920px; margin: 0; }
+      .hero-visual, .closing-logo {
+        display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 18px;
+        min-height: 430px; border: 1px solid rgba(255,255,255,0.05);
+        background: linear-gradient(180deg, rgba(255,255,255,0.03), rgba(255,255,255,0.015));
+        border-radius: 28px;
+      }
+      .wordmark { font-family: "Nunito Sans", sans-serif; font-weight: 800; font-size: 40px; }
+      .tagline { color: #d1c7eb; font-size: 18px; }
+      .two-col, .schedule-layout, .split-stack { display: grid; grid-template-columns: 1fr 1fr; gap: 22px; }
+      .issue-list, .pillar-grid, .arch-grid, .three-panel { display: grid; gap: 18px; }
+      .pillar-grid, .three-panel { grid-template-columns: repeat(3, 1fr); }
+      .arch-grid { grid-template-columns: repeat(2, 1fr); }
+      .issue-card, .pillar-card, .panel-card, .stack-card, .arch-card, .output-card {
+        background: var(--panel); border: 1px solid var(--line); border-radius: 24px; padding: 22px 24px;
+      }
+      .issue-card { display: grid; grid-template-columns: 74px 1fr; gap: 18px; }
+      .issue-num {
+        width: 74px; height: 74px; border-radius: 22px; display: flex; align-items: center; justify-content: center;
+        background: linear-gradient(135deg, rgba(108,58,237,0.28), rgba(236,72,153,0.18));
+        font-family: "Nunito Sans", sans-serif; font-weight: 800; font-size: 24px;
+      }
+      .issue-card h3, .pillar-card h3, .panel-card h3, .stack-card h3, .arch-card h3, .output-card h3, .issue-panel h3 {
+        margin: 0 0 8px; font-family: "Nunito Sans", sans-serif; font-size: 24px; font-weight: 800;
+      }
+      .issue-card p, .pillar-card p, .panel-card p, .stack-card p, .arch-card p, .output-card p, .issue-panel p {
+        margin: 0; color: #d3c8ec; font-size: 18px; line-height: 1.5;
+      }
+      .issue-panel { background: rgba(255,255,255,0.03); border: 1px solid rgba(255,255,255,0.08); border-radius: 28px; padding: 26px 28px; }
+      .clean-list { margin: 0; padding-left: 22px; display: flex; flex-direction: column; gap: 12px; }
+      .clean-list li { color: #e2daf4; font-size: 19px; line-height: 1.45; }
+      .pillar-card, .output-card, .arch-card { min-height: 210px; }
+      .bottom-strip { display: grid; grid-template-columns: repeat(3, 1fr); gap: 14px; margin-top: 8px; }
+      .guardrail-band { display: grid; grid-template-columns: repeat(4, 1fr); gap: 14px; margin-top: 8px; }
+      .flow-row { display: grid; grid-template-columns: 1fr 30px 1fr 30px 1fr 30px 1fr 30px 1fr; gap: 10px; align-items: stretch; }
+      .flow-card { background: var(--panel); border: 1px solid var(--line); border-radius: 24px; padding: 18px 18px 20px; display: flex; flex-direction: column; gap: 10px; }
+      .flow-num { font-size: 12px; letter-spacing: 0.2em; text-transform: uppercase; color: #c9bbea; }
+      .flow-card h3 { margin: 0; font-family: "Nunito Sans", sans-serif; font-size: 24px; font-weight: 800; }
+      .flow-card p { margin: 0; color: #d6ccee; font-size: 16px; line-height: 1.45; }
+      .flow-arrow { display: flex; align-items: center; justify-content: center; color: #b59be4; font-size: 28px; font-family: "Nunito Sans", sans-serif; font-weight: 800; }
+      .quote-line { margin-top: 18px; padding-top: 18px; border-top: 1px solid rgba(255,255,255,0.08); font-family: "Nunito Sans", sans-serif; font-size: 22px; color: #f2d6ef; font-weight: 800; }
+      .compare-table { width: 100%; border-collapse: collapse; border-spacing: 0; overflow: hidden; border-radius: 24px; border: 1px solid var(--line); }
+      .compare-table th, .compare-table td { border: 1px solid var(--line); padding: 16px 18px; text-align: left; font-size: 17px; }
+      .compare-table th { background: rgba(255,255,255,0.05); font-family: "Nunito Sans", sans-serif; font-size: 18px; }
+      .compare-table td:first-child, .compare-table th:first-child { width: 28%; font-family: "Nunito Sans", sans-serif; font-weight: 700; }
+      .arch-footer { margin-top: 12px; font-size: 19px; color: #d9d0ee; }
+      .closing-points { display: flex; flex-direction: column; gap: 18px; }
+      .closing-points div { background: rgba(255,255,255,0.03); border: 1px solid rgba(255,255,255,0.08); border-radius: 22px; padding: 18px 20px; font-size: 22px; line-height: 1.45; }
+      .topbar-spacer { width: 1px; height: 1px; }
+    </style>
+  </head>
+  <body>
+    <section class="slide ">
+      <header class="topbar">
+        <div class="brand">
+          
+    <svg width="58" height="38" viewBox="0 0 320 214" fill="none" xmlns="http://www.w3.org/2000/svg" aria-hidden="true">
+      <defs>
+        <linearGradient id="claritect-grad" x1="22" y1="107" x2="308" y2="107" gradientUnits="userSpaceOnUse">
+          <stop stop-color="#6C3AED" />
+          <stop offset="1" stop-color="#EC4899" />
+        </linearGradient>
+        <radialGradient id="claritect-orb" cx="0" cy="0" r="1" gradientUnits="userSpaceOnUse" gradientTransform="translate(219 107) rotate(90) scale(54)">
+          <stop offset="0" stop-color="#F7A98F" />
+          <stop offset="0.55" stop-color="#6C3AED" />
+          <stop offset="1" stop-color="#6C3AED" stop-opacity="0.94" />
+        </radialGradient>
+        <filter id="claritect-glow" x="-30%" y="-30%" width="160%" height="160%">
+          <feGaussianBlur stdDeviation="7" result="blur"/>
+          <feMerge>
+            <feMergeNode in="blur"/>
+            <feMergeNode in="SourceGraphic"/>
+          </feMerge>
+        </filter>
+      </defs>
+      <g filter="url(#claritect-glow)">
+        <path d="M8 112L159 100L158 116L8 112Z" fill="url(#claritect-grad)" />
+        <path d="M70 65L159 87L155 102L70 65Z" fill="url(#claritect-grad)" />
+        <path d="M98 40L173 79L167 93L98 40Z" fill="url(#claritect-grad)" />
+        <path d="M63 160L157 122L160 137L63 160Z" fill="url(#claritect-grad)" />
+        <path d="M97 198L172 137L179 151L97 198Z" fill="url(#claritect-grad)" />
+        <circle cx="216" cy="107" r="42" fill="url(#claritect-orb)" />
+        <rect x="254" y="74" width="58" height="16" rx="1.5" fill="#F5F3FF" />
+        <rect x="254" y="100" width="58" height="16" rx="1.5" fill="#F5F3FF" />
+        <rect x="254" y="126" width="58" height="16" rx="1.5" fill="#F5F3FF" />
+      </g>
+    </svg>
+  
+          <div class="brand-text">
+            <div class="brand-name">Claritect</div>
+            <div class="brand-kicker">Governed recurring intelligence</div>
+          </div>
+        </div>
+        <div class="topbar-spacer" aria-hidden="true"></div>
+      </header>
+      <div class="content">
+        <div class="eyebrow">Outputs</div>
+        <h1 class="headline">The report is not the end of the flow. It becomes a decision surface.</h1>
+        <p class="subtitle">Every completed run can immediately support operator follow-up.</p>
+        <div class="body">
+    <div class="three-panel">
+      <div class="output-card"><h3>HTML + PDF report</h3><p>Customer-facing narrative output with structured sections, charts and tables, and metric-definition support.</p></div>
+      <div class="output-card"><h3>Ask clarifications on the report</h3><p>Grounded follow-up answers using report HTML, exec brief, prepared payloads, summaries, and metric definitions.</p></div>
+      <div class="output-card"><h3>Ask for business case analysis</h3><p>Detailed scenario and business case work only for genuinely actionable recommendations from the run.</p></div>
+    </div>
+    <div class="bottom-strip">
+      <div><strong>Same context</strong> stays available after generation.</div>
+      <div><strong>Same chat</strong> remains the working thread.</div>
+      <div><strong>Same run</strong> can be reopened later from Scheduled Reports.</div>
+    </div>
+  </div>
+      </div>
+    </section>
+  </body>
+</html>

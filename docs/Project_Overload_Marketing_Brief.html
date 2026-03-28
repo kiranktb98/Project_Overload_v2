@@ -1,0 +1,1852 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Project Overload v2 - Product & Marketing Brief</title>
+<style>
+  @import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800;900&family=JetBrains+Mono:wght@400;500&display=swap');
+
+  :root {
+    --primary: #6C3AED;
+    --primary-light: #8B5CF6;
+    --primary-dark: #5B21B6;
+    --accent: #F59E0B;
+    --accent-light: #FBBF24;
+    --bg-dark: #0F0B1A;
+    --bg-card: #1A1429;
+    --bg-card-alt: #231B38;
+    --text-primary: #F8FAFC;
+    --text-secondary: #A5B4C8;
+    --text-muted: #64748B;
+    --border: #2D2545;
+    --gradient-1: linear-gradient(135deg, #6C3AED 0%, #EC4899 100%);
+    --gradient-2: linear-gradient(135deg, #F59E0B 0%, #EF4444 100%);
+    --gradient-3: linear-gradient(135deg, #06B6D4 0%, #6C3AED 100%);
+    --gradient-4: linear-gradient(135deg, #10B981 0%, #06B6D4 100%);
+    --shadow-glow: 0 0 40px rgba(108, 58, 237, 0.15);
+  }
+
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+
+  @page {
+    size: A4;
+    margin: 0;
+  }
+
+  body {
+    font-family: 'Inter', -apple-system, BlinkMacSystemFont, sans-serif;
+    background: var(--bg-dark);
+    color: var(--text-primary);
+    line-height: 1.6;
+    -webkit-font-smoothing: antialiased;
+  }
+
+  /* ===== PAGE STRUCTURE ===== */
+  .page {
+    width: 100%;
+    max-width: 900px;
+    margin: 0 auto;
+    padding: 60px 50px;
+    page-break-after: always;
+    min-height: 100vh;
+    position: relative;
+  }
+  .page:last-child { page-break-after: avoid; }
+
+  /* ===== COVER PAGE ===== */
+  .cover {
+    display: flex;
+    flex-direction: column;
+    justify-content: center;
+    align-items: center;
+    text-align: center;
+    min-height: 100vh;
+    padding: 60px 50px;
+    background: radial-gradient(ellipse at 30% 20%, rgba(108, 58, 237, 0.2) 0%, transparent 50%),
+                radial-gradient(ellipse at 70% 80%, rgba(236, 72, 153, 0.1) 0%, transparent 50%),
+                var(--bg-dark);
+    position: relative;
+    overflow: hidden;
+  }
+  .cover::before {
+    content: '';
+    position: absolute;
+    top: -200px;
+    right: -200px;
+    width: 600px;
+    height: 600px;
+    background: radial-gradient(circle, rgba(108, 58, 237, 0.08) 0%, transparent 70%);
+    border-radius: 50%;
+  }
+  .cover::after {
+    content: '';
+    position: absolute;
+    bottom: -100px;
+    left: -100px;
+    width: 400px;
+    height: 400px;
+    background: radial-gradient(circle, rgba(245, 158, 11, 0.06) 0%, transparent 70%);
+    border-radius: 50%;
+  }
+
+  .cover-badge {
+    display: inline-flex;
+    align-items: center;
+    gap: 8px;
+    background: rgba(108, 58, 237, 0.15);
+    border: 1px solid rgba(108, 58, 237, 0.3);
+    border-radius: 100px;
+    padding: 8px 20px;
+    font-size: 13px;
+    font-weight: 500;
+    color: var(--primary-light);
+    letter-spacing: 0.5px;
+    text-transform: uppercase;
+    margin-bottom: 40px;
+    position: relative;
+    z-index: 1;
+  }
+  .cover-badge::before {
+    content: '';
+    width: 8px;
+    height: 8px;
+    background: var(--primary-light);
+    border-radius: 50%;
+    animation: pulse 2s infinite;
+  }
+  @keyframes pulse {
+    0%, 100% { opacity: 1; }
+    50% { opacity: 0.4; }
+  }
+
+  .cover-logo {
+    font-size: 72px;
+    font-weight: 900;
+    background: var(--gradient-1);
+    -webkit-background-clip: text;
+    -webkit-text-fill-color: transparent;
+    background-clip: text;
+    letter-spacing: -2px;
+    line-height: 1.1;
+    margin-bottom: 8px;
+    position: relative;
+    z-index: 1;
+  }
+  .cover-version {
+    font-size: 18px;
+    font-weight: 300;
+    color: var(--text-muted);
+    letter-spacing: 6px;
+    text-transform: uppercase;
+    margin-bottom: 32px;
+    position: relative;
+    z-index: 1;
+  }
+
+  .cover-tagline {
+    font-size: 22px;
+    font-weight: 400;
+    color: var(--text-secondary);
+    max-width: 560px;
+    line-height: 1.6;
+    margin-bottom: 60px;
+    position: relative;
+    z-index: 1;
+  }
+  .cover-tagline strong {
+    color: var(--text-primary);
+    font-weight: 600;
+  }
+
+  .cover-meta {
+    display: flex;
+    gap: 40px;
+    position: relative;
+    z-index: 1;
+  }
+  .cover-meta-item {
+    text-align: center;
+  }
+  .cover-meta-label {
+    font-size: 11px;
+    text-transform: uppercase;
+    letter-spacing: 1.5px;
+    color: var(--text-muted);
+    margin-bottom: 4px;
+  }
+  .cover-meta-value {
+    font-size: 14px;
+    font-weight: 500;
+    color: var(--text-secondary);
+  }
+
+  .cover-footer {
+    position: absolute;
+    bottom: 40px;
+    left: 50px;
+    right: 50px;
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    border-top: 1px solid var(--border);
+    padding-top: 20px;
+    font-size: 12px;
+    color: var(--text-muted);
+  }
+
+  /* ===== SECTION HEADERS ===== */
+  .section-number {
+    font-size: 13px;
+    font-weight: 600;
+    color: var(--primary-light);
+    letter-spacing: 2px;
+    text-transform: uppercase;
+    margin-bottom: 8px;
+  }
+  .section-title {
+    font-size: 36px;
+    font-weight: 800;
+    letter-spacing: -1px;
+    line-height: 1.2;
+    margin-bottom: 12px;
+  }
+  .section-title.gradient {
+    background: var(--gradient-1);
+    -webkit-background-clip: text;
+    -webkit-text-fill-color: transparent;
+    background-clip: text;
+  }
+  .section-subtitle {
+    font-size: 16px;
+    color: var(--text-secondary);
+    max-width: 650px;
+    margin-bottom: 40px;
+    line-height: 1.7;
+  }
+
+  /* ===== CARDS ===== */
+  .card {
+    background: var(--bg-card);
+    border: 1px solid var(--border);
+    border-radius: 16px;
+    padding: 28px;
+    margin-bottom: 16px;
+    transition: transform 0.2s;
+  }
+  .card:hover { transform: translateY(-2px); }
+
+  .card-header {
+    display: flex;
+    align-items: center;
+    gap: 14px;
+    margin-bottom: 14px;
+  }
+  .card-icon {
+    width: 44px;
+    height: 44px;
+    border-radius: 12px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 20px;
+    flex-shrink: 0;
+  }
+  .card-icon.purple { background: rgba(108, 58, 237, 0.15); }
+  .card-icon.amber { background: rgba(245, 158, 11, 0.15); }
+  .card-icon.cyan { background: rgba(6, 182, 212, 0.15); }
+  .card-icon.green { background: rgba(16, 185, 129, 0.15); }
+  .card-icon.pink { background: rgba(236, 72, 153, 0.15); }
+  .card-icon.blue { background: rgba(59, 130, 246, 0.15); }
+
+  .card-title {
+    font-size: 18px;
+    font-weight: 700;
+    color: var(--text-primary);
+  }
+  .card-body {
+    font-size: 14px;
+    color: var(--text-secondary);
+    line-height: 1.7;
+  }
+  .card-body ul {
+    list-style: none;
+    padding: 0;
+    margin-top: 10px;
+  }
+  .card-body ul li {
+    padding: 4px 0 4px 20px;
+    position: relative;
+  }
+  .card-body ul li::before {
+    content: '';
+    position: absolute;
+    left: 0;
+    top: 12px;
+    width: 6px;
+    height: 6px;
+    border-radius: 50%;
+    background: var(--primary-light);
+  }
+
+  /* ===== GRID LAYOUTS ===== */
+  .grid-2 {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 16px;
+    margin-bottom: 16px;
+  }
+  .grid-3 {
+    display: grid;
+    grid-template-columns: 1fr 1fr 1fr;
+    gap: 16px;
+    margin-bottom: 16px;
+  }
+
+  /* ===== STATS BAR ===== */
+  .stats-bar {
+    display: grid;
+    grid-template-columns: repeat(4, 1fr);
+    gap: 16px;
+    margin-bottom: 40px;
+  }
+  .stat-item {
+    background: var(--bg-card);
+    border: 1px solid var(--border);
+    border-radius: 12px;
+    padding: 20px;
+    text-align: center;
+  }
+  .stat-value {
+    font-size: 32px;
+    font-weight: 800;
+    background: var(--gradient-1);
+    -webkit-background-clip: text;
+    -webkit-text-fill-color: transparent;
+    background-clip: text;
+  }
+  .stat-label {
+    font-size: 12px;
+    color: var(--text-muted);
+    text-transform: uppercase;
+    letter-spacing: 1px;
+    margin-top: 4px;
+  }
+
+  /* ===== PIPELINE VISUAL ===== */
+  .pipeline {
+    background: var(--bg-card);
+    border: 1px solid var(--border);
+    border-radius: 16px;
+    padding: 32px;
+    margin-bottom: 24px;
+  }
+  .pipeline-title {
+    font-size: 14px;
+    font-weight: 600;
+    color: var(--text-muted);
+    text-transform: uppercase;
+    letter-spacing: 1.5px;
+    margin-bottom: 24px;
+  }
+  .pipeline-steps {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 8px;
+    flex-wrap: wrap;
+  }
+  .pipeline-step {
+    flex: 1;
+    min-width: 100px;
+    text-align: center;
+    padding: 16px 8px;
+    border-radius: 12px;
+    background: var(--bg-card-alt);
+    border: 1px solid var(--border);
+  }
+  .pipeline-step-icon {
+    font-size: 24px;
+    margin-bottom: 8px;
+  }
+  .pipeline-step-label {
+    font-size: 11px;
+    font-weight: 600;
+    color: var(--text-secondary);
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+  }
+  .pipeline-arrow {
+    font-size: 18px;
+    color: var(--primary-light);
+    flex-shrink: 0;
+  }
+
+  /* ===== FEATURE HIGHLIGHT ===== */
+  .highlight-box {
+    background: linear-gradient(135deg, rgba(108, 58, 237, 0.1) 0%, rgba(236, 72, 153, 0.05) 100%);
+    border: 1px solid rgba(108, 58, 237, 0.25);
+    border-radius: 16px;
+    padding: 28px;
+    margin-bottom: 24px;
+  }
+  .highlight-box h3 {
+    font-size: 18px;
+    font-weight: 700;
+    margin-bottom: 10px;
+    color: var(--text-primary);
+  }
+  .highlight-box p {
+    font-size: 14px;
+    color: var(--text-secondary);
+    line-height: 1.7;
+  }
+
+  /* ===== USER JOURNEY ===== */
+  .journey {
+    position: relative;
+    padding-left: 40px;
+    margin-bottom: 32px;
+  }
+  .journey::before {
+    content: '';
+    position: absolute;
+    left: 15px;
+    top: 0;
+    bottom: 0;
+    width: 2px;
+    background: linear-gradient(to bottom, var(--primary), var(--primary-light), rgba(108, 58, 237, 0.2));
+  }
+  .journey-step {
+    position: relative;
+    margin-bottom: 24px;
+  }
+  .journey-step:last-child { margin-bottom: 0; }
+  .journey-step::before {
+    content: '';
+    position: absolute;
+    left: -33px;
+    top: 4px;
+    width: 12px;
+    height: 12px;
+    border-radius: 50%;
+    background: var(--primary);
+    border: 3px solid var(--bg-dark);
+    box-shadow: 0 0 0 2px var(--primary);
+  }
+  .journey-step-title {
+    font-size: 15px;
+    font-weight: 700;
+    color: var(--text-primary);
+    margin-bottom: 4px;
+  }
+  .journey-step-desc {
+    font-size: 13px;
+    color: var(--text-secondary);
+    line-height: 1.6;
+  }
+
+  /* ===== TABLE ===== */
+  .data-table {
+    width: 100%;
+    border-collapse: separate;
+    border-spacing: 0;
+    margin-bottom: 24px;
+    border-radius: 12px;
+    overflow: hidden;
+    border: 1px solid var(--border);
+  }
+  .data-table th {
+    background: var(--bg-card-alt);
+    color: var(--text-muted);
+    font-size: 11px;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 1px;
+    padding: 14px 16px;
+    text-align: left;
+    border-bottom: 1px solid var(--border);
+  }
+  .data-table td {
+    background: var(--bg-card);
+    color: var(--text-secondary);
+    font-size: 13px;
+    padding: 12px 16px;
+    border-bottom: 1px solid var(--border);
+  }
+  .data-table tr:last-child td { border-bottom: none; }
+  .data-table td:first-child { font-weight: 600; color: var(--text-primary); }
+
+  .badge {
+    display: inline-block;
+    padding: 3px 10px;
+    border-radius: 100px;
+    font-size: 11px;
+    font-weight: 600;
+  }
+  .badge-purple { background: rgba(108, 58, 237, 0.15); color: #A78BFA; }
+  .badge-green { background: rgba(16, 185, 129, 0.15); color: #34D399; }
+  .badge-amber { background: rgba(245, 158, 11, 0.15); color: #FBBF24; }
+  .badge-cyan { background: rgba(6, 182, 212, 0.15); color: #22D3EE; }
+
+  /* ===== CHECKLIST ===== */
+  .checklist {
+    list-style: none;
+    padding: 0;
+  }
+  .checklist li {
+    display: flex;
+    align-items: flex-start;
+    gap: 12px;
+    padding: 12px 0;
+    border-bottom: 1px solid var(--border);
+    font-size: 14px;
+    color: var(--text-secondary);
+    line-height: 1.6;
+  }
+  .checklist li:last-child { border-bottom: none; }
+  .check-box {
+    width: 22px;
+    height: 22px;
+    border: 2px solid var(--border);
+    border-radius: 6px;
+    flex-shrink: 0;
+    margin-top: 2px;
+  }
+  .checklist li strong {
+    color: var(--text-primary);
+  }
+
+  /* ===== DIVIDER ===== */
+  .divider {
+    width: 60px;
+    height: 3px;
+    background: var(--gradient-1);
+    border-radius: 2px;
+    margin: 32px 0;
+  }
+
+  /* ===== QUOTE ===== */
+  .quote-block {
+    border-left: 3px solid var(--primary);
+    padding: 16px 24px;
+    margin: 24px 0;
+    background: rgba(108, 58, 237, 0.05);
+    border-radius: 0 12px 12px 0;
+  }
+  .quote-block p {
+    font-size: 16px;
+    font-style: italic;
+    color: var(--text-secondary);
+    line-height: 1.7;
+  }
+
+  /* ===== TECH BADGE ROW ===== */
+  .tech-badges {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px;
+    margin-top: 12px;
+  }
+  .tech-badge {
+    display: inline-block;
+    padding: 6px 14px;
+    background: var(--bg-card-alt);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    font-size: 12px;
+    font-weight: 500;
+    color: var(--text-secondary);
+    font-family: 'JetBrains Mono', monospace;
+  }
+
+  /* ===== DATABASE BADGES ===== */
+  .db-grid {
+    display: grid;
+    grid-template-columns: repeat(3, 1fr);
+    gap: 12px;
+    margin: 16px 0;
+  }
+  .db-badge {
+    background: var(--bg-card-alt);
+    border: 1px solid var(--border);
+    border-radius: 12px;
+    padding: 16px;
+    text-align: center;
+    font-size: 14px;
+    font-weight: 600;
+    color: var(--text-secondary);
+  }
+
+  /* ===== FOOTER ===== */
+  .page-footer {
+    position: absolute;
+    bottom: 30px;
+    left: 50px;
+    right: 50px;
+    display: flex;
+    justify-content: space-between;
+    font-size: 11px;
+    color: var(--text-muted);
+    border-top: 1px solid var(--border);
+    padding-top: 16px;
+  }
+
+  /* ===== INSIGHT MODE VISUAL ===== */
+  .mode-toggle {
+    display: flex;
+    gap: 16px;
+    margin: 16px 0;
+  }
+  .mode-option {
+    flex: 1;
+    padding: 20px;
+    border-radius: 12px;
+    border: 1px solid var(--border);
+    background: var(--bg-card);
+  }
+  .mode-option.active {
+    border-color: var(--primary);
+    background: rgba(108, 58, 237, 0.08);
+  }
+  .mode-option h4 {
+    font-size: 14px;
+    font-weight: 700;
+    margin-bottom: 6px;
+    color: var(--text-primary);
+  }
+  .mode-option p {
+    font-size: 12px;
+    color: var(--text-muted);
+    line-height: 1.5;
+  }
+
+  /* ===== SECTION CATEGORY LABELS ===== */
+  .category-label {
+    display: inline-block;
+    font-size: 11px;
+    font-weight: 700;
+    text-transform: uppercase;
+    letter-spacing: 1.5px;
+    padding: 4px 12px;
+    border-radius: 6px;
+    margin-bottom: 16px;
+  }
+  .category-label.new {
+    background: rgba(16, 185, 129, 0.15);
+    color: #34D399;
+  }
+  .category-label.core {
+    background: rgba(108, 58, 237, 0.15);
+    color: #A78BFA;
+  }
+
+  /* Print styles */
+  @media print {
+    body { background: #0F0B1A; }
+    .page { page-break-inside: avoid; }
+    .card:hover { transform: none; }
+  }
+</style>
+</head>
+<body>
+
+<!-- ==================== COVER PAGE ==================== -->
+<div class="cover">
+  <div class="cover-badge">Product & Marketing Brief</div>
+  <div class="cover-logo">Project<br>Overload</div>
+  <div class="cover-version">Version 2.0</div>
+  <p class="cover-tagline">
+    The <strong>AI-powered business intelligence platform</strong> that turns natural language conversations into automated, executive-ready reports &mdash; no SQL required.
+  </p>
+  <div class="cover-meta">
+    <div class="cover-meta-item">
+      <div class="cover-meta-label">Document Type</div>
+      <div class="cover-meta-value">Marketing Brief</div>
+    </div>
+    <div class="cover-meta-item">
+      <div class="cover-meta-label">Audience</div>
+      <div class="cover-meta-value">Marketing & Branding</div>
+    </div>
+    <div class="cover-meta-item">
+      <div class="cover-meta-label">Date</div>
+      <div class="cover-meta-value">March 2026</div>
+    </div>
+    <div class="cover-meta-item">
+      <div class="cover-meta-label">Classification</div>
+      <div class="cover-meta-value">Internal</div>
+    </div>
+  </div>
+  <div class="cover-footer">
+    <span>Project Overload v2 &mdash; Confidential</span>
+    <span>Page 1</span>
+  </div>
+</div>
+
+<!-- ==================== PAGE 2: WHAT IS PROJECT OVERLOAD ==================== -->
+<div class="page">
+  <div class="section-number">01 &mdash; Overview</div>
+  <div class="section-title gradient">What is Project Overload?</div>
+  <p class="section-subtitle">
+    Project Overload is a conversational AI platform that lets anyone &mdash; from executives to analysts &mdash; define, run, and automate business intelligence reports using plain English. No SQL skills needed. No dashboard configuration. Just talk to it.
+  </p>
+
+  <div class="quote-block">
+    <p>"Define once, run forever. Report contracts lock your business logic and execute on your schedule."</p>
+  </div>
+
+  <div class="stats-bar">
+    <div class="stat-item">
+      <div class="stat-value">6</div>
+      <div class="stat-label">Databases Supported</div>
+    </div>
+    <div class="stat-item">
+      <div class="stat-value">3</div>
+      <div class="stat-label">AI Pipelines</div>
+    </div>
+    <div class="stat-item">
+      <div class="stat-value">0</div>
+      <div class="stat-label">SQL Required</div>
+    </div>
+    <div class="stat-item">
+      <div class="stat-value">&infin;</div>
+      <div class="stat-label">Scheduled Runs</div>
+    </div>
+  </div>
+
+  <div class="divider"></div>
+
+  <h3 style="font-size: 20px; font-weight: 700; margin-bottom: 20px;">The Problem We Solve</h3>
+
+  <div class="grid-2">
+    <div class="card">
+      <div class="card-header">
+        <div class="card-icon purple">&#x26A0;</div>
+        <div class="card-title">The BI Gap</div>
+      </div>
+      <div class="card-body">
+        Business users need analytics but lack SQL skills. Existing BI tools require complex manual setup, query writing, and ongoing maintenance by technical teams.
+      </div>
+    </div>
+    <div class="card">
+      <div class="card-header">
+        <div class="card-icon amber">&#x23F0;</div>
+        <div class="card-title">Report Fatigue</div>
+      </div>
+      <div class="card-body">
+        Recurring reports are rebuilt manually every cycle. Inconsistent formatting, missed deadlines, and lost institutional knowledge make reporting a drag.
+      </div>
+    </div>
+  </div>
+
+  <div class="grid-2">
+    <div class="card">
+      <div class="card-header">
+        <div class="card-icon cyan">&#x1F50D;</div>
+        <div class="card-title">Insight Blindness</div>
+      </div>
+      <div class="card-body">
+        Raw data gets delivered without context. Reports show numbers but miss the "so what" &mdash; the trends, drivers, and recommended actions that drive decisions.
+      </div>
+    </div>
+    <div class="card">
+      <div class="card-header">
+        <div class="card-icon green">&#x1F512;</div>
+        <div class="card-title">Governance Gaps</div>
+      </div>
+      <div class="card-body">
+        Ad-hoc queries bypass security controls. No audit trail, no table restrictions, no guarantee that the same report produces the same logic twice.
+      </div>
+    </div>
+  </div>
+
+  <div class="page-footer">
+    <span>Project Overload v2 &mdash; Marketing Brief</span>
+    <span>Page 2</span>
+  </div>
+</div>
+
+<!-- ==================== PAGE 3: TARGET AUDIENCE ==================== -->
+<div class="page">
+  <div class="section-number">02 &mdash; Target Audience</div>
+  <div class="section-title gradient">Who Is This For?</div>
+  <p class="section-subtitle">
+    Project Overload bridges the gap between data teams and business stakeholders, serving everyone who needs insights from databases.
+  </p>
+
+  <div class="card" style="margin-bottom: 20px;">
+    <div class="card-header">
+      <div class="card-icon purple">&#x1F454;</div>
+      <div class="card-title">C-Suite Executives</div>
+    </div>
+    <div class="card-body">
+      CEOs, CFOs, and VPs who need weekly or monthly performance summaries without waiting for the data team. They speak in business language &mdash; revenue trends, churn rates, conversion funnels &mdash; and want PDF reports delivered automatically.
+      <ul>
+        <li><strong>Pain:</strong> Waiting days for reports that should take minutes</li>
+        <li><strong>Win:</strong> Automated, executive-formatted reports on their schedule</li>
+      </ul>
+    </div>
+  </div>
+
+  <div class="card" style="margin-bottom: 20px;">
+    <div class="card-header">
+      <div class="card-icon cyan">&#x1F4CA;</div>
+      <div class="card-title">Data Analysts & Operations</div>
+    </div>
+    <div class="card-body">
+      Analysts who spend hours rebuilding the same reports. They know their data but want to automate the repetitive work and focus on higher-value analysis.
+      <ul>
+        <li><strong>Pain:</strong> 60% of time spent on recurring report mechanics</li>
+        <li><strong>Win:</strong> Define once, let the system handle scheduling and formatting</li>
+      </ul>
+    </div>
+  </div>
+
+  <div class="card" style="margin-bottom: 20px;">
+    <div class="card-header">
+      <div class="card-icon green">&#x1F3E2;</div>
+      <div class="card-title">Department Heads & Team Leads</div>
+    </div>
+    <div class="card-body">
+      Managers who need team-level metrics (support ticket volume, sales pipeline, marketing ROI) but don't have direct database access or SQL fluency.
+      <ul>
+        <li><strong>Pain:</strong> Dependent on engineering for every data request</li>
+        <li><strong>Win:</strong> Self-serve analytics through natural conversation</li>
+      </ul>
+    </div>
+  </div>
+
+  <div class="card">
+    <div class="card-header">
+      <div class="card-icon amber">&#x1F6E0;</div>
+      <div class="card-title">Data Engineers & Platform Teams</div>
+    </div>
+    <div class="card-body">
+      Technical teams who want to enable self-serve analytics while maintaining governance. They configure connections, set allowlists, and define guardrails.
+      <ul>
+        <li><strong>Pain:</strong> Fielding one-off data requests all day</li>
+        <li><strong>Win:</strong> Empower stakeholders with governed, auditable self-service</li>
+      </ul>
+    </div>
+  </div>
+
+  <div class="page-footer">
+    <span>Project Overload v2 &mdash; Marketing Brief</span>
+    <span>Page 3</span>
+  </div>
+</div>
+
+<!-- ==================== PAGE 4: HOW IT WORKS ==================== -->
+<div class="page">
+  <div class="section-number">03 &mdash; How It Works</div>
+  <div class="section-title gradient">The AI Report Pipeline</div>
+  <p class="section-subtitle">
+    From natural language to executive-ready PDF, powered by a multi-stage AI pipeline. Each stage is purpose-built for maximum accuracy and insight quality.
+  </p>
+
+  <div class="pipeline">
+    <div class="pipeline-title">Report Generation Pipeline</div>
+    <div class="pipeline-steps">
+      <div class="pipeline-step">
+        <div class="pipeline-step-icon">&#x1F4AC;</div>
+        <div class="pipeline-step-label">Chat<br>Explorer</div>
+      </div>
+      <div class="pipeline-arrow">&#x2192;</div>
+      <div class="pipeline-step">
+        <div class="pipeline-step-icon">&#x1F9E0;</div>
+        <div class="pipeline-step-label">Query<br>Strategist</div>
+      </div>
+      <div class="pipeline-arrow">&#x2192;</div>
+      <div class="pipeline-step">
+        <div class="pipeline-step-icon">&#x1F5C4;</div>
+        <div class="pipeline-step-label">Database<br>Execute</div>
+      </div>
+      <div class="pipeline-arrow">&#x2192;</div>
+      <div class="pipeline-step">
+        <div class="pipeline-step-icon">&#x1F50E;</div>
+        <div class="pipeline-step-label">AI<br>Analyst</div>
+      </div>
+      <div class="pipeline-arrow">&#x2192;</div>
+      <div class="pipeline-step">
+        <div class="pipeline-step-icon">&#x1F4C4;</div>
+        <div class="pipeline-step-label">Report<br>Composer</div>
+      </div>
+      <div class="pipeline-arrow">&#x2192;</div>
+      <div class="pipeline-step">
+        <div class="pipeline-step-icon">&#x1F4E5;</div>
+        <div class="pipeline-step-label">PDF<br>Export</div>
+      </div>
+    </div>
+  </div>
+
+  <div class="grid-2">
+    <div class="card">
+      <div class="card-header">
+        <div class="card-icon purple">&#x1F4AC;</div>
+        <div class="card-title">1. Conversational Scoping</div>
+      </div>
+      <div class="card-body">
+        Users describe what they need in plain English. The AI asks clarifying questions over 5&ndash;15 turns to nail down: report name, audience, metrics, filters, schedule, and timezone. A scope confirmation step ensures alignment before any queries run.
+      </div>
+    </div>
+    <div class="card">
+      <div class="card-header">
+        <div class="card-icon cyan">&#x1F9E0;</div>
+        <div class="card-title">2. Query Strategy</div>
+      </div>
+      <div class="card-body">
+        The Query Strategist AI generates 2&ndash;4 targeted SQL queries from the conversation context and database catalog. Each query is validated against table allowlists and security guardrails before execution.
+      </div>
+    </div>
+  </div>
+
+  <div class="grid-2">
+    <div class="card">
+      <div class="card-header">
+        <div class="card-icon green">&#x1F50E;</div>
+        <div class="card-title">3. Per-Question Analysis</div>
+      </div>
+      <div class="card-body">
+        Each query result is analyzed independently by the AI Analyst, which identifies trends, anomalies, and insights. A 90% confidence threshold ensures only high-quality findings make it into the final report.
+      </div>
+    </div>
+    <div class="card">
+      <div class="card-header">
+        <div class="card-icon amber">&#x1F4C4;</div>
+        <div class="card-title">4. Report Composition</div>
+      </div>
+      <div class="card-body">
+        All analyses are synthesized into a rich HTML report structured as an executive brief: <strong>What Changed</strong>, <strong>Why</strong> (drivers), <strong>So What</strong> (implications), <strong>What To Do</strong> (actions), plus an evidence appendix.
+      </div>
+    </div>
+  </div>
+
+  <div class="highlight-box">
+    <h3>Evidence-Based, Not Hallucinated</h3>
+    <p>Every finding in a report is backed by actual query results (up to 200 evidence rows). Query hashes and freshness metadata ensure full reproducibility and audit trail. The system never guesses &mdash; it shows its work.</p>
+  </div>
+
+  <div class="page-footer">
+    <span>Project Overload v2 &mdash; Marketing Brief</span>
+    <span>Page 4</span>
+  </div>
+</div>
+
+<!-- ==================== PAGE 5: CORE FEATURES ==================== -->
+<div class="page">
+  <div class="section-number">04 &mdash; Core Features</div>
+  <div class="section-title gradient">Feature Deep Dive</div>
+  <p class="section-subtitle">
+    Everything a business needs to go from question to automated insight delivery.
+  </p>
+
+  <!-- Chat Explorer -->
+  <div class="category-label core">Core Feature</div>
+  <div class="card" style="margin-bottom: 24px;">
+    <div class="card-header">
+      <div class="card-icon purple">&#x1F4AC;</div>
+      <div class="card-title">Chat Explorer</div>
+    </div>
+    <div class="card-body">
+      The primary interface. Users have a multi-turn conversation with the AI to define exactly what report they need. The system guides the conversation, asking about audience, metrics, filters, and delivery preferences.
+      <ul>
+        <li>Multi-turn conversational flow (5&ndash;15 messages typical)</li>
+        <li>Scope confirmation step before execution</li>
+        <li>Real-time evidence tables with live data preview</li>
+        <li>Follow-up questions on completed reports</li>
+        <li>Business case generation from findings</li>
+      </ul>
+    </div>
+  </div>
+
+  <!-- Insight Modes -->
+  <div class="category-label core">Core Feature</div>
+  <div class="card" style="margin-bottom: 24px;">
+    <div class="card-header">
+      <div class="card-icon cyan">&#x1F3AF;</div>
+      <div class="card-title">Dual Insight Modes</div>
+    </div>
+    <div class="card-body">
+      Toggle between two analysis perspectives on the same data to get exactly the insights you need:
+    </div>
+    <div class="mode-toggle">
+      <div class="mode-option active">
+        <h4>&#x1F4C8; Business Insights</h4>
+        <p>Trends, growth drivers, competitive signals, actionable recommendations, and strategic implications. The "so what" for executives.</p>
+      </div>
+      <div class="mode-option">
+        <h4>&#x1F50D; Data Quality</h4>
+        <p>Completeness gaps, anomalies, outliers, inconsistencies, and data freshness issues. The "how reliable" for analysts.</p>
+      </div>
+    </div>
+  </div>
+
+  <!-- Report Contracts -->
+  <div class="category-label core">Core Feature</div>
+  <div class="card" style="margin-bottom: 24px;">
+    <div class="card-header">
+      <div class="card-icon amber">&#x1F4DC;</div>
+      <div class="card-title">Report Contracts</div>
+    </div>
+    <div class="card-body">
+      The heart of the platform. A Report Contract is a locked, reusable template that captures your business logic:
+      <ul>
+        <li><strong>Name & Audience:</strong> Who this report serves</li>
+        <li><strong>SQL Templates:</strong> Locked queries that produce consistent results</li>
+        <li><strong>Guardrails:</strong> Row caps, allowed tables, security constraints</li>
+        <li><strong>Schedule:</strong> Cron-based automation (weekly, monthly, quarterly)</li>
+        <li><strong>Lifecycle:</strong> Draft &rarr; Approved &rarr; Locked &rarr; Running</li>
+      </ul>
+    </div>
+  </div>
+
+  <!-- PDF Export -->
+  <div class="category-label core">Core Feature</div>
+  <div class="card">
+    <div class="card-header">
+      <div class="card-icon pink">&#x1F4E5;</div>
+      <div class="card-title">PDF Export</div>
+    </div>
+    <div class="card-body">
+      Every report is rendered as a polished, executive-ready PDF using Puppeteer. Download on demand or receive automatically via scheduled delivery. Reports include structured sections, evidence tables, and branded formatting.
+    </div>
+  </div>
+
+  <div class="page-footer">
+    <span>Project Overload v2 &mdash; Marketing Brief</span>
+    <span>Page 5</span>
+  </div>
+</div>
+
+<!-- ==================== PAGE 6: SCHEDULED REPORTS (NEW) ==================== -->
+<div class="page">
+  <div class="section-number">05 &mdash; New Feature</div>
+  <div class="section-title gradient">Scheduled Reports</div>
+  <p class="section-subtitle">
+    The newest addition to Project Overload &mdash; define a report once in conversation, then let the system run it automatically on a recurring schedule.
+  </p>
+
+  <div class="category-label new">New Feature</div>
+  <div class="highlight-box" style="margin-bottom: 24px;">
+    <h3>Set It and Forget It</h3>
+    <p>After building a report through chat, users can lock it into a schedule profile. The system handles everything: rolling reporting windows forward, re-executing queries, running AI analysis, composing the report, and generating the PDF &mdash; all automatically.</p>
+  </div>
+
+  <div class="grid-2">
+    <div class="card">
+      <div class="card-header">
+        <div class="card-icon green">&#x1F4C5;</div>
+        <div class="card-title">Flexible Scheduling</div>
+      </div>
+      <div class="card-body">
+        <ul>
+          <li><strong>Weekly:</strong> e.g., every Friday at 6pm</li>
+          <li><strong>Monthly:</strong> e.g., 1st of every month</li>
+          <li><strong>Quarterly:</strong> e.g., Q1, Q2, Q3, Q4 reviews</li>
+          <li>Full timezone support (IST, EST, UTC, etc.)</li>
+          <li>Cron expression generation under the hood</li>
+        </ul>
+      </div>
+    </div>
+    <div class="card">
+      <div class="card-header">
+        <div class="card-icon purple">&#x1F504;</div>
+        <div class="card-title">Smart Rerun Behavior</div>
+      </div>
+      <div class="card-body">
+        <ul>
+          <li>Per-question rerun instructions</li>
+          <li>Automatic window rolling (last week &rarr; this week)</li>
+          <li>Query template snapshots preserved</li>
+          <li>Scope summary for each question</li>
+          <li>AI-suggested rerun configurations</li>
+        </ul>
+      </div>
+    </div>
+  </div>
+
+  <div class="grid-2">
+    <div class="card">
+      <div class="card-header">
+        <div class="card-icon cyan">&#x1F4CA;</div>
+        <div class="card-title">Run History & Monitoring</div>
+      </div>
+      <div class="card-body">
+        <ul>
+          <li>Complete run history with timestamps</li>
+          <li>Status indicators: Succeeded / Failed / Scheduled</li>
+          <li>"Open in Chat" to analyze any past run</li>
+          <li>Run count tracking and latest-run display</li>
+          <li>Delta tracking vs. previous runs</li>
+        </ul>
+      </div>
+    </div>
+    <div class="card">
+      <div class="card-header">
+        <div class="card-icon amber">&#x1F3AF;</div>
+        <div class="card-title">Automation Hub UI</div>
+      </div>
+      <div class="card-body">
+        <ul>
+          <li>Tile-based dashboard of all scheduled reports</li>
+          <li>At-a-glance frequency, timezone, question count</li>
+          <li>Drill into schedule details and execution plans</li>
+          <li>Manage, pause, and reconfigure schedules</li>
+          <li>Visual schedule draft generation flow</li>
+        </ul>
+      </div>
+    </div>
+  </div>
+
+  <div class="pipeline" style="margin-top: 8px;">
+    <div class="pipeline-title">Scheduling Lifecycle</div>
+    <div class="pipeline-steps">
+      <div class="pipeline-step">
+        <div class="pipeline-step-icon">&#x1F4AC;</div>
+        <div class="pipeline-step-label">Define in<br>Chat</div>
+      </div>
+      <div class="pipeline-arrow">&#x2192;</div>
+      <div class="pipeline-step">
+        <div class="pipeline-step-icon">&#x2705;</div>
+        <div class="pipeline-step-label">First Run<br>Approved</div>
+      </div>
+      <div class="pipeline-arrow">&#x2192;</div>
+      <div class="pipeline-step">
+        <div class="pipeline-step-icon">&#x1F4C5;</div>
+        <div class="pipeline-step-label">Schedule<br>Draft</div>
+      </div>
+      <div class="pipeline-arrow">&#x2192;</div>
+      <div class="pipeline-step">
+        <div class="pipeline-step-icon">&#x1F512;</div>
+        <div class="pipeline-step-label">Lock<br>Profile</div>
+      </div>
+      <div class="pipeline-arrow">&#x2192;</div>
+      <div class="pipeline-step">
+        <div class="pipeline-step-icon">&#x1F504;</div>
+        <div class="pipeline-step-label">Auto<br>Execution</div>
+      </div>
+    </div>
+  </div>
+
+  <div class="page-footer">
+    <span>Project Overload v2 &mdash; Marketing Brief</span>
+    <span>Page 6</span>
+  </div>
+</div>
+
+<!-- ==================== PAGE 7: DATA CONNECTIONS & SECURITY ==================== -->
+<div class="page">
+  <div class="section-number">06 &mdash; Connectivity & Security</div>
+  <div class="section-title gradient">Connect Any Database, Securely</div>
+  <p class="section-subtitle">
+    Project Overload connects to the databases your business already uses &mdash; with enterprise-grade security baked into every layer.
+  </p>
+
+  <h3 style="font-size: 18px; font-weight: 700; margin-bottom: 16px;">Supported Databases</h3>
+  <div class="db-grid">
+    <div class="db-badge">&#x1F418; PostgreSQL</div>
+    <div class="db-badge">&#x26A1; Supabase</div>
+    <div class="db-badge">&#x1F31F; Neon</div>
+    <div class="db-badge">&#x1F42C; MySQL</div>
+    <div class="db-badge">&#x2744; Snowflake</div>
+    <div class="db-badge">&#x1F4CA; BigQuery</div>
+  </div>
+
+  <div class="divider"></div>
+
+  <h3 style="font-size: 18px; font-weight: 700; margin-bottom: 16px;">Connection Workflow</h3>
+  <div class="journey">
+    <div class="journey-step">
+      <div class="journey-step-title">Test Connection</div>
+      <div class="journey-step-desc">Paste a connection string, add optional TLS/CA certificates, and validate connectivity in one click.</div>
+    </div>
+    <div class="journey-step">
+      <div class="journey-step-title">Discover Catalog</div>
+      <div class="journey-step-desc">The system automatically discovers all tables, schemas, and relations in the connected database.</div>
+    </div>
+    <div class="journey-step">
+      <div class="journey-step-title">Set Allowlist</div>
+      <div class="journey-step-desc">Select which tables the AI is permitted to query. Only allowlisted tables are visible to the system.</div>
+    </div>
+    <div class="journey-step">
+      <div class="journey-step-title">Add Business Context</div>
+      <div class="journey-step-desc">Describe your industry, use case, and domain &mdash; so the AI understands your data semantically.</div>
+    </div>
+    <div class="journey-step">
+      <div class="journey-step-title">Activate & Query</div>
+      <div class="journey-step-desc">Connection goes live. Multiple databases can be active simultaneously in a single session.</div>
+    </div>
+  </div>
+
+  <div class="divider"></div>
+
+  <h3 style="font-size: 18px; font-weight: 700; margin-bottom: 16px;">Security Guardrails</h3>
+  <div class="grid-2">
+    <div class="card">
+      <div class="card-header">
+        <div class="card-icon green">&#x1F6E1;</div>
+        <div class="card-title">Read-Only Enforcement</div>
+      </div>
+      <div class="card-body">
+        No INSERT, UPDATE, DELETE, or DDL operations &mdash; ever. The SQL Guard package validates every query before execution.
+      </div>
+    </div>
+    <div class="card">
+      <div class="card-header">
+        <div class="card-icon purple">&#x1F4CB;</div>
+        <div class="card-title">Table Allowlisting</div>
+      </div>
+      <div class="card-body">
+        Admins define exactly which tables are queryable. The AI cannot access, reference, or even see non-allowlisted tables.
+      </div>
+    </div>
+  </div>
+  <div class="grid-2">
+    <div class="card">
+      <div class="card-header">
+        <div class="card-icon amber">&#x1F4D0;</div>
+        <div class="card-title">Row Caps & Limits</div>
+      </div>
+      <div class="card-body">
+        Evidence tables are capped at 200 rows per query. Prevents runaway queries, controls cost, and keeps analysis focused.
+      </div>
+    </div>
+    <div class="card">
+      <div class="card-header">
+        <div class="card-icon cyan">&#x1F4DD;</div>
+        <div class="card-title">Full Audit Trail</div>
+      </div>
+      <div class="card-body">
+        Every contract, run, query, and approval is logged. Complete traceability from conversation to report delivery.
+      </div>
+    </div>
+  </div>
+
+  <div class="page-footer">
+    <span>Project Overload v2 &mdash; Marketing Brief</span>
+    <span>Page 7</span>
+  </div>
+</div>
+
+<!-- ==================== PAGE 8: USER JOURNEY ==================== -->
+<div class="page">
+  <div class="section-number">07 &mdash; User Journey</div>
+  <div class="section-title gradient">From Zero to Automated Report</div>
+  <p class="section-subtitle">
+    A typical user's journey from first login to receiving automated weekly reports.
+  </p>
+
+  <div class="journey">
+    <div class="journey-step">
+      <div class="journey-step-title">Step 1: Connect a Database</div>
+      <div class="journey-step-desc">Navigate to the Connect page. Paste your PostgreSQL or Snowflake connection string. Test and activate in under a minute. Set your table allowlist and business context.</div>
+    </div>
+    <div class="journey-step">
+      <div class="journey-step-title">Step 2: Start a Conversation</div>
+      <div class="journey-step-desc">Open Chat Explorer. Type something like: <em>"I need a weekly CEO dashboard showing revenue trends, top customers, and churn risk."</em> The AI begins asking clarifying questions.</div>
+    </div>
+    <div class="journey-step">
+      <div class="journey-step-title">Step 3: Refine Through Dialogue</div>
+      <div class="journey-step-desc">Over 5&ndash;15 messages, narrow down: audience (CEO + board), metrics (MRR, net revenue retention, churn %), time range (trailing 4 weeks), and filters (exclude test accounts). Toggle insight mode as needed.</div>
+    </div>
+    <div class="journey-step">
+      <div class="journey-step-title">Step 4: Review Scope Confirmation</div>
+      <div class="journey-step-desc">The AI presents a structured scope summary for your approval. Review the planned queries, target tables, and analysis approach before committing.</div>
+    </div>
+    <div class="journey-step">
+      <div class="journey-step-title">Step 5: Generate First Report</div>
+      <div class="journey-step-desc">The pipeline runs: Query Strategist plans 2&ndash;4 SQL queries, DataPlane executes against your live database, Analyst evaluates each result, Report Composer synthesizes into a structured executive brief.</div>
+    </div>
+    <div class="journey-step">
+      <div class="journey-step-title">Step 6: Download or Schedule</div>
+      <div class="journey-step-desc">View the rich HTML report in-app. Download as PDF. Or lock it into a schedule: "Run every Friday at 6pm IST." The system auto-generates a schedule draft with per-question rerun configurations.</div>
+    </div>
+    <div class="journey-step">
+      <div class="journey-step-title">Step 7: Sit Back and Receive</div>
+      <div class="journey-step-desc">Reports run automatically on schedule. View run history on the Scheduled Reports dashboard. Open any past run in chat to ask follow-up questions or compare with previous periods.</div>
+    </div>
+  </div>
+
+  <div class="highlight-box">
+    <h3>Time to First Report: Minutes, Not Weeks</h3>
+    <p>Traditional BI setup takes weeks of requirements gathering, dashboard building, and iteration. With Project Overload, users go from zero to their first automated report in a single conversation &mdash; typically under 15 minutes.</p>
+  </div>
+
+  <div class="page-footer">
+    <span>Project Overload v2 &mdash; Marketing Brief</span>
+    <span>Page 8</span>
+  </div>
+</div>
+
+<!-- ==================== PAGE 9: CONFIGURATION & USAGE ==================== -->
+<div class="page">
+  <div class="section-number">08 &mdash; Configuration & Monitoring</div>
+  <div class="section-title gradient">Settings, Metrics & Usage</div>
+  <p class="section-subtitle">
+    Fine-tune the platform with business context, metric definitions, and real-time usage visibility.
+  </p>
+
+  <div class="card" style="margin-bottom: 20px;">
+    <div class="card-header">
+      <div class="card-icon amber">&#x1F4D6;</div>
+      <div class="card-title">Metric Definitions Library</div>
+    </div>
+    <div class="card-body">
+      Pre-define your organization's key metrics so the AI uses consistent, approved definitions across all reports.
+
+      <table class="data-table" style="margin-top: 16px;">
+        <thead>
+          <tr>
+            <th>Metric</th>
+            <th>Definition</th>
+            <th>Type</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr>
+            <td>Monthly Recurring Revenue</td>
+            <td style="font-weight: 400;">Sum of all active subscriptions x monthly price</td>
+            <td><span class="badge badge-green">Financial</span></td>
+          </tr>
+          <tr>
+            <td>Daily Active Users</td>
+            <td style="font-weight: 400;">Unique users with at least one session per day</td>
+            <td><span class="badge badge-cyan">Product</span></td>
+          </tr>
+          <tr>
+            <td>Conversion Rate</td>
+            <td style="font-weight: 400;">Signups / Unique visitors x 100</td>
+            <td><span class="badge badge-purple">Growth</span></td>
+          </tr>
+          <tr>
+            <td>Net Revenue Retention</td>
+            <td style="font-weight: 400;">Revenue from existing customers including expansion</td>
+            <td><span class="badge badge-amber">Financial</span></td>
+          </tr>
+        </tbody>
+      </table>
+    </div>
+  </div>
+
+  <div class="grid-2">
+    <div class="card">
+      <div class="card-header">
+        <div class="card-icon green">&#x1F3E2;</div>
+        <div class="card-title">Business Context</div>
+      </div>
+      <div class="card-body">
+        Provide organizational background, industry info, and domain-specific knowledge. This context is shared across all conversations and reports, ensuring the AI understands your business deeply.
+      </div>
+    </div>
+    <div class="card">
+      <div class="card-header">
+        <div class="card-icon cyan">&#x1F4CA;</div>
+        <div class="card-title">Usage Dashboard</div>
+      </div>
+      <div class="card-body">
+        Real-time visibility into platform usage:
+        <ul>
+          <li>LLM token consumption (input/output)</li>
+          <li>Query execution counts</li>
+          <li>Report generation statistics</li>
+          <li>Cost tracking and transparency</li>
+        </ul>
+      </div>
+    </div>
+  </div>
+
+  <div class="divider"></div>
+
+  <h3 style="font-size: 18px; font-weight: 700; margin-bottom: 16px;">Technology Under the Hood</h3>
+  <p style="font-size: 14px; color: var(--text-secondary); margin-bottom: 16px; line-height: 1.7;">
+    Built on a modern, enterprise-ready stack designed for reliability, security, and performance.
+  </p>
+
+  <div class="grid-2">
+    <div>
+      <p style="font-size: 13px; font-weight: 600; color: var(--text-muted); text-transform: uppercase; letter-spacing: 1px; margin-bottom: 8px;">AI / LLM</p>
+      <div class="tech-badges">
+        <span class="tech-badge">Claude Sonnet 4.5</span>
+        <span class="tech-badge">OpenRouter</span>
+        <span class="tech-badge">Multi-LLM Pipeline</span>
+      </div>
+    </div>
+    <div>
+      <p style="font-size: 13px; font-weight: 600; color: var(--text-muted); text-transform: uppercase; letter-spacing: 1px; margin-bottom: 8px;">Backend</p>
+      <div class="tech-badges">
+        <span class="tech-badge">Node.js 22</span>
+        <span class="tech-badge">TypeScript 5.8</span>
+        <span class="tech-badge">Fastify 5</span>
+      </div>
+    </div>
+  </div>
+  <div class="grid-2" style="margin-top: 16px;">
+    <div>
+      <p style="font-size: 13px; font-weight: 600; color: var(--text-muted); text-transform: uppercase; letter-spacing: 1px; margin-bottom: 8px;">Infrastructure</p>
+      <div class="tech-badges">
+        <span class="tech-badge">PostgreSQL 16</span>
+        <span class="tech-badge">Redis 7</span>
+        <span class="tech-badge">Docker</span>
+      </div>
+    </div>
+    <div>
+      <p style="font-size: 13px; font-weight: 600; color: var(--text-muted); text-transform: uppercase; letter-spacing: 1px; margin-bottom: 8px;">Quality</p>
+      <div class="tech-badges">
+        <span class="tech-badge">Vitest</span>
+        <span class="tech-badge">Zod Schemas</span>
+        <span class="tech-badge">SQL Guard</span>
+      </div>
+    </div>
+  </div>
+
+  <div class="page-footer">
+    <span>Project Overload v2 &mdash; Marketing Brief</span>
+    <span>Page 9</span>
+  </div>
+</div>
+
+<!-- ==================== PAGE 10: KEY DIFFERENTIATORS ==================== -->
+<div class="page">
+  <div class="section-number">09 &mdash; Differentiators</div>
+  <div class="section-title gradient">Why Project Overload?</div>
+  <p class="section-subtitle">
+    What sets Project Overload apart from traditional BI tools, dashboards, and other AI analytics platforms.
+  </p>
+
+  <table class="data-table">
+    <thead>
+      <tr>
+        <th style="width: 30%;">Capability</th>
+        <th style="width: 35%;">Traditional BI</th>
+        <th style="width: 35%;">Project Overload</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr>
+        <td>Report Creation</td>
+        <td style="font-weight: 400;">Manual SQL + drag-and-drop dashboards</td>
+        <td style="font-weight: 400;"><span class="badge badge-green">Natural language conversation</span></td>
+      </tr>
+      <tr>
+        <td>Time to First Report</td>
+        <td style="font-weight: 400;">Days to weeks</td>
+        <td style="font-weight: 400;"><span class="badge badge-green">Under 15 minutes</span></td>
+      </tr>
+      <tr>
+        <td>Analysis Quality</td>
+        <td style="font-weight: 400;">Numbers only &mdash; you interpret</td>
+        <td style="font-weight: 400;"><span class="badge badge-green">AI-generated insights + actions</span></td>
+      </tr>
+      <tr>
+        <td>Recurring Reports</td>
+        <td style="font-weight: 400;">Rebuild manually or rigid schedules</td>
+        <td style="font-weight: 400;"><span class="badge badge-green">Smart auto-scheduling</span></td>
+      </tr>
+      <tr>
+        <td>SQL Knowledge</td>
+        <td style="font-weight: 400;">Required</td>
+        <td style="font-weight: 400;"><span class="badge badge-green">Zero SQL needed</span></td>
+      </tr>
+      <tr>
+        <td>Security Model</td>
+        <td style="font-weight: 400;">Varies widely</td>
+        <td style="font-weight: 400;"><span class="badge badge-green">Read-only + allowlists + audit</span></td>
+      </tr>
+      <tr>
+        <td>Output Format</td>
+        <td style="font-weight: 400;">Interactive dashboards</td>
+        <td style="font-weight: 400;"><span class="badge badge-green">Executive PDF + HTML + chat</span></td>
+      </tr>
+      <tr>
+        <td>Follow-Up Analysis</td>
+        <td style="font-weight: 400;">Start over with new query</td>
+        <td style="font-weight: 400;"><span class="badge badge-green">Conversational follow-ups</span></td>
+      </tr>
+    </tbody>
+  </table>
+
+  <div class="divider"></div>
+
+  <h3 style="font-size: 20px; font-weight: 700; margin-bottom: 20px;">Key Selling Points</h3>
+  <div class="grid-2">
+    <div class="highlight-box">
+      <h3>&#x1F512; Report Contracts</h3>
+      <p>Lock business logic into reusable templates. Run the same report with guaranteed consistency forever &mdash; no drift, no manual intervention.</p>
+    </div>
+    <div class="highlight-box">
+      <h3>&#x1F9E0; Evidence-Based AI</h3>
+      <p>Every insight is backed by real data. 90% confidence threshold filters out noise. Query hashes ensure reproducibility.</p>
+    </div>
+  </div>
+  <div class="grid-2">
+    <div class="highlight-box">
+      <h3>&#x1F504; Define Once, Run Forever</h3>
+      <p>From conversation to locked schedule in one session. The system auto-rolls windows, re-executes queries, and delivers fresh reports.</p>
+    </div>
+    <div class="highlight-box">
+      <h3>&#x1F6E1; Governance First</h3>
+      <p>Read-only access, table allowlists, row caps, SQL validation, and full audit logging. Built for enterprises that care about data security.</p>
+    </div>
+  </div>
+
+  <div class="page-footer">
+    <span>Project Overload v2 &mdash; Marketing Brief</span>
+    <span>Page 10</span>
+  </div>
+</div>
+
+<!-- ==================== PAGE 11: PRODUCT MAP ==================== -->
+<div class="page">
+  <div class="section-number">10 &mdash; Product Map</div>
+  <div class="section-title gradient">Feature Overview</div>
+  <p class="section-subtitle">
+    Complete map of all product surfaces, screens, and capabilities.
+  </p>
+
+  <table class="data-table">
+    <thead>
+      <tr>
+        <th>Screen</th>
+        <th>Feature</th>
+        <th>Description</th>
+        <th>Status</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr>
+        <td>Chat Explorer</td>
+        <td style="font-weight: 400;">Multi-Turn AI Chat</td>
+        <td style="font-weight: 400;">Conversational report definition with scope confirmation</td>
+        <td><span class="badge badge-green">Live</span></td>
+      </tr>
+      <tr>
+        <td>Chat Explorer</td>
+        <td style="font-weight: 400;">Insight Mode Toggle</td>
+        <td style="font-weight: 400;">Switch between Business Insights and Data Quality</td>
+        <td><span class="badge badge-green">Live</span></td>
+      </tr>
+      <tr>
+        <td>Chat Explorer</td>
+        <td style="font-weight: 400;">Report Generation</td>
+        <td style="font-weight: 400;">Full pipeline: strategize &rarr; query &rarr; analyze &rarr; compose</td>
+        <td><span class="badge badge-green">Live</span></td>
+      </tr>
+      <tr>
+        <td>Chat Explorer</td>
+        <td style="font-weight: 400;">PDF Export</td>
+        <td style="font-weight: 400;">Download executive-ready PDF of any report</td>
+        <td><span class="badge badge-green">Live</span></td>
+      </tr>
+      <tr>
+        <td>Chat Explorer</td>
+        <td style="font-weight: 400;">Report Follow-Ups</td>
+        <td style="font-weight: 400;">Ask questions, generate business cases from findings</td>
+        <td><span class="badge badge-green">Live</span></td>
+      </tr>
+      <tr>
+        <td>Scheduled</td>
+        <td style="font-weight: 400;">Automation Hub</td>
+        <td style="font-weight: 400;">Tile dashboard of all scheduled report profiles</td>
+        <td><span class="badge badge-amber">New</span></td>
+      </tr>
+      <tr>
+        <td>Scheduled</td>
+        <td style="font-weight: 400;">Run History</td>
+        <td style="font-weight: 400;">View past runs with status, timestamps, and re-open</td>
+        <td><span class="badge badge-amber">New</span></td>
+      </tr>
+      <tr>
+        <td>Scheduled</td>
+        <td style="font-weight: 400;">Schedule Config</td>
+        <td style="font-weight: 400;">Set frequency, timezone, per-question rerun behavior</td>
+        <td><span class="badge badge-amber">New</span></td>
+      </tr>
+      <tr>
+        <td>Connect</td>
+        <td style="font-weight: 400;">Database Connector</td>
+        <td style="font-weight: 400;">Connect to 6 database types with TLS support</td>
+        <td><span class="badge badge-green">Live</span></td>
+      </tr>
+      <tr>
+        <td>Connect</td>
+        <td style="font-weight: 400;">Catalog & Allowlist</td>
+        <td style="font-weight: 400;">Auto-discover schemas, manage table permissions</td>
+        <td><span class="badge badge-green">Live</span></td>
+      </tr>
+      <tr>
+        <td>Config</td>
+        <td style="font-weight: 400;">Metric Library</td>
+        <td style="font-weight: 400;">Define reusable business metric definitions</td>
+        <td><span class="badge badge-green">Live</span></td>
+      </tr>
+      <tr>
+        <td>Config</td>
+        <td style="font-weight: 400;">Business Context</td>
+        <td style="font-weight: 400;">Org-wide context for AI understanding</td>
+        <td><span class="badge badge-green">Live</span></td>
+      </tr>
+      <tr>
+        <td>Usage</td>
+        <td style="font-weight: 400;">Usage Dashboard</td>
+        <td style="font-weight: 400;">LLM tokens, queries, reports, cost tracking</td>
+        <td><span class="badge badge-green">Live</span></td>
+      </tr>
+      <tr>
+        <td>Auth</td>
+        <td style="font-weight: 400;">Login & Sessions</td>
+        <td style="font-weight: 400;">Multi-user authentication with session persistence</td>
+        <td><span class="badge badge-green">Live</span></td>
+      </tr>
+    </tbody>
+  </table>
+
+  <div class="page-footer">
+    <span>Project Overload v2 &mdash; Marketing Brief</span>
+    <span>Page 11</span>
+  </div>
+</div>
+
+<!-- ==================== PAGE 12: MARKETING CHECKLIST ==================== -->
+<div class="page">
+  <div class="section-number">11 &mdash; Marketing Checklist</div>
+  <div class="section-title gradient">Content & Branding Guidelines</div>
+  <p class="section-subtitle">
+    Essential checklist for the marketing team when creating content, campaigns, and brand assets for Project Overload v2.
+  </p>
+
+  <h3 style="font-size: 18px; font-weight: 700; margin-bottom: 16px; color: var(--text-primary);">Brand Positioning & Messaging</h3>
+  <ul class="checklist">
+    <li>
+      <div class="check-box"></div>
+      <div><strong>Lead with the outcome, not the technology.</strong> Users don't care about "multi-LLM pipelines" &mdash; they care about getting executive reports in 15 minutes instead of 2 weeks. Always lead with business value.</div>
+    </li>
+    <li>
+      <div class="check-box"></div>
+      <div><strong>Use the "Define Once, Run Forever" tagline.</strong> This is the core differentiator. Report Contracts are the hero concept &mdash; emphasize the shift from manual, repetitive reporting to automated delivery.</div>
+    </li>
+    <li>
+      <div class="check-box"></div>
+      <div><strong>"Zero SQL Required" is a primary hook.</strong> Emphasize the conversational interface. Show before/after: SQL query vs. plain English question producing the same report.</div>
+    </li>
+    <li>
+      <div class="check-box"></div>
+      <div><strong>Position as "AI Analyst, Not AI Dashboard."</strong> We don't just show charts &mdash; we analyze, explain why, and recommend what to do. The executive brief format (What/Why/So What/Actions) is the differentiator.</div>
+    </li>
+    <li>
+      <div class="check-box"></div>
+      <div><strong>Emphasize trust and governance.</strong> In the AI era, trust matters. Lead with: evidence-based (no hallucination), read-only access, table allowlists, audit trail, 90% confidence threshold. These are enterprise selling points.</div>
+    </li>
+  </ul>
+
+  <div class="divider"></div>
+
+  <h3 style="font-size: 18px; font-weight: 700; margin-bottom: 16px; color: var(--text-primary);">Content Strategy</h3>
+  <ul class="checklist">
+    <li>
+      <div class="check-box"></div>
+      <div><strong>Create persona-specific landing pages.</strong> Build separate messaging for: (1) Executives who want automated reports, (2) Analysts who want to escape report drudgery, (3) Data engineers who want governed self-serve, (4) Department heads who want independence from IT.</div>
+    </li>
+    <li>
+      <div class="check-box"></div>
+      <div><strong>Showcase the Scheduled Reports feature prominently.</strong> This is the newest and most differentiating capability. Create a dedicated feature page, demo video, and announcement blog post. Highlight the "set it and forget it" angle.</div>
+    </li>
+    <li>
+      <div class="check-box"></div>
+      <div><strong>Build a "Time to First Report" narrative.</strong> Create content showing the journey: connect database &rarr; have a conversation &rarr; get a report &rarr; schedule it. Emphasize the speed (minutes, not weeks). Video walkthroughs are ideal.</div>
+    </li>
+    <li>
+      <div class="check-box"></div>
+      <div><strong>Develop comparison content vs. traditional BI tools.</strong> Use the differentiators table in this document. Create blog posts, infographics, and social content around: "Tableau vs. Project Overload" or "Why your dashboards aren't enough."</div>
+    </li>
+    <li>
+      <div class="check-box"></div>
+      <div><strong>Produce use case templates.</strong> Create ready-made report templates for common scenarios: CEO Weekly Dashboard, Monthly Revenue Report, Quarterly Business Review, Customer Churn Analysis, Marketing ROI Tracker, Sales Pipeline Health.</div>
+    </li>
+  </ul>
+
+  <div class="page-footer">
+    <span>Project Overload v2 &mdash; Marketing Brief</span>
+    <span>Page 12</span>
+  </div>
+</div>
+
+<!-- ==================== PAGE 13: MARKETING CHECKLIST CONTINUED ==================== -->
+<div class="page">
+  <div class="section-number">11 &mdash; Marketing Checklist (Continued)</div>
+  <div class="section-title gradient">Content & Branding Guidelines</div>
+
+  <h3 style="font-size: 18px; font-weight: 700; margin-bottom: 16px; color: var(--text-primary);">Visual Identity & Design</h3>
+  <ul class="checklist">
+    <li>
+      <div class="check-box"></div>
+      <div><strong>Use the dark, premium aesthetic.</strong> The product has a dark UI with purple/violet accents. Marketing materials should mirror this: dark backgrounds (#0F0B1A), purple gradients (#6C3AED to #EC4899), and clean typography.</div>
+    </li>
+    <li>
+      <div class="check-box"></div>
+      <div><strong>Show the conversation, not the dashboard.</strong> Hero images should feature the chat interface, not traditional BI charts. The conversation IS the product &mdash; make it the visual centerpiece.</div>
+    </li>
+    <li>
+      <div class="check-box"></div>
+      <div><strong>Visualize the pipeline.</strong> The 6-stage pipeline (Chat &rarr; Strategy &rarr; Execute &rarr; Analyze &rarr; Compose &rarr; PDF) is visually compelling. Use it in diagrams, animations, and explainer content.</div>
+    </li>
+    <li>
+      <div class="check-box"></div>
+      <div><strong>Create before/after comparisons.</strong> Side-by-side visuals: messy spreadsheet vs. polished executive PDF. Raw SQL vs. natural language question. Manual weekly rebuild vs. automated delivery notification.</div>
+    </li>
+    <li>
+      <div class="check-box"></div>
+      <div><strong>Design social-ready report snippets.</strong> Take real (anonymized) report sections and turn them into shareable graphics. The executive brief format is visually distinctive &mdash; use it.</div>
+    </li>
+  </ul>
+
+  <div class="divider"></div>
+
+  <h3 style="font-size: 18px; font-weight: 700; margin-bottom: 16px; color: var(--text-primary);">Messaging Pitfalls to Avoid</h3>
+  <ul class="checklist">
+    <li>
+      <div class="check-box"></div>
+      <div><strong>Don't call it a "chatbot."</strong> It's an AI-powered business intelligence platform. "Chatbot" undersells the analytical depth. Use: "conversational analytics," "AI analyst," or "report automation platform."</div>
+    </li>
+    <li>
+      <div class="check-box"></div>
+      <div><strong>Don't over-promise on AI accuracy.</strong> We have guardrails (90% confidence filter, evidence-based analysis), but never claim "100% accurate." Messaging should emphasize: "evidence-backed," "auditable," "transparent reasoning."</div>
+    </li>
+    <li>
+      <div class="check-box"></div>
+      <div><strong>Don't ignore the human-in-the-loop.</strong> The scope confirmation step and approval workflow are features, not limitations. Emphasize: "You stay in control. The AI proposes, you approve."</div>
+    </li>
+    <li>
+      <div class="check-box"></div>
+      <div><strong>Don't hide the LLM dependency.</strong> Be transparent that reports are AI-generated via Claude. In 2026, AI transparency is a trust signal, not a weakness. Mention the model by name.</div>
+    </li>
+    <li>
+      <div class="check-box"></div>
+      <div><strong>Don't position as a replacement for data teams.</strong> Position as a force multiplier: "Give your data team superpowers" not "Fire your data team." Enable self-serve for stakeholders while freeing analysts for higher-value work.</div>
+    </li>
+    <li>
+      <div class="check-box"></div>
+      <div><strong>Don't lead with database count.</strong> "Supports 6 databases" is a checkbox feature. Instead, lead with: "Connects to the database you already use" &mdash; make it feel effortless, not spec-sheet.</div>
+    </li>
+  </ul>
+
+  <div class="page-footer">
+    <span>Project Overload v2 &mdash; Marketing Brief</span>
+    <span>Page 13</span>
+  </div>
+</div>
+
+<!-- ==================== PAGE 14: LAUNCH CHECKLIST ==================== -->
+<div class="page">
+  <div class="section-number">12 &mdash; Launch Checklist</div>
+  <div class="section-title gradient">Go-to-Market Readiness</div>
+  <p class="section-subtitle">
+    Tactical checklist for the marketing team to prepare for launch and ongoing content production.
+  </p>
+
+  <h3 style="font-size: 18px; font-weight: 700; margin-bottom: 16px; color: var(--text-primary);">Pre-Launch Essentials</h3>
+  <ul class="checklist">
+    <li>
+      <div class="check-box"></div>
+      <div><strong>Product walkthrough video</strong> (3&ndash;5 min) showing the full journey: connect &rarr; chat &rarr; report &rarr; schedule. Record screen capture with voiceover.</div>
+    </li>
+    <li>
+      <div class="check-box"></div>
+      <div><strong>Feature announcement for Scheduled Reports.</strong> Blog post + social campaign highlighting the new automation hub, run history, and smart rerun behavior.</div>
+    </li>
+    <li>
+      <div class="check-box"></div>
+      <div><strong>Landing page with clear CTAs.</strong> "Try Your First Report" as primary action. Show the conversation UI above the fold. Include social proof and comparison table.</div>
+    </li>
+    <li>
+      <div class="check-box"></div>
+      <div><strong>Documentation and help center.</strong> User guides for: connecting databases, creating first report, setting up schedules, managing metric definitions, understanding insight modes.</div>
+    </li>
+    <li>
+      <div class="check-box"></div>
+      <div><strong>Sample report gallery.</strong> 5&ndash;8 anonymized sample reports showing different use cases: revenue analysis, customer health, product usage, operational metrics, data quality audit.</div>
+    </li>
+  </ul>
+
+  <div class="divider"></div>
+
+  <h3 style="font-size: 18px; font-weight: 700; margin-bottom: 16px; color: var(--text-primary);">Ongoing Content Pipeline</h3>
+  <ul class="checklist">
+    <li>
+      <div class="check-box"></div>
+      <div><strong>Weekly "Report of the Week" social series.</strong> Showcase interesting report use cases. Rotate through personas (CEO, Sales Lead, Marketing, Ops).</div>
+    </li>
+    <li>
+      <div class="check-box"></div>
+      <div><strong>"From Question to Report" blog series.</strong> Real-world scenarios: "How a CFO automated their monthly board report" or "How ops eliminated their weekly metrics spreadsheet."</div>
+    </li>
+    <li>
+      <div class="check-box"></div>
+      <div><strong>Integration spotlight content.</strong> One piece per supported database: "Project Overload + Snowflake," "Project Overload + Supabase," etc. Highlight database-specific strengths.</div>
+    </li>
+    <li>
+      <div class="check-box"></div>
+      <div><strong>Security & governance deep-dive.</strong> Whitepaper or blog post detailing the full security model: SQL Guard, read-only enforcement, allowlists, audit logging, evidence hashing. Target data engineering and InfoSec audiences.</div>
+    </li>
+    <li>
+      <div class="check-box"></div>
+      <div><strong>Competitive comparison pages.</strong> SEO-targeted pages: "Project Overload vs Metabase," "Project Overload vs Looker," "Project Overload vs ChatGPT for analytics." Honest, differentiated positioning.</div>
+    </li>
+  </ul>
+
+  <div class="divider"></div>
+
+  <h3 style="font-size: 18px; font-weight: 700; margin-bottom: 16px; color: var(--text-primary);">Key Phrases & Copy Bank</h3>
+  <div class="grid-2">
+    <div class="highlight-box">
+      <h3>Hero Copy</h3>
+      <p>"Your AI data analyst that never sleeps. Define a report in conversation. Get it automatically, every week."</p>
+    </div>
+    <div class="highlight-box">
+      <h3>Sub-Hero</h3>
+      <p>"From raw database to executive PDF in one conversation. No SQL. No dashboards. Just insights."</p>
+    </div>
+  </div>
+  <div class="grid-2">
+    <div class="highlight-box">
+      <h3>Scheduled Reports</h3>
+      <p>"Set it and forget it. Lock your business logic into a report contract and let the AI handle the rest &mdash; weekly, monthly, or quarterly."</p>
+    </div>
+    <div class="highlight-box">
+      <h3>Trust / Security</h3>
+      <p>"Every insight backed by evidence. Every query audited. Every table allowlisted. AI analytics you can trust."</p>
+    </div>
+  </div>
+
+  <div class="page-footer">
+    <span>Project Overload v2 &mdash; Marketing Brief</span>
+    <span>Page 14</span>
+  </div>
+</div>
+
+<!-- ==================== BACK COVER ==================== -->
+<div class="cover" style="page-break-after: avoid;">
+  <div class="cover-badge">End of Document</div>
+  <div class="cover-logo" style="font-size: 56px;">Project<br>Overload</div>
+  <div class="cover-version">Version 2.0</div>
+  <p class="cover-tagline" style="font-size: 18px; margin-bottom: 40px;">
+    AI-powered business intelligence.<br>
+    Conversational. Automated. Trustworthy.
+  </p>
+
+  <div style="background: var(--bg-card); border: 1px solid var(--border); border-radius: 16px; padding: 32px; max-width: 500px; text-align: center; position: relative; z-index: 1;">
+    <p style="font-size: 14px; color: var(--text-muted); margin-bottom: 8px;">Questions about this document?</p>
+    <p style="font-size: 16px; font-weight: 600; color: var(--text-primary);">Contact the Product Team</p>
+    <p style="font-size: 13px; color: var(--text-muted); margin-top: 16px;">
+      This document is confidential and intended for internal marketing use only.<br>
+      Prepared March 2026.
+    </p>
+  </div>
+
+  <div class="cover-footer">
+    <span>Project Overload v2 &mdash; Confidential</span>
+    <span>Page 15</span>
+  </div>
+</div>
+
+</body>
+</html>

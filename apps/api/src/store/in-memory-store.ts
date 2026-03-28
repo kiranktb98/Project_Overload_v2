@@ -10,6 +10,7 @@ import type {
 } from "@project-overload/shared";
 import type {
   ChatSessionRecord,
+  CustomerAccountRecord,
   MetadataStore,
   PlatformUserRecord,
   RagChunkSearchResult,
@@ -18,6 +19,7 @@ import type {
   ScheduledReportProfileRecord,
   SemanticCollectionName,
   SemanticCollections,
+  SystemStateRecord,
   StoreRequestContext
 } from "./types";
 
@@ -42,6 +44,7 @@ export class InMemoryMetadataStore implements MetadataStore {
   private readonly contractVersionsByTenant = new Map<string, Map<string, ReportContractVersionRecord[]>>();
   private readonly systemStateByTenant = new Map<string, Map<string, Record<string, unknown>>>();
   private readonly usersByTenant = new Map<string, Map<string, PlatformUserRecord>>();
+  private readonly customerAccounts = new Map<string, CustomerAccountRecord>();
   private readonly chatSessionsByTenant = new Map<string, Map<string, ChatSessionRecord[]>>();
   private readonly ragChunksByTenant = new Map<string, Map<string, RagChunkUpsertRecord[]>>();
   private readonly auditLogs: Array<{ tenant_id: string; event_type: string; payload: Record<string, unknown> }> = [];
@@ -215,6 +218,22 @@ export class InMemoryMetadataStore implements MetadataStore {
     return state.get(key) ?? null;
   }
 
+  async listSystemStatesByKey(key: string): Promise<SystemStateRecord[]> {
+    const entries: SystemStateRecord[] = [];
+    for (const [tenantId, state] of this.systemStateByTenant.entries()) {
+      const payload = state.get(key);
+      if (payload) {
+        entries.push({
+          state_key: key,
+          tenant_id: tenantId,
+          payload,
+          updated_at: new Date().toISOString()
+        });
+      }
+    }
+    return entries;
+  }
+
   async upsertPlatformUser(
     payload: Omit<PlatformUserRecord, "created_at" | "last_login_at">,
     context?: StoreRequestContext
@@ -239,6 +258,18 @@ export class InMemoryMetadataStore implements MetadataStore {
     return users.get(username) ?? null;
   }
 
+  async listPlatformUsers(context?: StoreRequestContext): Promise<PlatformUserRecord[]> {
+    if (context?.tenant_id) {
+      return Array.from(this.getOrCreateUsers(resolveTenantId(context)).values());
+    }
+
+    const records: PlatformUserRecord[] = [];
+    for (const users of this.usersByTenant.values()) {
+      records.push(...users.values());
+    }
+    return records;
+  }
+
   async markPlatformUserLogin(userId: string, context?: StoreRequestContext): Promise<void> {
     const tenantId = resolveTenantId(context);
     const users = this.getOrCreateUsers(tenantId);
@@ -251,6 +282,59 @@ export class InMemoryMetadataStore implements MetadataStore {
         return;
       }
     }
+  }
+
+  async upsertCustomerAccount(
+    payload: Omit<CustomerAccountRecord, "created_at" | "updated_at">,
+    context?: StoreRequestContext
+  ): Promise<CustomerAccountRecord> {
+    const tenantId = resolveTenantId(context, payload.tenant_id);
+    const existing = this.customerAccounts.get(tenantId);
+    const nowIso = new Date().toISOString();
+    const record: CustomerAccountRecord = {
+      ...payload,
+      tenant_id: tenantId,
+      created_at: existing?.created_at ?? nowIso,
+      updated_at: nowIso
+    };
+    this.customerAccounts.set(tenantId, record);
+    return record;
+  }
+
+  async listCustomerAccounts(): Promise<CustomerAccountRecord[]> {
+    this.ensureDefaultCustomerAccount();
+    return Array.from(this.customerAccounts.values()).sort((left, right) => left.name.localeCompare(right.name));
+  }
+
+  async getCustomerAccountByTenantId(tenantId: string): Promise<CustomerAccountRecord | null> {
+    this.ensureDefaultCustomerAccount();
+    return this.customerAccounts.get(tenantId) ?? null;
+  }
+
+  async listAllReportContracts(): Promise<ReportContract[]> {
+    const contracts: ReportContract[] = [];
+    for (const byTenant of this.reportContractsByTenant.values()) {
+      contracts.push(...byTenant.values());
+    }
+    return contracts;
+  }
+
+  async listAllReportRuns(): Promise<ReportRun[]> {
+    const runs: ReportRun[] = [];
+    for (const byTenant of this.reportRunsByIdByTenant.values()) {
+      runs.push(...byTenant.values());
+    }
+    return runs;
+  }
+
+  async listAllScheduledReportProfiles(): Promise<ScheduledReportProfileRecord[]> {
+    const profiles: ScheduledReportProfileRecord[] = [];
+    for (const byTenant of this.scheduledProfilesByTenant.values()) {
+      profiles.push(...byTenant.values());
+    }
+    return profiles.sort(
+      (left, right) => Date.parse(right.updated_at ?? right.created_at ?? "") - Date.parse(left.updated_at ?? left.created_at ?? "")
+    );
   }
 
   async listChatSessions(userId: string, context?: StoreRequestContext): Promise<ChatSessionRecord[]> {
@@ -454,6 +538,34 @@ export class InMemoryMetadataStore implements MetadataStore {
     const created = new Map<string, PlatformUserRecord>();
     this.usersByTenant.set(tenantId, created);
     return created;
+  }
+
+  private ensureDefaultCustomerAccount(): void {
+    if (this.customerAccounts.has(DEFAULT_TENANT_ID)) {
+      return;
+    }
+    const nowIso = new Date().toISOString();
+    this.customerAccounts.set(DEFAULT_TENANT_ID, {
+      tenant_id: DEFAULT_TENANT_ID,
+      name: "Claritect Pilot",
+      plan_tier: "Growth",
+      status: "active",
+      primary_contact_name: "Claritect Team",
+      primary_contact_email: "owner@example.com",
+      billing_status: "current",
+      renewal_date: null,
+      owner: "Claritect Team",
+      notes: "",
+      entitlements: {
+        seats: 10,
+        scheduled_reports: 25,
+        monthly_runs: 300,
+        ai_budget_usd: null,
+        feature_flags: ["business_case", "scheduled_reports", "governed_connections"]
+      },
+      created_at: nowIso,
+      updated_at: nowIso
+    });
   }
 
   private getOrCreateRagChunks(tenantId: string): Map<string, RagChunkUpsertRecord[]> {

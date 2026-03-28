@@ -79,16 +79,62 @@ describe("web chat interface", () => {
 
   it("serves health and html routes", async () => {
     const app = buildWebApp({
-      conversation_client: createPassthroughConversationClient()
+      conversation_client: createPassthroughConversationClient(),
+      marketing_asset_mode: "stub"
     });
 
     const health = await app.inject({ method: "GET", url: "/health" });
     expect(health.statusCode).toBe(200);
     expect(health.json()).toEqual({ status: "ok", service: "web" });
 
-    const page = await app.inject({ method: "GET", url: "/" });
+    const marketingPage = await app.inject({ method: "GET", url: "/" });
+    expect(marketingPage.statusCode).toBe(200);
+    expect(marketingPage.body).toContain("Claritect");
+    expect(marketingPage.body).toContain("Turn data into decisions");
+    expect(marketingPage.body).toContain("/marketing-assets/home.js");
+    expect(marketingPage.body).toContain("Book a Live Pilot");
+
+    const pricingPage = await app.inject({ method: "GET", url: "/pricing" });
+    expect(pricingPage.statusCode).toBe(200);
+    expect(pricingPage.body).toContain("Claritect | Pricing");
+    expect(pricingPage.body).toContain("How Claritect compares");
+    expect(pricingPage.body).toContain("Self-serve AI tools");
+    expect(pricingPage.body).toContain("/marketing-assets/pricing.js");
+
+    const marketingHomeScript = await app.inject({ method: "GET", url: "/marketing-assets/home.js" });
+    expect(marketingHomeScript.statusCode).toBe(200);
+    expect(marketingHomeScript.headers["content-type"]).toContain("text/javascript");
+    expect(marketingHomeScript.body).toContain("HomeHeroScene");
+
+    const marketingPricingStyles = await app.inject({ method: "GET", url: "/marketing-assets/pricing.css" });
+    expect(marketingPricingStyles.statusCode).toBe(200);
+    expect(marketingPricingStyles.headers["content-type"]).toContain("text/css");
+    expect(marketingPricingStyles.body).toContain(".mk-pricing-hero");
+
+    const loginPage = await app.inject({ method: "GET", url: "/login" });
+    expect(loginPage.statusCode).toBe(200);
+    expect(loginPage.body).toContain("Claritect | Customer login");
+
+    const adminLoginPage = await app.inject({ method: "GET", url: "/admin/login" });
+    expect(adminLoginPage.statusCode).toBe(200);
+    expect(adminLoginPage.body).toContain("Claritect | Admin login");
+
+    const loggedOutPage = await app.inject({ method: "GET", url: "/logout" });
+    expect(loggedOutPage.statusCode).toBe(200);
+    expect(loggedOutPage.body).toContain("Claritect | Signed out");
+    expect(loggedOutPage.body).toContain("You’re safely signed out.");
+
+    const adminLoggedOutPage = await app.inject({ method: "GET", url: "/admin/logout" });
+    expect(adminLoggedOutPage.statusCode).toBe(200);
+    expect(adminLoggedOutPage.body).toContain("Claritect | Admin signed out");
+    expect(adminLoggedOutPage.body).toContain("Admin session closed.");
+
+    const page = await app.inject({ method: "GET", url: "/app" });
     expect(page.statusCode).toBe(200);
-    expect(page.body).toContain("Project Overload");
+    expect(page.body).toContain("Claritect");
+    expect(page.body).toContain('id="schedule-modal"');
+    expect(page.body).toContain("Save schedule");
+    expect(page.body).toContain("How should the time windows change on each run?");
 
     const connectPage = await app.inject({ method: "GET", url: "/connect" });
     expect(connectPage.statusCode).toBe(200);
@@ -125,14 +171,43 @@ describe("web chat interface", () => {
 
     const scheduledPage = await app.inject({ method: "GET", url: "/scheduled" });
     expect(scheduledPage.statusCode).toBe(200);
-    expect(scheduledPage.body).toContain("Scheduled Reports");
-    expect(scheduledPage.body).toContain("Decision cockpit");
-    expect(scheduledPage.body).toContain("grid-template-columns:repeat(3, minmax(240px,1fr))");
+    expect(scheduledPage.body).toContain("Scheduled report types");
+    expect(scheduledPage.body).toContain("Question handling on future runs");
+    expect(scheduledPage.body).toContain("grid-template-columns:repeat(3,minmax(250px,1fr))");
     expect(scheduledPage.body).toContain("Open in chat");
 
-    expect(page.body).toContain('id="schedule-modal"');
-    expect(page.body).toContain("Save schedule");
-    expect(page.body).toContain("How should the time windows change on each run?");
+    const usagePage = await app.inject({ method: "GET", url: "/usage" });
+    expect(usagePage.statusCode).toBe(200);
+    expect(usagePage.body).toContain("Claritect | Usage and AI balance");
+    expect(usagePage.body).toContain("OpenRouter Credits");
+    expect(usagePage.body).toContain("AI usage by model");
+
+    const adminPage = await app.inject({ method: "GET", url: "/admin" });
+    expect(adminPage.statusCode).toBe(200);
+    expect(adminPage.body).toContain("Claritect | Admin dashboard");
+    expect(adminPage.body).toContain("Admin console");
+
+    await app.close();
+  }, 20000);
+
+  it("redirects logout posts to dedicated signed-out pages", async () => {
+    const app = buildWebApp({
+      conversation_client: createPassthroughConversationClient()
+    });
+
+    const customerLogout = await app.inject({
+      method: "POST",
+      url: "/auth/logout"
+    });
+    expect(customerLogout.statusCode).toBe(302);
+    expect(customerLogout.headers.location).toBe("/logout");
+
+    const adminLogout = await app.inject({
+      method: "POST",
+      url: "/admin/auth/logout"
+    });
+    expect(adminLogout.statusCode).toBe(302);
+    expect(adminLogout.headers.location).toBe("/admin/logout");
 
     await app.close();
   });

@@ -1,0 +1,554 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Claritect - One Pager</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link href="https://fonts.googleapis.com/css2?family=Nunito+Sans:wght@600;700;800&family=Nunito+Text:wght@400;600;700&display=swap" rel="stylesheet" />
+    <style>
+      :root {
+        --base: #0F0B1A;
+        --accent-a: #6C3AED;
+        --accent-b: #EC4899;
+        --output: #F5F3FF;
+        --soft: #B8AFCA;
+        --muted: #8B7FA6;
+        --panel: rgba(23, 18, 38, 0.94);
+        --line: rgba(167, 146, 214, 0.18);
+        --green: #34D399;
+        --red: #EF4444;
+        --amber: #FBBF24;
+      }
+      * { box-sizing: border-box; margin: 0; padding: 0; }
+      @page { size: A4; margin: 0; }
+      html, body {
+        width: 210mm;
+        height: 297mm;
+        overflow: hidden;
+        background: var(--base);
+        color: var(--output);
+        font-family: "Nunito Text", "Segoe UI", sans-serif;
+        -webkit-print-color-adjust: exact;
+        print-color-adjust: exact;
+      }
+      body {
+        position: relative;
+        padding: 36px 40px 30px;
+        display: flex;
+        flex-direction: column;
+        background:
+          radial-gradient(circle at 80% 10%, rgba(108, 58, 237, 0.15), transparent 35%),
+          radial-gradient(circle at 15% 90%, rgba(236, 72, 153, 0.1), transparent 30%),
+          var(--base);
+      }
+      body::before {
+        content: "";
+        position: absolute;
+        inset: 16px;
+        border: 1px solid rgba(245, 243, 255, 0.05);
+        border-radius: 22px;
+        pointer-events: none;
+      }
+
+      /* ── Header ── */
+      .header {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        margin-bottom: 28px;
+        padding-bottom: 16px;
+        border-bottom: 1px solid var(--line);
+      }
+      .brand { display: flex; align-items: center; gap: 12px; }
+      .brand svg { width: 44px; height: 30px; }
+      .brand-text { display: flex; flex-direction: column; gap: 1px; }
+      .brand-name { font-family: "Nunito Sans", sans-serif; font-weight: 800; font-size: 20px; }
+      .brand-kicker { color: var(--soft); font-size: 9px; letter-spacing: 0.22em; text-transform: uppercase; }
+      .contact { text-align: right; font-size: 10px; color: var(--soft); line-height: 1.6; }
+      .contact a { color: var(--accent-a); text-decoration: none; }
+
+      /* ── Hero ── */
+      .hero { margin-bottom: 24px; }
+      .hero h1 {
+        font-family: "Nunito Sans", sans-serif;
+        font-weight: 800;
+        font-size: 32px;
+        line-height: 1.1;
+        margin-bottom: 8px;
+        background: linear-gradient(135deg, var(--output) 0%, #d1c7eb 100%);
+        -webkit-background-clip: text;
+        -webkit-text-fill-color: transparent;
+      }
+      .hero p {
+        font-size: 13px;
+        color: #d3c8ec;
+        line-height: 1.5;
+        max-width: 85%;
+      }
+
+      /* ── Value props ── */
+      .values {
+        display: grid;
+        grid-template-columns: repeat(4, 1fr);
+        gap: 10px;
+        margin-bottom: 20px;
+      }
+      .value-card {
+        background: var(--panel);
+        border: 1px solid var(--line);
+        border-radius: 14px;
+        padding: 14px 12px;
+        text-align: center;
+      }
+      .value-card .stat {
+        font-family: "Nunito Sans", sans-serif;
+        font-weight: 800;
+        font-size: 22px;
+        display: block;
+        margin-bottom: 4px;
+        background: linear-gradient(135deg, var(--accent-a), var(--accent-b));
+        -webkit-background-clip: text;
+        -webkit-text-fill-color: transparent;
+      }
+      .value-card .label {
+        font-size: 9px;
+        color: var(--soft);
+        text-transform: uppercase;
+        letter-spacing: 0.1em;
+      }
+
+      /* ── How it works ── */
+      .section-title {
+        font-family: "Nunito Sans", sans-serif;
+        font-weight: 800;
+        font-size: 16px;
+        margin-bottom: 12px;
+        color: var(--output);
+      }
+      .how-it-works {
+        display: grid;
+        grid-template-columns: 1fr 24px 1fr 24px 1fr 24px 1fr;
+        gap: 0;
+        align-items: stretch;
+        margin-bottom: 20px;
+      }
+      .step {
+        background: var(--panel);
+        border: 1px solid var(--line);
+        border-radius: 14px;
+        padding: 12px;
+      }
+      .step-num {
+        font-size: 9px;
+        letter-spacing: 0.2em;
+        text-transform: uppercase;
+        color: var(--muted);
+        margin-bottom: 6px;
+      }
+      .step h4 {
+        font-family: "Nunito Sans", sans-serif;
+        font-weight: 800;
+        font-size: 12px;
+        margin-bottom: 4px;
+      }
+      .step p {
+        font-size: 10px;
+        color: #d3c8ec;
+        line-height: 1.4;
+      }
+      .arrow {
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        color: var(--muted);
+        font-size: 16px;
+        font-weight: 800;
+      }
+
+      /* ── Two-column: Pricing + Comparison ── */
+      .two-col {
+        display: grid;
+        grid-template-columns: 1fr 1fr;
+        gap: 16px;
+        flex: 1;
+      }
+
+      /* Pricing */
+      .pricing-col h3 { margin-bottom: 10px; }
+      .plans {
+        display: flex;
+        flex-direction: column;
+        gap: 8px;
+      }
+      .plan {
+        background: var(--panel);
+        border: 1px solid var(--line);
+        border-radius: 14px;
+        padding: 12px 14px;
+        display: flex;
+        align-items: center;
+        gap: 14px;
+      }
+      .plan.featured {
+        border-color: var(--accent-a);
+        background: linear-gradient(135deg, rgba(108,58,237,0.12), var(--panel));
+      }
+      .plan-price {
+        min-width: 72px;
+      }
+      .plan-price strong {
+        font-family: "Nunito Sans", sans-serif;
+        font-weight: 800;
+        font-size: 20px;
+        display: block;
+        line-height: 1;
+      }
+      .plan-price span {
+        font-size: 9px;
+        color: var(--muted);
+      }
+      .plan-info {
+        flex: 1;
+        border-left: 1px solid var(--line);
+        padding-left: 14px;
+      }
+      .plan-name {
+        font-family: "Nunito Sans", sans-serif;
+        font-weight: 800;
+        font-size: 12px;
+        margin-bottom: 2px;
+      }
+      .plan-desc {
+        font-size: 9.5px;
+        color: #d3c8ec;
+        line-height: 1.4;
+      }
+
+      /* Comparison */
+      .compare-col h3 { margin-bottom: 10px; }
+      .compare-cards {
+        display: flex;
+        flex-direction: column;
+        gap: 8px;
+      }
+      .compare-card {
+        background: var(--panel);
+        border: 1px solid var(--line);
+        border-radius: 14px;
+        padding: 12px 14px;
+      }
+      .compare-card.winner {
+        border-color: var(--accent-a);
+      }
+      .compare-card-header {
+        display: flex;
+        justify-content: space-between;
+        align-items: baseline;
+        margin-bottom: 8px;
+      }
+      .compare-card-header h4 {
+        font-family: "Nunito Sans", sans-serif;
+        font-weight: 800;
+        font-size: 12px;
+      }
+      .compare-card-header .cost {
+        font-family: "Nunito Sans", sans-serif;
+        font-weight: 800;
+        font-size: 14px;
+        color: var(--soft);
+      }
+      .compare-card.winner .compare-card-header .cost {
+        color: var(--green);
+      }
+      .traits {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 4px 8px;
+      }
+      .trait {
+        display: flex;
+        align-items: center;
+        gap: 4px;
+        font-size: 9.5px;
+        color: var(--soft);
+      }
+      .dot {
+        width: 8px;
+        height: 8px;
+        border-radius: 50%;
+        flex-shrink: 0;
+      }
+      .dot.yes { background: var(--green); }
+      .dot.no { background: var(--red); opacity: 0.6; }
+      .dot.partial { background: var(--amber); opacity: 0.7; }
+      .trait.yes { color: var(--output); }
+
+      /* ── Bottom stats ── */
+      .bottom-stats {
+        display: grid;
+        grid-template-columns: repeat(4, 1fr);
+        gap: 10px;
+        margin-top: 16px;
+        padding-top: 16px;
+        border-top: 1px solid var(--line);
+      }
+      .bottom-stat {
+        text-align: center;
+      }
+      .bottom-stat strong {
+        font-family: "Nunito Sans", sans-serif;
+        font-weight: 800;
+        font-size: 16px;
+        display: block;
+        color: var(--output);
+      }
+      .bottom-stat .detail {
+        font-size: 8.5px;
+        color: var(--muted);
+        text-transform: uppercase;
+        letter-spacing: 0.08em;
+      }
+      .bottom-stat .context {
+        font-size: 9px;
+        color: #d3c8ec;
+        margin-top: 2px;
+        display: block;
+      }
+
+      /* ── CTA ── */
+      .cta-bar {
+        margin-top: 14px;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        gap: 24px;
+        padding: 14px;
+        background: linear-gradient(135deg, rgba(108,58,237,0.15), rgba(236,72,153,0.1));
+        border: 1px solid var(--line);
+        border-radius: 14px;
+      }
+      .cta-bar span {
+        font-family: "Nunito Sans", sans-serif;
+        font-weight: 800;
+        font-size: 14px;
+      }
+      .cta-bar .cta-email {
+        font-size: 12px;
+        color: var(--accent-a);
+        font-weight: 700;
+      }
+      .cta-bar .cta-sep {
+        color: var(--muted);
+        font-weight: 400;
+        font-size: 11px;
+      }
+    </style>
+  </head>
+  <body>
+    <!-- Header -->
+    <header class="header">
+      <div class="brand">
+        <svg width="44" height="30" viewBox="0 0 753 318" fill="none" xmlns="http://www.w3.org/2000/svg">
+          <path d="M498.949 96.4167C531.506 94.8128 559.226 119.861 560.929 152.425C562.631 184.987 537.671 212.789 505.121 214.589C472.429 216.396 444.491 191.301 442.781 158.599C441.079 125.897 466.249 98.0266 498.949 96.4167Z" fill="url(#p0)"/>
+          <path d="M199.597 145.622C216.256 144.415 242.911 145.164 259.971 145.175C309.789 144.982 371.5 146.841 421.231 149.844C421.831 154.514 421.541 159.686 422.231 164.344C371.352 168.001 303.745 166.184 252.356 166.173C205.466 166.373 158.586 164.755 111.821 161.324C86.8387 159.586 63.7965 158.045 39 154.871C54.3015 151.703 75.843 150.505 91.6732 149.494C127.612 147.343 163.597 146.052 199.597 145.622Z" fill="url(#p1)"/>
+          <path d="M408.859 182.545L421.731 180.344C423.029 184.76 426.084 187.883 427.231 192.344C406.372 200.116 352.78 211.539 330.564 216.72C266.046 231.767 203.088 242.989 137.266 250.712C134.678 251.295 134.849 251.748 133.253 250.74L132.866 250.902L133.591 251.353L132.501 251.265C133.65 249.572 152.918 243.256 155.919 242.298C214.427 224.253 273.759 209.005 333.716 196.604C354.395 192.22 388.435 184.5 408.859 182.545Z" fill="url(#p2)"/>
+          <path d="M588.821 95.6244C634.331 95.1646 681.169 95.3354 726.694 95.6681L726.731 125.344L588.731 125.269L588.821 95.6244Z" fill="#FEFEFE"/>
+          <path d="M588.873 140.35L726.731 140.344V170.23L588.731 170.344L588.873 140.35Z" fill="#FEFEFE"/>
+          <path d="M588.986 185.49C634.754 185.511 681.03 185.069 726.731 185.628L726.716 214.715C722.855 215.844 696.87 215.108 690.869 215.106L588.784 215.015C588.77 205.354 588.591 195.096 588.986 185.49Z" fill="#FEFEFE"/>
+          <path d="M140.967 74.2312C150.457 73.3483 181.16 77.4623 191.986 78.7323C244.51 84.6048 296.735 92.9123 348.489 103.627C369.274 107.896 406.243 115.259 426.731 120.844C426.454 125.385 425.091 128.796 424.731 133.344C401.287 135.663 165.903 86.3062 140.967 74.2312Z" fill="url(#p3)"/>
+          <path d="M427.731 209.344C430.281 210.808 438.081 216.225 438.231 219.344C427.341 231.352 260.869 288.656 233.715 296.222C231.697 297 230.438 297.672 228.296 297.659C232.769 294.093 256.942 282.264 262.987 279.287C291.115 265.349 319.626 252.202 348.489 239.86C368.095 231.326 407.271 215.178 427.731 209.344Z" fill="url(#p4)"/>
+          <path d="M249.106 31.4541C284.9 40.7939 318.33 49.8798 353.521 61.5977C364.965 65.4371 376.337 69.4873 387.632 73.7461C392.447 75.551 401.734 79.4103 406.361 80.7412C415.354 84.2153 427.279 89.2212 435.851 93.7471L431.217 106.829C423.399 104.411 409.576 100.457 402.017 97.249L401.306 96.9414L399.837 96.3086C384.432 89.7555 362.416 82.659 346.218 76.2979C313.074 63.349 280.456 49.0913 248.441 33.5596C244.374 32.0862 240.918 30.0667 237.141 28L249.106 31.4541Z" fill="url(#p5)"/>
+          <defs>
+            <radialGradient id="p0" cx="0" cy="0" r="1" gradientUnits="userSpaceOnUse" gradientTransform="translate(501.855 155.512) rotate(49.5098) scale(59.8719)"><stop offset="0.06" stop-color="#FF9595"/><stop offset="1" stop-color="#7E17FF"/></radialGradient>
+            <linearGradient id="p1" x1="56" y1="155" x2="423" y2="159" gradientUnits="userSpaceOnUse"><stop offset="0.58" stop-color="#8540DA"/><stop offset="1" stop-color="#FAF6FF"/></linearGradient>
+            <linearGradient id="p2" x1="146" y1="214" x2="428" y2="215" gradientUnits="userSpaceOnUse"><stop offset="0.58" stop-color="#8540DA"/><stop offset="1" stop-color="#FAF6FF"/></linearGradient>
+            <linearGradient id="p3" x1="154" y1="103" x2="427" y2="103" gradientUnits="userSpaceOnUse"><stop offset="0.58" stop-color="#8540DA"/><stop offset="1" stop-color="#FAF6FF"/></linearGradient>
+            <linearGradient id="p4" x1="238" y1="252" x2="439" y2="252" gradientUnits="userSpaceOnUse"><stop offset="0.58" stop-color="#8540DA"/><stop offset="1" stop-color="#FAF6FF"/></linearGradient>
+            <linearGradient id="p5" x1="246" y1="66" x2="436" y2="66" gradientUnits="userSpaceOnUse"><stop offset="0.58" stop-color="#8540DA"/><stop offset="1" stop-color="#FAF6FF"/></linearGradient>
+          </defs>
+        </svg>
+        <div class="brand-text">
+          <div class="brand-name">Claritect</div>
+          <div class="brand-kicker">Decision intelligence</div>
+        </div>
+      </div>
+      <div class="contact">
+        <a href="mailto:hello@claritect.ai">hello@claritect.ai</a><br />
+        claritect.ai
+      </div>
+    </header>
+
+    <!-- Hero -->
+    <section class="hero">
+      <h1>Ask your data anything.</h1>
+      <p>Claritect gives you the power of a data analyst and a consulting team — available whenever you need insight, at a fraction of the cost.</p>
+    </section>
+
+    <!-- Value metrics -->
+    <section class="values">
+      <div class="value-card">
+        <span class="stat">5x</span>
+        <span class="label">Value delivered vs cost</span>
+      </div>
+      <div class="value-card">
+        <span class="stat">24/7</span>
+        <span class="label">Insight on demand</span>
+      </div>
+      <div class="value-card">
+        <span class="stat">Same day</span>
+        <span class="label">Question to report</span>
+      </div>
+      <div class="value-card">
+        <span class="stat">Any scope</span>
+        <span class="label">Quick check to business case</span>
+      </div>
+    </section>
+
+    <!-- How it works -->
+    <h3 class="section-title">How it works</h3>
+    <section class="how-it-works">
+      <div class="step">
+        <div class="step-num">Step 01</div>
+        <h4>Ask in plain English</h4>
+        <p>Type any business question the way you'd ask a colleague. No SQL, no data requests.</p>
+      </div>
+      <div class="arrow">&rarr;</div>
+      <div class="step">
+        <div class="step-num">Step 02</div>
+        <h4>Governed analysis</h4>
+        <p>Claritect writes read-only SQL and builds evidence you can trust and audit.</p>
+      </div>
+      <div class="arrow">&rarr;</div>
+      <div class="step">
+        <div class="step-num">Step 03</div>
+        <h4>Insight with actions</h4>
+        <p>Get findings, interpretation, and recommended next steps — not just numbers.</p>
+      </div>
+      <div class="arrow">&rarr;</div>
+      <div class="step">
+        <div class="step-num">Step 04</div>
+        <h4>Run it again anytime</h4>
+        <p>Use once for a quick answer. Schedule for updates. Build into a business case.</p>
+      </div>
+    </section>
+
+    <!-- Two columns: Pricing + Comparison -->
+    <section class="two-col">
+      <div class="pricing-col">
+        <h3 class="section-title">Plans</h3>
+        <div class="plans">
+          <div class="plan">
+            <div class="plan-price">
+              <strong>$499</strong>
+              <span>/month</span>
+            </div>
+            <div class="plan-info">
+              <div class="plan-name">Starter</div>
+              <div class="plan-desc">Like having a consultant on retainer. One data source, unlimited questions, executive-ready output.</div>
+            </div>
+          </div>
+          <div class="plan featured">
+            <div class="plan-price">
+              <strong>$1,499</strong>
+              <span>/month</span>
+            </div>
+            <div class="plan-info">
+              <div class="plan-name">Growth</div>
+              <div class="plan-desc">The analytical firepower of a consulting engagement. Multiple sources, scheduled insights, business cases.</div>
+            </div>
+          </div>
+          <div class="plan">
+            <div class="plan-price">
+              <strong>Custom</strong>
+              <span>&nbsp;</span>
+            </div>
+            <div class="plan-info">
+              <div class="plan-name">Enterprise</div>
+              <div class="plan-desc">Multi-team rollout with admin control, custom entitlements, and dedicated support.</div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <div class="compare-col">
+        <h3 class="section-title">How Claritect compares</h3>
+        <div class="compare-cards">
+          <div class="compare-card winner">
+            <div class="compare-card-header">
+              <h4>Claritect</h4>
+              <span class="cost">$499/mo</span>
+            </div>
+            <div class="traits">
+              <span class="trait yes"><span class="dot yes"></span> Unlimited questions</span>
+              <span class="trait yes"><span class="dot yes"></span> Context retained</span>
+              <span class="trait yes"><span class="dot yes"></span> Governed & auditable</span>
+              <span class="trait yes"><span class="dot yes"></span> Scheduled insights</span>
+              <span class="trait yes"><span class="dot yes"></span> Business cases</span>
+            </div>
+          </div>
+          <div class="compare-card">
+            <div class="compare-card-header">
+              <h4>Self-serve AI tools</h4>
+              <span class="cost">$1,120/mo</span>
+            </div>
+            <div class="traits">
+              <span class="trait"><span class="dot partial"></span> Unlimited (manual)</span>
+              <span class="trait"><span class="dot no"></span> Context lost</span>
+              <span class="trait"><span class="dot no"></span> Inconsistent</span>
+              <span class="trait"><span class="dot no"></span> No scheduling</span>
+              <span class="trait"><span class="dot no"></span> No business cases</span>
+            </div>
+          </div>
+          <div class="compare-card">
+            <div class="compare-card-header">
+              <h4>External consultants</h4>
+              <span class="cost">$2,400/mo</span>
+            </div>
+            <div class="traits">
+              <span class="trait"><span class="dot no"></span> Per engagement</span>
+              <span class="trait"><span class="dot no"></span> Re-briefing needed</span>
+              <span class="trait"><span class="dot partial"></span> High quality, slow</span>
+              <span class="trait"><span class="dot partial"></span> Manual scheduling</span>
+              <span class="trait"><span class="dot yes"></span> Business cases</span>
+            </div>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- Bottom stats -->
+    <section class="bottom-stats">
+      <div class="bottom-stat">
+        <strong>5x value</strong>
+        <span class="detail">vs cost of Claritect</span>
+        <span class="context">Consulting-grade insight at a fraction of the cost.</span>
+      </div>
+      <div class="bottom-stat">
+        <strong>22 hrs freed</strong>
+        <span class="detail">vs external consulting</span>
+        <span class="context">Time your team gets back for the work that matters.</span>
+      </div>
+      <div class="bottom-stat">
+        <strong>Always ready</strong>
+        <span class="detail">no scheduling needed</span>
+        <span class="context">Ask a question at any time. No engagement letter required.</span>
+      </div>
+      <div class="bottom-stat">
+        <strong>$1,901 saved</strong>
+        <span class="detail">per month vs consulting</span>
+        <span class="context">Over $22K annually you can reinvest in growth.</span>
+      </div>
+    </section>
+
+    <!-- CTA -->
+    <div class="cta-bar">
+      <span>Book a Live Pilot</span>
+      <span class="cta-sep">|</span>
+      <span class="cta-email">hello@claritect.ai</span>
+      <span class="cta-sep">|</span>
+      <span class="cta-email">claritect.ai</span>
+    </div>
+  </body>
+</html>
