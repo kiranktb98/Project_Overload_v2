@@ -32,14 +32,11 @@ import { renderScheduledReportsPage } from "./scheduled-page";
 import { renderMarketingHomePage, renderMarketingPricingPage } from "./marketing-page";
 import { ensureMarketingBundle, readMarketingAsset, readStubMarketingAsset } from "./marketing-build";
 import {
-  renderAdminBillingPage,
-  renderAdminConnectionsPage,
-  renderAdminCustomersPage,
+  renderAdminAccountsPage,
   renderAdminDashboardPage,
+  renderAdminFinancePage,
   renderAdminLoginPage,
-  renderAdminReportsPage,
-  renderAdminSchedulesPage,
-  renderAdminUsersPage
+  renderAdminSupportPage
 } from "./admin-page";
 
 const DB_CONNECTION_GUIDE_HTML = readFileSync(
@@ -62,17 +59,8 @@ export type WebAppDependencies = {
 class ChatStageError extends Error {
   readonly stage: string;
 
-  constructor(stage: string, cause: unknown) {
-    let detail =
-      cause instanceof Error && cause.message.trim().length > 0
-        ? cause.message
-        : typeof cause === "string" && cause.trim().length > 0
-          ? cause
-          : "Unknown error";
-    if (detail.trim().startsWith("[")) {
-      detail = "Provider response format mismatch.";
-    }
-    super(`Stage error: ${stage} failed. ${detail}`);
+  constructor(stage: string, _cause: unknown) {
+    super(`Something went wrong while processing your message — please try again in a moment.`);
     this.name = "ChatStageError";
     this.stage = stage;
   }
@@ -108,6 +96,11 @@ export function buildWebApp(options: WebAppDependencies = {}) {
   const authEnabled = isUiAuthEnabled();
   const orchestratorEnabled = isConversationOrchestratorEnabled();
   const marketingAssetMode = options.marketing_asset_mode ?? "build";
+
+  // Allow HTML form POSTs (e.g. logout buttons) without body parsing
+  app.addContentTypeParser("application/x-www-form-urlencoded", (_request, _payload, done) => {
+    done(null, {});
+  });
 
   // Thread user identity into AsyncLocalStorage so apiClient headers resolve per-user
   app.addHook("preHandler", async (request) => {
@@ -391,29 +384,24 @@ export function buildWebApp(options: WebAppDependencies = {}) {
     return reply.type("text/html; charset=utf-8").send(renderAdminDashboardPage());
   });
 
-  app.get("/admin/customers", async (_request, reply) => {
-    return reply.type("text/html; charset=utf-8").send(renderAdminCustomersPage());
+  app.get("/admin/accounts", async (_request, reply) => {
+    return reply.type("text/html; charset=utf-8").send(renderAdminAccountsPage());
   });
 
-  app.get("/admin/users", async (_request, reply) => {
-    return reply.type("text/html; charset=utf-8").send(renderAdminUsersPage());
+  app.get("/admin/support", async (_request, reply) => {
+    return reply.type("text/html; charset=utf-8").send(renderAdminSupportPage());
   });
 
-  app.get("/admin/connections", async (_request, reply) => {
-    return reply.type("text/html; charset=utf-8").send(renderAdminConnectionsPage());
+  app.get("/admin/finance", async (_request, reply) => {
+    return reply.type("text/html; charset=utf-8").send(renderAdminFinancePage());
   });
 
-  app.get("/admin/reports", async (_request, reply) => {
-    return reply.type("text/html; charset=utf-8").send(renderAdminReportsPage());
-  });
-
-  app.get("/admin/schedules", async (_request, reply) => {
-    return reply.type("text/html; charset=utf-8").send(renderAdminSchedulesPage());
-  });
-
-  app.get("/admin/billing", async (_request, reply) => {
-    return reply.type("text/html; charset=utf-8").send(renderAdminBillingPage());
-  });
+  app.get("/admin/customers", async (_request, reply) => reply.redirect("/admin/accounts"));
+  app.get("/admin/users", async (_request, reply) => reply.redirect("/admin/accounts"));
+  app.get("/admin/connections", async (_request, reply) => reply.redirect("/admin/accounts"));
+  app.get("/admin/reports", async (_request, reply) => reply.redirect("/admin/accounts"));
+  app.get("/admin/schedules", async (_request, reply) => reply.redirect("/admin/accounts"));
+  app.get("/admin/billing", async (_request, reply) => reply.redirect("/admin/finance"));
 
   app.post("/api/chat", async (request, reply) => {
     const parsed = ChatTurnRequestSchema.safeParse(request.body ?? {});
@@ -626,7 +614,7 @@ export function buildWebApp(options: WebAppDependencies = {}) {
       const safeMessage =
         error instanceof ChatStageError
           ? error.message
-          : `Stage error: chat_turn failed. ${error instanceof Error ? error.message : "Unknown error"}`;
+          : `Something went wrong while processing your message — please try again in a moment.`;
       app.log.error(
         {
           err: error,
@@ -1065,6 +1053,82 @@ export function buildWebApp(options: WebAppDependencies = {}) {
       api_base_url: apiBaseUrl,
       method: "GET",
       path: "/admin/overview",
+      additional_headers: username ? { "x-ui-user": username } : undefined,
+      reply
+    });
+  });
+
+  app.get("/api/admin/accounts", async (request, reply) => {
+    const username = getAdminUsername(request.headers.cookie);
+    return proxyToApi({
+      fetch_impl: options.fetch_impl,
+      api_base_url: apiBaseUrl,
+      method: "GET",
+      path: "/admin/accounts",
+      additional_headers: username ? { "x-ui-user": username } : undefined,
+      reply
+    });
+  });
+
+  app.get("/api/admin/accounts/:tenantId", async (request, reply) => {
+    const username = getAdminUsername(request.headers.cookie);
+    const tenantId = encodeURIComponent(String((request.params as { tenantId?: string } | undefined)?.tenantId ?? ""));
+    return proxyToApi({
+      fetch_impl: options.fetch_impl,
+      api_base_url: apiBaseUrl,
+      method: "GET",
+      path: `/admin/accounts/${tenantId}`,
+      additional_headers: username ? { "x-ui-user": username } : undefined,
+      reply
+    });
+  });
+
+  app.get("/api/admin/support", async (request, reply) => {
+    const username = getAdminUsername(request.headers.cookie);
+    return proxyToApi({
+      fetch_impl: options.fetch_impl,
+      api_base_url: apiBaseUrl,
+      method: "GET",
+      path: "/admin/support",
+      additional_headers: username ? { "x-ui-user": username } : undefined,
+      reply
+    });
+  });
+
+  app.post("/api/admin/support", async (request, reply) => {
+    const username = getAdminUsername(request.headers.cookie);
+    return proxyToApi({
+      fetch_impl: options.fetch_impl,
+      api_base_url: apiBaseUrl,
+      method: "POST",
+      path: "/admin/support",
+      body: request.body,
+      additional_headers: username ? { "x-ui-user": username } : undefined,
+      reply
+    });
+  });
+
+  app.post("/api/admin/support/:ticketId/status", async (request, reply) => {
+    const username = getAdminUsername(request.headers.cookie);
+    const ticketId = encodeURIComponent(String((request.params as { ticketId?: string } | undefined)?.ticketId ?? ""));
+    return proxyToApi({
+      fetch_impl: options.fetch_impl,
+      api_base_url: apiBaseUrl,
+      method: "POST",
+      path: `/admin/support/${ticketId}/status`,
+      body: request.body,
+      additional_headers: username ? { "x-ui-user": username } : undefined,
+      reply
+    });
+  });
+
+  app.get("/api/admin/finance", async (request, reply) => {
+    const username = getAdminUsername(request.headers.cookie);
+    return proxyToApi({
+      fetch_impl: options.fetch_impl,
+      api_base_url: apiBaseUrl,
+      method: "GET",
+      path: "/admin/finance",
       additional_headers: username ? { "x-ui-user": username } : undefined,
       reply
     });

@@ -923,6 +923,9 @@ describe("api semantic and run flow", () => {
   });
 
   it("surfaces usage rollups and admin overview for Claritect operations", async () => {
+    const now = new Date();
+    const runStartedAt = new Date(now.getTime() - 3 * 60 * 1000).toISOString();
+    const runFinishedAt = now.toISOString();
     const store = new InMemoryMetadataStore();
     const app = await buildApiApp({
       store,
@@ -967,8 +970,8 @@ describe("api semantic and run flow", () => {
       trigger: "scheduled",
       attempt: 1,
       retry_of_run_id: null,
-      started_at: "2026-03-25T03:45:00.000Z",
-      finished_at: "2026-03-25T03:48:00.000Z",
+      started_at: runStartedAt,
+      finished_at: runFinishedAt,
       query_plan: {
         manual_notes: [],
         planned_changes: [],
@@ -1056,6 +1059,34 @@ describe("api semantic and run flow", () => {
       connected_at: "2026-03-20T00:00:00.000Z"
     });
 
+    await store.upsertSupportTicket({
+      id: "ticket_admin_1",
+      tenant_id: "default",
+      title: "Dashboard clarification mismatch",
+      status: "open",
+      priority: "high",
+      category: "reporting",
+      requester_name: "Kiran",
+      requester_email: "owner@example.com",
+      assignee: "Claritect Ops",
+      latest_message: "Need the executive summary numbers validated.",
+      source: "manual",
+      due_at: "2026-03-30T10:00:00.000Z"
+    });
+
+    await store.upsertInfraCostLedger({
+      id: "cost_admin_1",
+      tenant_id: "default",
+      period_start: "2026-03-01T00:00:00.000Z",
+      period_end: "2026-03-31T23:59:59.000Z",
+      api_cost_usd: 28,
+      worker_cost_usd: 24,
+      storage_cost_usd: 1.4,
+      platform_cost_usd: 6.6,
+      total_cost_usd: 60,
+      notes: "March shared and dedicated runtime cost"
+    });
+
     const usageSummary = await app.inject({
       method: "GET",
       url: "/usage/summary",
@@ -1110,7 +1141,50 @@ describe("api semantic and run flow", () => {
     expect(adminOverview.statusCode).toBe(200);
     expect(adminOverview.json().overview.report_runs).toBe(1);
     expect(adminOverview.json().overview.active_schedules).toBe(1);
+    expect(adminOverview.json().overview.open_tickets).toBe(1);
     expect(adminOverview.json().openrouter_balance.provider).toBe("openrouter");
+
+    const adminAccounts = await app.inject({
+      method: "GET",
+      url: "/admin/accounts",
+      headers: {
+        "x-ui-user": "claritect_admin"
+      }
+    });
+    expect(adminAccounts.statusCode).toBe(200);
+    expect(adminAccounts.json().items).toHaveLength(1);
+    expect(adminAccounts.json().items[0].connection_count).toBe(1);
+    expect(adminAccounts.json().items[0].report_runs).toBe(1);
+    expect(adminAccounts.json().items[0].current_period_report_runs).toBe(1);
+    expect(adminAccounts.json().items[0].active_schedules).toBe(1);
+    expect(adminAccounts.json().items[0].open_tickets).toBe(1);
+    expect(adminAccounts.json().items[0].current_infra_cost_usd).toBe(163.2);
+
+    const adminSupport = await app.inject({
+      method: "GET",
+      url: "/admin/support",
+      headers: {
+        "x-ui-user": "claritect_admin"
+      }
+    });
+    expect(adminSupport.statusCode).toBe(200);
+    expect(adminSupport.json().summary.total).toBe(1);
+    expect(adminSupport.json().items[0].account_name).toBe("Default workspace");
+
+    const adminFinance = await app.inject({
+      method: "GET",
+      url: "/admin/finance",
+      headers: {
+        "x-ui-user": "claritect_admin"
+      }
+    });
+    expect(adminFinance.statusCode).toBe(200);
+    expect(adminFinance.json().summary.accounts).toBe(1);
+    expect(adminFinance.json().summary.current_period_report_runs).toBe(1);
+    expect(adminFinance.json().credit_accounts[0].current_period_report_runs).toBe(1);
+    expect(adminFinance.json().infra_costs[0].total_cost_usd).toBe(163.2);
+    expect(adminFinance.json().balance.provider).toBe("openrouter");
+    expect(adminFinance.json().history.length).toBeGreaterThan(0);
 
     const adminSchedules = await app.inject({
       method: "GET",
@@ -1123,6 +1197,176 @@ describe("api semantic and run flow", () => {
     expect(adminSchedules.json().items).toHaveLength(1);
     expect(adminSchedules.json().items[0].local_run_time).toBe("09:15");
     expect(typeof adminSchedules.json().items[0].next_run_at).toBe("string");
+
+    await app.close();
+  }, 30_000);
+
+  it("auto-syncs support tickets, infra cost, and OpenRouter history for admin surfaces", async () => {
+    const store = new InMemoryMetadataStore();
+    const app = await buildApiApp({
+      store,
+      data_plane: new LocalStubDataPlane({ row_provider: () => [] }),
+      analyst_client: createStubAnalystClient(),
+      query_strategist: createStubQueryStrategistClient(),
+      report_composer: createStubReportComposerClient(),
+      planner_client: createStubPlannerClient()
+    });
+
+    const now = new Date();
+    const startedAt = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), 10, 6, 0, 0)).toISOString();
+    const finishedAt = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), 10, 6, 5, 0)).toISOString();
+
+    await store.upsertPlatformUser({
+      id: "user_claritect_admin",
+      tenant_id: "default",
+      username: "claritect_admin",
+      password_salt: "salt",
+      password_hash: "hash",
+      role: "admin",
+      display_name: "Claritect Admin",
+      is_active: true
+    });
+
+    await store.createReportContract({
+      id: "contract_auto_ops",
+      tenant_id: "default",
+      name: "Auto Ops Contract",
+      audience: "Ops",
+      timezone: "UTC",
+      schedule_cron: "0 9 * * 1",
+      sql_template: "SELECT * FROM analytics.sales",
+      metric_ids: [],
+      dimension_ids: [],
+      insight_mode: "business",
+      scope_clarifications: [],
+      prepared_query_overrides: [],
+      kpi_watchlist: [],
+      guardrails: {
+        evidence_row_cap: 200,
+        max_batches: 5,
+        allowed_relations: ["analytics.sales"],
+        allowed_schemas: ["analytics"],
+        timeout_ms: 10_000,
+        deny_write: true
+      },
+      lifecycle_status: "locked",
+      contract_version: 1
+    });
+
+    await store.createReportRun({
+      id: "run_auto_ops_failed",
+      tenant_id: "default",
+      contract_id: "contract_auto_ops",
+      status: "failed",
+      trigger: "scheduled",
+      attempt: 1,
+      retry_of_run_id: null,
+      started_at: startedAt,
+      finished_at: finishedAt,
+      query_plan: { error: "Warehouse timeout while preparing governed payload." },
+      exec_brief: { error: "Warehouse timeout while preparing governed payload." }
+    });
+
+    const overview = await app.inject({
+      method: "GET",
+      url: "/admin/overview",
+      headers: {
+        "x-ui-user": "claritect_admin"
+      }
+    });
+    expect(overview.statusCode).toBe(200);
+    expect(overview.json().overview.open_tickets).toBeGreaterThanOrEqual(1);
+
+    const accounts = await app.inject({
+      method: "GET",
+      url: "/admin/accounts",
+      headers: {
+        "x-ui-user": "claritect_admin"
+      }
+    });
+    expect(accounts.statusCode).toBe(200);
+    expect(accounts.json().items[0].current_infra_cost_usd).toBeGreaterThan(0);
+    expect(accounts.json().items[0].current_period_report_runs).toBeGreaterThan(0);
+    expect(accounts.json().items[0].open_tickets).toBeGreaterThanOrEqual(1);
+
+    const supportTickets = await store.listSupportTickets();
+    expect(supportTickets.length).toBeGreaterThanOrEqual(1);
+    expect(supportTickets[0].category).toBe("report_run_failure");
+    expect(supportTickets[0].status).toBe("open");
+
+    const infraCosts = await store.listInfraCostLedger();
+    const balanceHistory = await store.listOpenRouterBalanceHistory();
+    expect(infraCosts).toHaveLength(1);
+    expect(balanceHistory.length).toBeGreaterThan(0);
+
+    await app.close();
+  });
+
+  it("supports manual admin ticket creation and status updates", async () => {
+    const store = new InMemoryMetadataStore();
+    const app = await buildApiApp({
+      store,
+      data_plane: new LocalStubDataPlane({ row_provider: () => [] }),
+      analyst_client: createStubAnalystClient(),
+      query_strategist: createStubQueryStrategistClient(),
+      report_composer: createStubReportComposerClient(),
+      planner_client: createStubPlannerClient()
+    });
+
+    await store.upsertPlatformUser({
+      id: "user_claritect_admin",
+      tenant_id: "default",
+      username: "claritect_admin",
+      password_salt: "salt",
+      password_hash: "hash",
+      role: "admin",
+      display_name: "Claritect Admin",
+      is_active: true
+    });
+
+    const createTicket = await app.inject({
+      method: "POST",
+      url: "/admin/support",
+      headers: {
+        "x-ui-user": "claritect_admin"
+      },
+      payload: {
+        tenant_id: "default",
+        title: "Need help validating Growth plan credits",
+        priority: "medium",
+        category: "plan_support",
+        requester_name: "Kiran",
+        requester_email: "owner@example.com",
+        assignee: "Claritect Operations",
+        latest_message: "Please confirm how many report credits are included."
+      }
+    });
+    expect(createTicket.statusCode).toBe(201);
+    expect(createTicket.json().ticket.status).toBe("open");
+
+    const updateTicket = await app.inject({
+      method: "POST",
+      url: `/admin/support/${createTicket.json().ticket.id}/status`,
+      headers: {
+        "x-ui-user": "claritect_admin"
+      },
+      payload: {
+        status: "resolved",
+        latest_message: "Plan credits confirmed with the customer."
+      }
+    });
+    expect(updateTicket.statusCode).toBe(200);
+    expect(updateTicket.json().ticket.status).toBe("resolved");
+
+    const support = await app.inject({
+      method: "GET",
+      url: "/admin/support",
+      headers: {
+        "x-ui-user": "claritect_admin"
+      }
+    });
+    expect(support.statusCode).toBe(200);
+    expect(support.json().items[0].status).toBe("resolved");
 
     await app.close();
   });

@@ -243,11 +243,6 @@ const categories = [
       },
       {
         status: "Open",
-        item: "Professional invoices",
-        details: "Ensure invoices have the expected branding, business details, and customer-facing polish."
-      },
-      {
-        status: "Open",
         item: "Cancellation flow",
         details: "Define and implement the customer offboarding path clearly before charging real accounts."
       },

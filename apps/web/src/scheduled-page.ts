@@ -35,7 +35,30 @@ export function renderScheduledReportsPage(): string {
       .status-mark{display:inline-flex;align-items:center;justify-content:center;min-width:1.05rem;min-height:1.05rem;font-size:1rem;line-height:1;font-weight:800}.status-positive .status-mark,.status-pill.active{color:var(--success)}.status-negative .status-mark,.status-pill.failed{color:var(--danger)}.status-neutral .status-mark,.status-pill.paused,.status-pill.neutral{color:#D7CFE6}
       .open-btn,.toggle-btn{appearance:none;border:1px solid rgba(107,92,138,.28);border-radius:12px;background:rgba(108,58,237,.92);color:#fff;padding:9px 12px;font-weight:700;cursor:pointer}.toggle-btn{background:rgba(34, 25, 56, 0.94);color:#F5F3FF}.toggle-btn.pause{color:#ffd8a8;border-color:rgba(255,196,122,.22);background:rgba(61,40,11,.54)}.toggle-btn.activate{color:var(--success);border-color:rgba(141,240,218,.18);background:rgba(18, 50, 41, 0.46)}.mono{font-family: Inter, "Sohne", "Suisse Intl", sans-serif;align-items:flex-start}.run-actions{width:100%;justify-content:space-between}}
       @media (max-width:640px){.page{padding:10px}.reports-grid{grid-template-columns:1fr}}
+      [data-theme="light"]{--ink:#1A1533;--ink-soft:#3D2E6B;--ink-muted:#6B5B9E;--line:rgba(107,92,138,.22);--shadow:0 24px 60px rgba(80,60,120,.14);--shadow-soft:0 12px 32px rgba(80,60,120,.10)}
+      [data-theme="light"] body{background:radial-gradient(circle at 14% 10%,rgba(108,58,237,.07),transparent 28%),radial-gradient(circle at 88% 8%,rgba(236,72,153,.05),transparent 28%),linear-gradient(180deg,#F4F1FF 0%,#EDE8FF 44%,#E8E2FF 100%);color:#1A1533}
+      [data-theme="light"] body::before{background-image:linear-gradient(to right,rgba(107,92,138,.12) 1px,transparent 1px);mask-image:radial-gradient(circle at 50% 45%,rgba(0,0,0,.5),transparent 88%)}
+      [data-theme="light"] body::after{opacity:.12}
+      [data-theme="light"] .platform-panel{background:linear-gradient(180deg,rgba(244,241,255,.98),rgba(237,232,255,.98));border-color:rgba(107,92,138,.18)}
+      [data-theme="light"] .platform-brand{border-bottom-color:rgba(107,92,138,.18)}
+      [data-theme="light"] .platform-link{color:#2D1F56;background:rgba(244,241,255,.5);border-color:rgba(107,92,138,.18)}
+      [data-theme="light"] .platform-link.active{background:rgba(108,58,237,.88);color:#F5F3FF}
+      [data-theme="light"] .platform-user,[data-theme="light"] .platform-support{background:rgba(255,255,255,.88);border-color:rgba(107,92,138,.18);color:#1A1533}
+      [data-theme="light"] .logout-btn{background:rgba(255,255,255,.94);border-color:rgba(107,92,138,.24);color:#1A1533}
+      [data-theme="light"] .content-shell{background:linear-gradient(180deg,rgba(248,246,255,.98),rgba(242,238,255,.98))}
+      [data-theme="light"] .surface{background:rgba(255,255,255,.72);border-color:rgba(107,92,138,.18)}
+      [data-theme="light"] .tile{background:rgba(255,255,255,.82);border-color:rgba(107,92,138,.20);color:#1A1533}
+      [data-theme="light"] .tile.active{background:rgba(235,228,255,.92)}
+      [data-theme="light"] .stat,[data-theme="light"] .detail-row,[data-theme="light"] .detail-card,[data-theme="light"] .run-item{background:rgba(244,241,255,.72);border-color:rgba(107,92,138,.16)}
+      [data-theme="light"] .empty-state{background:rgba(248,246,255,.96);border-color:rgba(107,92,138,.16)}
+      [data-theme="light"] .badge,[data-theme="light"] .mini-pill,[data-theme="light"] .status-pill{background:rgba(255,255,255,.88);color:#3D2E6B;border-color:rgba(107,92,138,.22)}
+      [data-theme="light"] .open-btn{background:rgba(108,58,237,.88)}
+      [data-theme="light"] .toggle-btn{background:rgba(255,255,255,.88);color:#1A1533}
+      .theme-toggle-btn{display:flex;align-items:center;gap:8px;width:100%;padding:9px 12px;border-radius:14px;border:1px solid rgba(107,92,138,.24);background:rgba(34,25,56,.86);color:#F5F3FF;font-family:Inter,"Sohne","Suisse Intl",sans-serif;font-size:.75rem;font-weight:600;cursor:pointer;transition:background 180ms ease,border-color 180ms ease}
+      .theme-toggle-btn:hover{background:rgba(108,58,237,.14);border-color:rgba(107,92,138,.32)}
+      [data-theme="light"] .theme-toggle-btn{background:rgba(255,255,255,.88);border-color:rgba(107,92,138,.24);color:#1A1533}
     </style>
+    <script>(function(){try{var t=localStorage.getItem("claritect_theme_v1");if(t==="light")document.documentElement.setAttribute("data-theme","light");}catch(e){}})()</script>
   </head>
   <body>
     <div class="page">
@@ -56,6 +79,7 @@ export function renderScheduledReportsPage(): string {
           <div class="platform-footer">
             <div class="platform-user"><div class="platform-user-avatar">@</div><div><small>Customer workspace</small><strong>Claritect User</strong></div></div>
             <div class="platform-support"><span>Support</span><form method="POST" action="/auth/logout"><button class="logout-btn" type="submit">Sign Out</button></form></div>
+            <button id="theme-toggle-btn" class="theme-toggle-btn" type="button"><span id="theme-toggle-icon">☀️</span><span id="theme-toggle-label">Light mode</span></button>
           </div>
         </aside>
         <main class="content-shell">
@@ -73,6 +97,30 @@ export function renderScheduledReportsPage(): string {
         </main>
       </div>
     </div>
+    <script>
+      const THEME_STORAGE_KEY = "claritect_theme_v1";
+      const themeToggleBtnEl = document.getElementById("theme-toggle-btn");
+      const themeToggleIconEl = document.getElementById("theme-toggle-icon");
+      const themeToggleLabelEl = document.getElementById("theme-toggle-label");
+      function applyTheme(theme) {
+        if (theme === "light") {
+          document.documentElement.setAttribute("data-theme", "light");
+          if (themeToggleIconEl) themeToggleIconEl.textContent = "🌙";
+          if (themeToggleLabelEl) themeToggleLabelEl.textContent = "Dark mode";
+        } else {
+          document.documentElement.removeAttribute("data-theme");
+          if (themeToggleIconEl) themeToggleIconEl.textContent = "☀️";
+          if (themeToggleLabelEl) themeToggleLabelEl.textContent = "Light mode";
+        }
+        try { localStorage.setItem(THEME_STORAGE_KEY, theme); } catch(e) {}
+      }
+      applyTheme((function(){try{return localStorage.getItem(THEME_STORAGE_KEY);}catch(e){return null;}})()==="light"?"light":"dark");
+      if (themeToggleBtnEl) {
+        themeToggleBtnEl.addEventListener("click", function() {
+          applyTheme(document.documentElement.getAttribute("data-theme")==="light"?"dark":"light");
+        });
+      }
+    </script>
     <script>
       (() => {
         const gridEl=document.getElementById("reports-grid"), emptyEl=document.getElementById("empty-state"), detailTitleEl=document.getElementById("detail-title"), detailSubtitleEl=document.getElementById("detail-subtitle"), detailBadgeEl=document.getElementById("detail-badge"), detailBodyEl=document.getElementById("detail-body"), detailSurfaceEl=document.getElementById("detail-surface"), gridBadgeEl=document.getElementById("grid-badge");

@@ -13,7 +13,9 @@ import type {
 import type {
   ChatSessionRecord,
   CustomerAccountRecord,
+  InfraCostLedgerRecord,
   MetadataStore,
+  OpenRouterBalanceHistoryRecord,
   PlatformUserRecord,
   RagChunkSearchResult,
   RagChunkUpsertRecord,
@@ -21,6 +23,7 @@ import type {
   ScheduledReportProfileRecord,
   SemanticCollectionName,
   SemanticCollections,
+  SupportTicketRecord,
   SystemStateRecord,
   StoreRequestContext
 } from "./types";
@@ -641,6 +644,183 @@ export class PostgresMetadataStore implements MetadataStore {
     };
   }
 
+  async upsertSupportTicket(
+    payload: Omit<SupportTicketRecord, "created_at" | "updated_at" | "last_activity_at"> & {
+      last_activity_at?: string;
+    }
+  ): Promise<SupportTicketRecord> {
+    const nowIso = new Date().toISOString();
+    const result = await this.pool.query<{
+      id: string;
+      tenant_id: string;
+      payload: SupportTicketRecord;
+      created_at: string;
+      updated_at: string;
+    }>(
+      `
+      INSERT INTO support_tickets (id, tenant_id, payload)
+      VALUES ($1, $2, $3::jsonb)
+      ON CONFLICT (id) DO UPDATE SET
+        tenant_id = EXCLUDED.tenant_id,
+        payload = EXCLUDED.payload,
+        updated_at = NOW()
+      RETURNING id, tenant_id, payload, created_at::text AS created_at, updated_at::text AS updated_at
+      `,
+      [
+        payload.id,
+        payload.tenant_id,
+        JSON.stringify({
+          ...payload,
+          last_activity_at: payload.last_activity_at ?? nowIso
+        })
+      ]
+    );
+
+    const row = result.rows[0];
+    return {
+      ...row.payload,
+      id: row.id,
+      tenant_id: row.tenant_id,
+      created_at: row.created_at,
+      updated_at: row.updated_at,
+      last_activity_at: row.payload.last_activity_at ?? row.updated_at
+    };
+  }
+
+  async listSupportTickets(): Promise<SupportTicketRecord[]> {
+    const result = await this.pool.query<{
+      id: string;
+      tenant_id: string;
+      payload: SupportTicketRecord;
+      created_at: string;
+      updated_at: string;
+    }>(
+      `
+      SELECT id, tenant_id, payload, created_at::text AS created_at, updated_at::text AS updated_at
+      FROM support_tickets
+      ORDER BY updated_at DESC, created_at DESC
+      `
+    );
+
+    return result.rows.map((row) => ({
+      ...row.payload,
+      id: row.id,
+      tenant_id: row.tenant_id,
+      created_at: row.created_at,
+      updated_at: row.updated_at,
+      last_activity_at: row.payload.last_activity_at ?? row.updated_at
+    }));
+  }
+
+  async upsertInfraCostLedger(
+    payload: Omit<InfraCostLedgerRecord, "created_at" | "updated_at">
+  ): Promise<InfraCostLedgerRecord> {
+    const result = await this.pool.query<{
+      id: string;
+      tenant_id: string;
+      payload: InfraCostLedgerRecord;
+      created_at: string;
+      updated_at: string;
+    }>(
+      `
+      INSERT INTO infra_cost_ledger (id, tenant_id, payload)
+      VALUES ($1, $2, $3::jsonb)
+      ON CONFLICT (id) DO UPDATE SET
+        tenant_id = EXCLUDED.tenant_id,
+        payload = EXCLUDED.payload,
+        updated_at = NOW()
+      RETURNING id, tenant_id, payload, created_at::text AS created_at, updated_at::text AS updated_at
+      `,
+      [payload.id, payload.tenant_id, JSON.stringify(payload)]
+    );
+
+    const row = result.rows[0];
+    return {
+      ...row.payload,
+      id: row.id,
+      tenant_id: row.tenant_id,
+      created_at: row.created_at,
+      updated_at: row.updated_at
+    };
+  }
+
+  async listInfraCostLedger(): Promise<InfraCostLedgerRecord[]> {
+    const result = await this.pool.query<{
+      id: string;
+      tenant_id: string;
+      payload: InfraCostLedgerRecord;
+      created_at: string;
+      updated_at: string;
+    }>(
+      `
+      SELECT id, tenant_id, payload, created_at::text AS created_at, updated_at::text AS updated_at
+      FROM infra_cost_ledger
+      ORDER BY updated_at DESC, created_at DESC
+      `
+    );
+
+    return result.rows.map((row) => ({
+      ...row.payload,
+      id: row.id,
+      tenant_id: row.tenant_id,
+      created_at: row.created_at,
+      updated_at: row.updated_at
+    }));
+  }
+
+  async appendOpenRouterBalanceHistory(
+    payload: Omit<OpenRouterBalanceHistoryRecord, "id" | "captured_at">
+  ): Promise<OpenRouterBalanceHistoryRecord> {
+    const recordId = cryptoRandomId();
+    const capturedAt = new Date().toISOString();
+    const result = await this.pool.query<{
+      id: string;
+      payload: OpenRouterBalanceHistoryRecord;
+      created_at: string;
+    }>(
+      `
+      INSERT INTO openrouter_balance_history (id, payload)
+      VALUES ($1, $2::jsonb)
+      RETURNING id, payload, created_at::text AS created_at
+      `,
+      [
+        recordId,
+        JSON.stringify({
+          ...payload,
+          captured_at: capturedAt
+        })
+      ]
+    );
+
+    const row = result.rows[0];
+    return {
+      ...row.payload,
+      id: row.id,
+      captured_at: row.payload.captured_at ?? row.created_at
+    };
+  }
+
+  async listOpenRouterBalanceHistory(limit?: number): Promise<OpenRouterBalanceHistoryRecord[]> {
+    const result = await this.pool.query<{
+      id: string;
+      payload: OpenRouterBalanceHistoryRecord;
+      created_at: string;
+    }>(
+      `
+      SELECT id, payload, created_at::text AS created_at
+      FROM openrouter_balance_history
+      ORDER BY created_at DESC
+      ${typeof limit === "number" ? `LIMIT ${Math.max(0, Math.trunc(limit))}` : ""}
+      `
+    );
+
+    return result.rows.map((row) => ({
+      ...row.payload,
+      id: row.id,
+      captured_at: row.payload.captured_at ?? row.created_at
+    }));
+  }
+
   async listAllReportContracts(): Promise<ReportContract[]> {
     const result = await this.pool.query<{ payload: ReportContract }>(
       `
@@ -947,6 +1127,9 @@ export class PostgresMetadataStore implements MetadataStore {
     const sql = await loadInitialMigrationSql();
     await this.pool.query(sql);
     await this.pool.query(`
+      DROP TABLE IF EXISTS invoice_ledger;
+    `);
+    await this.pool.query(`
       CREATE TABLE IF NOT EXISTS report_contract_versions (
         id BIGSERIAL PRIMARY KEY,
         contract_id TEXT NOT NULL,
@@ -1016,6 +1199,43 @@ export class PostgresMetadataStore implements MetadataStore {
         created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
         updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
       );
+    `);
+    await this.pool.query(`
+      CREATE TABLE IF NOT EXISTS support_tickets (
+        id TEXT PRIMARY KEY,
+        tenant_id TEXT NOT NULL DEFAULT '${DEFAULT_TENANT_ID}',
+        payload JSONB NOT NULL,
+        created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+        updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+      );
+    `);
+    await this.pool.query(`
+      CREATE INDEX IF NOT EXISTS support_tickets_tenant_updated_idx
+        ON support_tickets(tenant_id, updated_at DESC, created_at DESC);
+    `);
+    await this.pool.query(`
+      CREATE TABLE IF NOT EXISTS infra_cost_ledger (
+        id TEXT PRIMARY KEY,
+        tenant_id TEXT NOT NULL DEFAULT '${DEFAULT_TENANT_ID}',
+        payload JSONB NOT NULL,
+        created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+        updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+      );
+    `);
+    await this.pool.query(`
+      CREATE INDEX IF NOT EXISTS infra_cost_ledger_tenant_updated_idx
+        ON infra_cost_ledger(tenant_id, updated_at DESC, created_at DESC);
+    `);
+    await this.pool.query(`
+      CREATE TABLE IF NOT EXISTS openrouter_balance_history (
+        id TEXT PRIMARY KEY,
+        payload JSONB NOT NULL,
+        created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+      );
+    `);
+    await this.pool.query(`
+      CREATE INDEX IF NOT EXISTS openrouter_balance_history_created_idx
+        ON openrouter_balance_history(created_at DESC);
     `);
     await this.pool.query(`
       CREATE TABLE IF NOT EXISTS chat_sessions (

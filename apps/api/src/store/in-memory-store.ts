@@ -1,3 +1,4 @@
+import { randomUUID } from "node:crypto";
 import type {
   ReportContract,
   ReportRun,
@@ -11,7 +12,9 @@ import type {
 import type {
   ChatSessionRecord,
   CustomerAccountRecord,
+  InfraCostLedgerRecord,
   MetadataStore,
+  OpenRouterBalanceHistoryRecord,
   PlatformUserRecord,
   RagChunkSearchResult,
   RagChunkUpsertRecord,
@@ -19,6 +22,7 @@ import type {
   ScheduledReportProfileRecord,
   SemanticCollectionName,
   SemanticCollections,
+  SupportTicketRecord,
   SystemStateRecord,
   StoreRequestContext
 } from "./types";
@@ -45,6 +49,9 @@ export class InMemoryMetadataStore implements MetadataStore {
   private readonly systemStateByTenant = new Map<string, Map<string, Record<string, unknown>>>();
   private readonly usersByTenant = new Map<string, Map<string, PlatformUserRecord>>();
   private readonly customerAccounts = new Map<string, CustomerAccountRecord>();
+  private readonly supportTickets = new Map<string, SupportTicketRecord>();
+  private readonly infraCostLedger = new Map<string, InfraCostLedgerRecord>();
+  private readonly openrouterBalanceHistory: OpenRouterBalanceHistoryRecord[] = [];
   private readonly chatSessionsByTenant = new Map<string, Map<string, ChatSessionRecord[]>>();
   private readonly ragChunksByTenant = new Map<string, Map<string, RagChunkUpsertRecord[]>>();
   private readonly auditLogs: Array<{ tenant_id: string; event_type: string; payload: Record<string, unknown> }> = [];
@@ -311,6 +318,68 @@ export class InMemoryMetadataStore implements MetadataStore {
     return this.customerAccounts.get(tenantId) ?? null;
   }
 
+  async upsertSupportTicket(
+    payload: Omit<SupportTicketRecord, "created_at" | "updated_at" | "last_activity_at"> & {
+      last_activity_at?: string;
+    }
+  ): Promise<SupportTicketRecord> {
+    const existing = this.supportTickets.get(payload.id);
+    const nowIso = new Date().toISOString();
+    const record: SupportTicketRecord = {
+      ...payload,
+      created_at: existing?.created_at ?? nowIso,
+      updated_at: nowIso,
+      last_activity_at: payload.last_activity_at ?? existing?.last_activity_at ?? nowIso
+    };
+    this.supportTickets.set(record.id, record);
+    return record;
+  }
+
+  async listSupportTickets(): Promise<SupportTicketRecord[]> {
+    return Array.from(this.supportTickets.values()).sort(
+      (left, right) => Date.parse(right.last_activity_at) - Date.parse(left.last_activity_at)
+    );
+  }
+
+  async upsertInfraCostLedger(
+    payload: Omit<InfraCostLedgerRecord, "created_at" | "updated_at">
+  ): Promise<InfraCostLedgerRecord> {
+    const existing = this.infraCostLedger.get(payload.id);
+    const nowIso = new Date().toISOString();
+    const record: InfraCostLedgerRecord = {
+      ...payload,
+      created_at: existing?.created_at ?? nowIso,
+      updated_at: nowIso
+    };
+    this.infraCostLedger.set(record.id, record);
+    return record;
+  }
+
+  async listInfraCostLedger(): Promise<InfraCostLedgerRecord[]> {
+    return Array.from(this.infraCostLedger.values()).sort(
+      (left, right) => Date.parse(right.period_end) - Date.parse(left.period_end)
+    );
+  }
+
+  async appendOpenRouterBalanceHistory(
+    payload: Omit<OpenRouterBalanceHistoryRecord, "id" | "captured_at">
+  ): Promise<OpenRouterBalanceHistoryRecord> {
+    const record: OpenRouterBalanceHistoryRecord = {
+      id: randomUUID(),
+      captured_at: new Date().toISOString(),
+      ...payload
+    };
+    this.openrouterBalanceHistory.push(record);
+    return record;
+  }
+
+  async listOpenRouterBalanceHistory(limit?: number): Promise<OpenRouterBalanceHistoryRecord[]> {
+    const sorted = [...this.openrouterBalanceHistory].sort(
+      (left, right) => Date.parse(right.captured_at) - Date.parse(left.captured_at)
+    );
+    return typeof limit === "number" ? sorted.slice(0, Math.max(0, limit)) : sorted;
+  }
+
   async listAllReportContracts(): Promise<ReportContract[]> {
     const contracts: ReportContract[] = [];
     for (const byTenant of this.reportContractsByTenant.values()) {
@@ -444,6 +513,9 @@ export class InMemoryMetadataStore implements MetadataStore {
     this.contractVersionsByTenant.clear();
     this.systemStateByTenant.clear();
     this.usersByTenant.clear();
+    this.supportTickets.clear();
+    this.infraCostLedger.clear();
+    this.openrouterBalanceHistory.length = 0;
     this.chatSessionsByTenant.clear();
     this.ragChunksByTenant.clear();
     this.auditLogs.length = 0;
