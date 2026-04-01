@@ -65,7 +65,7 @@ export function renderGlobalConfigPage(): string {
       .layout {
         display: grid;
         grid-template-columns: 212px 1fr;
-        min-height: calc(100vh - 28px);
+        height: calc(100vh - 28px);
         gap: 14px;
       }
 
@@ -294,6 +294,7 @@ export function renderGlobalConfigPage(): string {
         box-shadow: var(--shadow);
         padding: 16px 20px 20px;
         overflow-y: auto;
+        overflow-x: hidden;
       }
 
       .content-head {

@@ -72,12 +72,13 @@ export function renderConnectionPage(): string {
       .layout {
         display: grid;
         grid-template-columns: 212px 1fr;
-        min-height: calc(100vh - 28px);
+        height: calc(100vh - 28px);
         gap: 14px;
       }
 
       .workspace {
         padding: 0;
+        overflow-y: auto;
       }
 
       .platform-panel {
@@ -1341,6 +1342,13 @@ export function renderConnectionPage(): string {
       }
       .theme-toggle-btn:hover { background: rgba(108, 58, 237, 0.14); border-color: rgba(107, 92, 138, 0.32); }
       [data-theme="light"] .theme-toggle-btn { background: rgba(255, 255, 255, 0.88); border-color: rgba(107, 92, 138, 0.24); color: #1A1533; }
+      [data-theme="light"] .mode-btn {
+        background: rgba(244, 241, 255, 0.82);
+        color: #1A1533;
+        border-color: rgba(107, 92, 138, 0.22);
+      }
+      [data-theme="light"] .mode-btn strong { color: #1A1533; }
+      [data-theme="light"] .mode-btn small { color: #3D2E6B; }
     </style>
     <script>(function(){try{var t=localStorage.getItem("claritect_theme_v1");if(t==="light")document.documentElement.setAttribute("data-theme","light");}catch(e){}})()</script>
   </head>
