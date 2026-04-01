@@ -36,6 +36,7 @@ import {
   listBusinessCaseCandidates
 } from "../services/report-followups";
 import { deliverReportRun } from "../services/delivery";
+import { syncBackofficeDerivedRecords } from "../services/backoffice-sync";
 
 export function registerContractRoutes(
   app: FastifyInstance,
@@ -332,6 +333,9 @@ export function registerContractRoutes(
         ).catch(() => {
           // ignore store errors in error handler
         });
+        await syncBackofficeDerivedRecords(store).catch(() => {
+          // ignore sync errors in background failure handler
+        });
       }
     })();
 
@@ -577,7 +581,7 @@ export function registerContractRoutes(
       frequency: z.enum(["weekly", "monthly", "quarterly"]),
       timezone: z.string().min(1).optional(),
       day_of_week: z.number().int().min(0).max(6).optional(),
-      day_of_month: z.number().int().min(1).max(28).optional(),
+      day_of_month: z.number().int().min(1).max(31).optional(),
       hour_utc: z.number().int().min(0).max(23).default(9),
       minute_utc: z.number().int().min(0).max(59).default(0),
       kpi_watchlist: z.array(KpiWatchlistItemSchema).default([])
@@ -967,13 +971,13 @@ function buildScheduleCron(input: {
 
   if (input.frequency === "monthly") {
     if (typeof input.day_of_month !== "number") {
-      return { ok: false, message: "day_of_month is required for monthly schedules (1-28)." };
+      return { ok: false, message: "day_of_month is required for monthly schedules (1-31). Days 29-31 run on the last available day in shorter months." };
     }
     return { ok: true, cron: `${minute} ${hour} ${input.day_of_month} * *` };
   }
 
   if (typeof input.day_of_month !== "number") {
-    return { ok: false, message: "day_of_month is required for quarterly schedules (1-28)." };
+    return { ok: false, message: "day_of_month is required for quarterly schedules (1-31). Days 29-31 run on the last available day in shorter months." };
   }
 
   return { ok: true, cron: `${minute} ${hour} ${input.day_of_month} 1,4,7,10 *` };

@@ -175,7 +175,6 @@
         flex: 1;
       }
 
-      /* Pricing */
       .pricing-col h3 { margin-bottom: 10px; }
       .plans {
         display: flex;
@@ -224,6 +223,42 @@
         font-size: 9.5px;
         color: #d3c8ec;
         line-height: 1.4;
+      }
+      .benchmark-points {
+        margin-top: 10px;
+        padding: 12px 14px;
+        background: rgba(20, 14, 33, 0.78);
+        border: 1px solid var(--line);
+        border-radius: 14px;
+      }
+      .benchmark-points .eyebrow {
+        font-size: 8px;
+        letter-spacing: 0.12em;
+        text-transform: uppercase;
+        color: var(--muted);
+        margin-bottom: 8px;
+      }
+      .benchmark-points ul {
+        list-style: none;
+        display: grid;
+        gap: 6px;
+      }
+      .benchmark-points li {
+        font-size: 9.25px;
+        color: #e8e1f8;
+        line-height: 1.35;
+        display: flex;
+        gap: 7px;
+        align-items: flex-start;
+      }
+      .benchmark-points li::before {
+        content: "";
+        width: 6px;
+        height: 6px;
+        border-radius: 50%;
+        margin-top: 4px;
+        flex-shrink: 0;
+        background: linear-gradient(135deg, var(--accent-a), var(--accent-b));
       }
 
       /* Comparison */
@@ -389,8 +424,8 @@
     <!-- Value metrics -->
     <section class="values">
       <div class="value-card">
-        <span class="stat">5x</span>
-        <span class="label">Value delivered vs cost</span>
+        <span class="stat">$799</span>
+        <span class="label">One product price per month</span>
       </div>
       <div class="value-card">
         <span class="stat">24/7</span>
@@ -434,41 +469,30 @@
       </div>
     </section>
 
-    <!-- Two columns: Pricing + Comparison -->
+    <!-- Two columns: Benchmark + Comparison -->
     <section class="two-col">
       <div class="pricing-col">
-        <h3 class="section-title">Plans</h3>
+        <h3 class="section-title">Illustrative benchmark</h3>
         <div class="plans">
-          <div class="plan">
-            <div class="plan-price">
-              <strong>$499</strong>
-              <span>/month</span>
-            </div>
-            <div class="plan-info">
-              <div class="plan-name">Starter</div>
-              <div class="plan-desc">Like having a consultant on retainer. One data source, unlimited questions, executive-ready output.</div>
-            </div>
-          </div>
           <div class="plan featured">
             <div class="plan-price">
-              <strong>$1,499</strong>
+              <strong>$799</strong>
               <span>/month</span>
             </div>
             <div class="plan-info">
-              <div class="plan-name">Growth</div>
-              <div class="plan-desc">The analytical firepower of a consulting engagement. Multiple sources, scheduled insights, business cases.</div>
+              <div class="plan-name">Claritect product subscription</div>
+              <div class="plan-desc">One predictable product price for recurring governed reporting, follow-up answers, and decision-ready output.</div>
             </div>
           </div>
-          <div class="plan">
-            <div class="plan-price">
-              <strong>Custom</strong>
-              <span>&nbsp;</span>
-            </div>
-            <div class="plan-info">
-              <div class="plan-name">Enterprise</div>
-              <div class="plan-desc">Multi-team rollout with admin control, custom entitlements, and dedicated support.</div>
-            </div>
-          </div>
+        </div>
+        <div class="benchmark-points">
+          <div class="eyebrow">Scenario assumptions</div>
+          <ul>
+            <li>One recurring executive or business report running every week.</li>
+            <li>Four report runs per month with six scoped questions in each run.</li>
+            <li>Two follow-up clarification cycles per month after the report is delivered.</li>
+            <li>Compared against self-serve AI tooling and a human analyst workflow.</li>
+          </ul>
         </div>
       </div>
 
@@ -478,10 +502,10 @@
           <div class="compare-card winner">
             <div class="compare-card-header">
               <h4>Claritect</h4>
-              <span class="cost">$499/mo</span>
+              <span class="cost">$799/mo</span>
             </div>
             <div class="traits">
-              <span class="trait yes"><span class="dot yes"></span> Unlimited questions</span>
+              <span class="trait yes"><span class="dot yes"></span> Product price, not project billing</span>
               <span class="trait yes"><span class="dot yes"></span> Context retained</span>
               <span class="trait yes"><span class="dot yes"></span> Governed & auditable</span>
               <span class="trait yes"><span class="dot yes"></span> Scheduled insights</span>
@@ -503,11 +527,11 @@
           </div>
           <div class="compare-card">
             <div class="compare-card-header">
-              <h4>External consultants</h4>
+              <h4>Human analyst</h4>
               <span class="cost">$2,400/mo</span>
             </div>
             <div class="traits">
-              <span class="trait"><span class="dot no"></span> Per engagement</span>
+              <span class="trait"><span class="dot no"></span> Per-request labor cost</span>
               <span class="trait"><span class="dot no"></span> Re-briefing needed</span>
               <span class="trait"><span class="dot partial"></span> High quality, slow</span>
               <span class="trait"><span class="dot partial"></span> Manual scheduling</span>
@@ -521,24 +545,24 @@
     <!-- Bottom stats -->
     <section class="bottom-stats">
       <div class="bottom-stat">
-        <strong>5x value</strong>
-        <span class="detail">vs cost of Claritect</span>
-        <span class="context">Consulting-grade insight at a fraction of the cost.</span>
+        <strong>$321 saved</strong>
+        <span class="detail">per month vs AI tools</span>
+        <span class="context">Lower operating cost than stitching together self-serve AI workflows by hand.</span>
+      </div>
+      <div class="bottom-stat">
+        <strong>8 hrs freed</strong>
+        <span class="detail">vs AI tools</span>
+        <span class="context">Less prompt rework, manual cleanup, and context rebuilding every month.</span>
       </div>
       <div class="bottom-stat">
         <strong>22 hrs freed</strong>
-        <span class="detail">vs external consulting</span>
-        <span class="context">Time your team gets back for the work that matters.</span>
+        <span class="detail">vs human analyst</span>
+        <span class="context">Recurring reporting runs without waiting on a fresh analyst cycle each time.</span>
       </div>
       <div class="bottom-stat">
-        <strong>Always ready</strong>
-        <span class="detail">no scheduling needed</span>
-        <span class="context">Ask a question at any time. No engagement letter required.</span>
-      </div>
-      <div class="bottom-stat">
-        <strong>$1,901 saved</strong>
-        <span class="detail">per month vs consulting</span>
-        <span class="context">Over $22K annually you can reinvest in growth.</span>
+        <strong>$1,601 saved</strong>
+        <span class="detail">per month vs human analyst</span>
+        <span class="context">Over $19K annually you can reinvest in growth, hiring, or operations.</span>
       </div>
     </section>
 

@@ -113,6 +113,39 @@ CREATE TABLE IF NOT EXISTS customer_accounts (
   updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 
+CREATE TABLE IF NOT EXISTS support_tickets (
+  id TEXT PRIMARY KEY,
+  tenant_id TEXT NOT NULL DEFAULT 'default',
+  payload JSONB NOT NULL,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+CREATE INDEX IF NOT EXISTS support_tickets_tenant_updated_idx
+  ON support_tickets(tenant_id, updated_at DESC, created_at DESC);
+
+DROP TABLE IF EXISTS invoice_ledger;
+
+CREATE TABLE IF NOT EXISTS infra_cost_ledger (
+  id TEXT PRIMARY KEY,
+  tenant_id TEXT NOT NULL DEFAULT 'default',
+  payload JSONB NOT NULL,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+CREATE INDEX IF NOT EXISTS infra_cost_ledger_tenant_updated_idx
+  ON infra_cost_ledger(tenant_id, updated_at DESC, created_at DESC);
+
+CREATE TABLE IF NOT EXISTS openrouter_balance_history (
+  id TEXT PRIMARY KEY,
+  payload JSONB NOT NULL,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+CREATE INDEX IF NOT EXISTS openrouter_balance_history_created_idx
+  ON openrouter_balance_history(created_at DESC);
+
 CREATE TABLE IF NOT EXISTS chat_sessions (
   id TEXT PRIMARY KEY,
   tenant_id TEXT NOT NULL DEFAULT 'default',

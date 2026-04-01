@@ -187,6 +187,29 @@ describe("web chat interface", () => {
     expect(adminPage.body).toContain("Claritect | Admin dashboard");
     expect(adminPage.body).toContain("Admin console");
 
+    const adminAccountsPage = await app.inject({ method: "GET", url: "/admin/accounts" });
+    expect(adminAccountsPage.statusCode).toBe(200);
+    expect(adminAccountsPage.body).toContain("Claritect | Accounts");
+    expect(adminAccountsPage.body).toContain("Customer operating table");
+
+    const adminSupportPage = await app.inject({ method: "GET", url: "/admin/support" });
+    expect(adminSupportPage.statusCode).toBe(200);
+    expect(adminSupportPage.body).toContain("Claritect | Support");
+    expect(adminSupportPage.body).toContain("Support ticket system");
+
+    const adminFinancePage = await app.inject({ method: "GET", url: "/admin/finance" });
+    expect(adminFinancePage.statusCode).toBe(200);
+    expect(adminFinancePage.body).toContain("Claritect | Finance");
+    expect(adminFinancePage.body).toContain("OpenRouter balance history");
+
+    const legacyAdminCustomers = await app.inject({ method: "GET", url: "/admin/customers" });
+    expect(legacyAdminCustomers.statusCode).toBe(302);
+    expect(legacyAdminCustomers.headers.location).toBe("/admin/accounts");
+
+    const legacyAdminBilling = await app.inject({ method: "GET", url: "/admin/billing" });
+    expect(legacyAdminBilling.statusCode).toBe(302);
+    expect(legacyAdminBilling.headers.location).toBe("/admin/finance");
+
     await app.close();
   }, 20000);
 
@@ -2605,7 +2628,7 @@ describe("web chat interface", () => {
     });
 
     expect(response.statusCode).toBe(200);
-    expect(response.json().assistant_message).toContain("Stage error: conversation_response failed.");
+    expect(response.json().assistant_message).toContain("Something went wrong while processing your message");
 
     await app.close();
   });
@@ -2843,7 +2866,7 @@ describe("web chat interface", () => {
     });
 
     expect(response.statusCode).toBe(200);
-    expect(response.json().assistant_message).toContain("Stage error: conversation_response failed.");
+    expect(response.json().assistant_message).toContain("Something went wrong while processing your message");
     expect(response.json().state.pending_run_id).toBe("run_web_test");
     expect(conversationCalls).toBe(1);
 
@@ -5410,7 +5433,7 @@ describe("web chat interface", () => {
     });
 
     expect(response.statusCode).toBe(200);
-    expect(response.json().assistant_message).toContain("Stage error: orchestrator_decision failed.");
+    expect(response.json().assistant_message).toContain("Something went wrong while processing your message");
     expect(response.json().state.scope_clarification_pending).toBe(false);
     expect(response.json().state.prep_pending).toBe(false);
 

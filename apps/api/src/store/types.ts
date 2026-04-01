@@ -60,6 +60,53 @@ export type CustomerAccountRecord = {
   updated_at: string;
 };
 
+export type SupportTicketStatus = "open" | "pending" | "resolved" | "closed";
+export type SupportTicketPriority = "low" | "medium" | "high" | "urgent";
+
+export type SupportTicketRecord = {
+  id: string;
+  tenant_id: string;
+  title: string;
+  status: SupportTicketStatus;
+  priority: SupportTicketPriority;
+  category: string;
+  requester_name: string | null;
+  requester_email: string | null;
+  assignee: string | null;
+  latest_message: string;
+  source: "email" | "chat" | "manual" | "system";
+  created_at: string;
+  updated_at: string;
+  last_activity_at: string;
+  due_at: string | null;
+};
+
+export type InfraCostLedgerRecord = {
+  id: string;
+  tenant_id: string;
+  period_start: string;
+  period_end: string;
+  api_cost_usd: number;
+  worker_cost_usd: number;
+  storage_cost_usd: number;
+  platform_cost_usd: number;
+  total_cost_usd: number;
+  notes: string;
+  created_at: string;
+  updated_at: string;
+};
+
+export type OpenRouterBalanceHistoryRecord = {
+  id: string;
+  provider: "openrouter";
+  remaining_credits: number | null;
+  total_credits: number | null;
+  used_credits: number | null;
+  source: "credits" | "key" | "unavailable";
+  stale_reason: string | null;
+  captured_at: string;
+};
+
 export type SystemStateRecord = {
   state_key: string;
   tenant_id: string;
@@ -174,6 +221,23 @@ export interface MetadataStore {
   ): Promise<CustomerAccountRecord>;
   listCustomerAccounts(): Promise<CustomerAccountRecord[]>;
   getCustomerAccountByTenantId(tenantId: string): Promise<CustomerAccountRecord | null>;
+
+  upsertSupportTicket(
+    payload: Omit<SupportTicketRecord, "created_at" | "updated_at" | "last_activity_at"> & {
+      last_activity_at?: string;
+    }
+  ): Promise<SupportTicketRecord>;
+  listSupportTickets(): Promise<SupportTicketRecord[]>;
+
+  upsertInfraCostLedger(
+    payload: Omit<InfraCostLedgerRecord, "created_at" | "updated_at">
+  ): Promise<InfraCostLedgerRecord>;
+  listInfraCostLedger(): Promise<InfraCostLedgerRecord[]>;
+
+  appendOpenRouterBalanceHistory(
+    payload: Omit<OpenRouterBalanceHistoryRecord, "id" | "captured_at">
+  ): Promise<OpenRouterBalanceHistoryRecord>;
+  listOpenRouterBalanceHistory(limit?: number): Promise<OpenRouterBalanceHistoryRecord[]>;
 
   listAllReportContracts(): Promise<ReportContract[]>;
   listAllReportRuns(): Promise<ReportRun[]>;

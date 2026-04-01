@@ -3,6 +3,7 @@ import { z } from "zod";
 import type { MetadataStore } from "../store";
 import { resolveRequestContext } from "../security/request-context";
 import { fetchOpenRouterBalance } from "../services/openrouter-balance";
+import { persistOpenRouterBalanceSnapshot } from "../services/backoffice-sync";
 import type { UserConnectionRegistry } from "../dataplane/user-connection-registry";
 
 const QueryLogSchema = z.object({
@@ -189,6 +190,7 @@ export function registerUsageRoutes(
     }
 
     const balance = await fetchOpenRouterBalance();
+    await persistOpenRouterBalanceSnapshot(store, balance);
 
     return reply.code(200).send({
       balance,

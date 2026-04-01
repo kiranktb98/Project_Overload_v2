@@ -686,7 +686,64 @@ export function renderGlobalConfigPage(): string {
         .platform-panel { display: none; }
         .content { border-left: 1px solid var(--line); border-radius: 0; }
       }
+
+      [data-theme="light"] {
+        --ink: #1A1533;
+        --ink-soft: #3D2E6B;
+        --ink-muted: #6B5B9E;
+        --line: rgba(107, 92, 138, 0.22);
+        --shadow: 0 24px 60px rgba(80, 60, 120, 0.14);
+        --shadow-soft: 0 12px 32px rgba(80, 60, 120, 0.10);
+      }
+      [data-theme="light"] body {
+        background:
+          radial-gradient(circle at 14% 10%, rgba(108, 58, 237, 0.07), transparent 28%),
+          radial-gradient(circle at 88% 8%, rgba(236, 72, 153, 0.05), transparent 28%),
+          linear-gradient(180deg, #F4F1FF 0%, #EDE8FF 44%, #E8E2FF 100%);
+        color: #1A1533;
+      }
+      [data-theme="light"] body::before {
+        background-image: linear-gradient(to right, rgba(107, 92, 138, 0.12) 1px, transparent 1px);
+        mask-image: radial-gradient(circle at 50% 45%, rgba(0, 0, 0, 0.5), transparent 88%);
+      }
+      [data-theme="light"] body::after { opacity: 0.12; }
+      [data-theme="light"] .platform-panel {
+        background: linear-gradient(180deg, rgba(244, 241, 255, 0.98), rgba(237, 232, 255, 0.98));
+        border-color: rgba(107, 92, 138, 0.18);
+      }
+      [data-theme="light"] .platform-brand { border-bottom-color: rgba(107, 92, 138, 0.18); }
+      [data-theme="light"] .platform-link { color: #2D1F56; background: rgba(244, 241, 255, 0.5); border-color: rgba(107, 92, 138, 0.18); }
+      [data-theme="light"] .platform-link.active { background: rgba(108, 58, 237, 0.88); color: #F5F3FF; }
+      [data-theme="light"] .platform-user,
+      [data-theme="light"] .platform-support { background: rgba(255, 255, 255, 0.88); border-color: rgba(107, 92, 138, 0.18); color: #1A1533; }
+      [data-theme="light"] .logout-btn { background: rgba(255, 255, 255, 0.94); border-color: rgba(107, 92, 138, 0.24); color: #1A1533; }
+      [data-theme="light"] .content {
+        background: linear-gradient(180deg, rgba(248, 246, 255, 0.98), rgba(242, 238, 255, 0.98));
+        border-color: rgba(107, 92, 138, 0.18);
+      }
+      [data-theme="light"] .section {
+        background: linear-gradient(160deg, rgba(244, 241, 255, 0.86), rgba(240, 236, 255, 0.90));
+        border-color: rgba(107, 92, 138, 0.18);
+      }
+      [data-theme="light"] textarea, [data-theme="light"] input[type="text"] {
+        background: rgba(248, 246, 255, 0.88);
+        color: #1A1533;
+        border-color: rgba(107, 92, 138, 0.28);
+      }
+      [data-theme="light"] .badge { background: rgba(255, 255, 255, 0.88); color: #3D2E6B; border-color: rgba(107, 92, 138, 0.22); }
+      .theme-toggle-btn {
+        display: flex; align-items: center; gap: 8px; width: 100%;
+        padding: 9px 12px; border-radius: 14px;
+        border: 1px solid rgba(107, 92, 138, 0.24);
+        background: rgba(34, 25, 56, 0.86); color: #F5F3FF;
+        font-family: Inter, "Sohne", "Suisse Intl", sans-serif;
+        font-size: 0.75rem; font-weight: 600; cursor: pointer;
+        transition: background 180ms ease, border-color 180ms ease;
+      }
+      .theme-toggle-btn:hover { background: rgba(108, 58, 237, 0.14); border-color: rgba(107, 92, 138, 0.32); }
+      [data-theme="light"] .theme-toggle-btn { background: rgba(255, 255, 255, 0.88); border-color: rgba(107, 92, 138, 0.24); color: #1A1533; }
     </style>
+    <script>(function(){try{var t=localStorage.getItem("claritect_theme_v1");if(t==="light")document.documentElement.setAttribute("data-theme","light");}catch(e){}})()</script>
   </head>
   <body>
     <div class="page">
@@ -724,6 +781,10 @@ export function renderGlobalConfigPage(): string {
                 <button type="submit" class="logout-btn">Sign Out</button>
               </form>
             </div>
+            <button id="theme-toggle-btn" class="theme-toggle-btn" type="button">
+              <span id="theme-toggle-icon">☀️</span>
+              <span id="theme-toggle-label">Light mode</span>
+            </button>
           </div>
         </aside>
 
@@ -799,6 +860,30 @@ export function renderGlobalConfigPage(): string {
       </div>
     </div>
 
+    <script>
+      const THEME_STORAGE_KEY = "claritect_theme_v1";
+      const themeToggleBtnEl = document.getElementById("theme-toggle-btn");
+      const themeToggleIconEl = document.getElementById("theme-toggle-icon");
+      const themeToggleLabelEl = document.getElementById("theme-toggle-label");
+      function applyTheme(theme) {
+        if (theme === "light") {
+          document.documentElement.setAttribute("data-theme", "light");
+          if (themeToggleIconEl) themeToggleIconEl.textContent = "🌙";
+          if (themeToggleLabelEl) themeToggleLabelEl.textContent = "Dark mode";
+        } else {
+          document.documentElement.removeAttribute("data-theme");
+          if (themeToggleIconEl) themeToggleIconEl.textContent = "☀️";
+          if (themeToggleLabelEl) themeToggleLabelEl.textContent = "Light mode";
+        }
+        try { localStorage.setItem(THEME_STORAGE_KEY, theme); } catch(e) {}
+      }
+      applyTheme((function(){try{return localStorage.getItem(THEME_STORAGE_KEY);}catch(e){return null;}})()==="light"?"light":"dark");
+      if (themeToggleBtnEl) {
+        themeToggleBtnEl.addEventListener("click", function() {
+          applyTheme(document.documentElement.getAttribute("data-theme")==="light"?"dark":"light");
+        });
+      }
+    </script>
     <script>
       (() => {
         /* Business Context */

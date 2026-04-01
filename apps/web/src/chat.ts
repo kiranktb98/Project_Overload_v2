@@ -3360,7 +3360,7 @@ async function executePendingQuery(
     return {
       assistant_message: [
         `Query completed. Query ID: ${queryId}.`,
-        `Rows returned: ${result.row_count}. Elapsed: ${elapsedMs}ms.`,
+        `Rows returned: ${result.row_count}. Elapsed: ${formatElapsed(elapsedMs)}.`,
         `Executed SQL: ${summarizeSql(result.governed_sql)}`,
         `${warnings}`.trim(),
         `Preview:\n${JSON.stringify(preview, null, 2)}`
@@ -3457,7 +3457,7 @@ async function executeNaturalSimpleQuery(
       `Query completed. Query ID: ${queryId}.`,
       summary,
       method,
-      `Elapsed: ${elapsedMs}ms.`,
+      `Elapsed: ${formatElapsed(elapsedMs)}.`,
       `${warnings}`.trim()
     ]
       .filter((line) => line.length > 0)
@@ -8462,7 +8462,7 @@ async function executeLlmRoutedSingleQuery(
       `Query completed. Query ID: ${queryId}.`,
       summary,
       method,
-      `Elapsed: ${elapsedMs}ms.`,
+      `Elapsed: ${formatElapsed(elapsedMs)}.`,
       `${warnings}`.trim()
     ]
       .filter((line) => line.length > 0)
@@ -10307,6 +10307,11 @@ function buildStateContext(state: ChatState): string {
 // ---------------------------------------------------------------------------
 // Parsing helpers
 // ---------------------------------------------------------------------------
+
+function formatElapsed(ms: number): string {
+  if (ms < 60_000) return `${(ms / 1000).toFixed(1)}s`;
+  return `${(ms / 60_000).toFixed(1)} min`;
+}
 
 function summarizeSql(sql: string): string {
   const compact = sql.replace(/\s+/g, " ").trim();
