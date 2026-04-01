@@ -56,7 +56,7 @@ const SHARED_STYLE = `
   }
 
   .page { width: 100%; padding: 14px; }
-  .layout { display: grid; grid-template-columns: 236px minmax(0, 1fr); gap: 14px; min-height: calc(100vh - 28px); }
+  .layout { display: grid; grid-template-columns: 236px minmax(0, 1fr); gap: 14px; height: calc(100vh - 28px); }
   .shell-card {
     border: 1px solid var(--line);
     border-radius: 28px;
@@ -68,6 +68,7 @@ const SHARED_STYLE = `
   }
   .sidebar, .content { position: relative; }
   .sidebar { display: flex; flex-direction: column; padding: 16px 15px 14px; }
+  .content { overflow-y: auto; }
   .sidebar::before, .content::before {
     content: "";
     position: absolute;

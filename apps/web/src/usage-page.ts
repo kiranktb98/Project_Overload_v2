@@ -65,7 +65,7 @@ export function renderUsageMetricsPage(): string {
       .layout {
         display: grid;
         grid-template-columns: 212px 1fr;
-        min-height: calc(100vh - 28px);
+        height: calc(100vh - 28px);
         gap: 14px;
       }
 
@@ -293,6 +293,7 @@ export function renderUsageMetricsPage(): string {
           radial-gradient(circle at 100% 0%, rgba(108, 58, 237, 0.16), transparent 24%);
         box-shadow: var(--shadow);
         padding: 20px 22px 22px;
+        overflow-y: auto;
       }
 
       .content-head {
@@ -442,6 +443,11 @@ export function renderUsageMetricsPage(): string {
       }
       .theme-toggle-btn:hover { background: rgba(108, 58, 237, 0.14); border-color: rgba(107, 92, 138, 0.32); }
       [data-theme="light"] .theme-toggle-btn { background: rgba(255, 255, 255, 0.88); border-color: rgba(107, 92, 138, 0.24); color: #1A1533; }
+      [data-theme="light"] .table-wrap {
+        background: rgba(248, 246, 255, 0.82);
+        border-color: rgba(107, 92, 138, 0.18);
+      }
+      [data-theme="light"] .table-wrap h2 { color: #1A1533; }
     </style>
     <script>(function(){try{var t=localStorage.getItem("claritect_theme_v1");if(t==="light")document.documentElement.setAttribute("data-theme","light");}catch(e){}})()</script>
   </head>
