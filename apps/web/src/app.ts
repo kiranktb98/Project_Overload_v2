@@ -38,6 +38,7 @@ import {
   renderAdminLoginPage,
   renderAdminSupportPage
 } from "./admin-page";
+import { HELP_WIDGET_STYLES, renderHelpWidget } from "./help-widget";
 
 const DB_CONNECTION_GUIDE_HTML = readFileSync(
   new URL("../../../docs/DB_CONNECTION_GUIDE.html", import.meta.url),
@@ -364,10 +365,6 @@ export function buildWebApp(options: WebAppDependencies = {}) {
     return reply.type("text/html; charset=utf-8").send(renderMarketingPricingPage());
   });
 
-  app.get("/app", async (_request, reply) => {
-    return reply.type("text/html; charset=utf-8").send(renderChatPage());
-  });
-
   app.get("/connect/guide", async (_request, reply) => {
     return reply.type("text/html; charset=utf-8").send(DB_CONNECTION_GUIDE_HTML);
   });
@@ -380,20 +377,121 @@ export function buildWebApp(options: WebAppDependencies = {}) {
     return reply.type("text/html; charset=utf-8").send(AI_DISCOVERABILITY_PLAN_HTML);
   });
 
+  // ── Help chat ──────────────────────────────────────────────────────────────
+  const HELP_SYSTEM_PROMPT = `You are the Claritect onboarding assistant — a concise, friendly expert on Claritect.
+
+Claritect is a decision intelligence platform. Users connect their databases, govern which tables are accessible, then query them through natural language chat. The AI generates SQL, executes it read-only, and returns analysed results and reports. No SQL knowledge required.
+
+## Onboarding flow (always 3 steps)
+1. Source — pick database type, enter connection details, test and connect
+2. Governance — choose which tables go on the allowlist; Claritect catalogues them
+3. Activate — run a safe query to confirm access, then submit
+
+## Supported databases
+- Postgres (and Neon, Supabase, RDS, Heroku)
+- MySQL (and RDS MySQL, PlanetScale)
+- Snowflake — always encrypted, no SSL config needed
+- BigQuery — always encrypted, no SSL config needed
+
+## SSL / TLS (Postgres and MySQL only)
+- Auto: tries TLS first, falls back gracefully — use for all cloud databases
+- Require: strict TLS enforcement — use for production
+- Off: no encryption — local/dev only, never for real data
+- Custom CA certificate: only needed for corporate SSL inspection proxies (Zscaler, Netskope etc.) or self-hosted databases with a private CA
+
+## Common SSL errors
+- "self signed certificate in certificate chain" → corporate proxy intercepting TLS; paste the corporate CA certificate
+- "DEPTH_ZERO_SELF_SIGNED_CERT" → self-signed cert with no CA; switch to Off for local dev
+- "The server does not support SSL connections" → switch SSL mode to Off (local/dev only)
+- "certificate has expired" → the database certificate needs renewal
+
+## Governance
+Users select which tables Claritect can see. Only allowlisted tables are ever queried. Claritect enforces SELECT-only, read-only access — it can never modify data.
+
+## Chat explorer
+After activation, users open the Chat Explorer and ask questions in plain English. Claritect figures out which tables to query, runs the SQL, and returns an AI-generated analysis with numbers, trends, and recommendations.
+
+## Scheduled reports
+Users can schedule any report to run automatically (daily, weekly, monthly) and receive it as HTML or PDF.
+
+## Tone
+- Short, direct answers — 2–4 sentences when possible
+- Use bullet points for steps or options
+- If the question is outside Claritect (e.g. how to configure their database server), briefly answer then redirect back to Claritect
+- Never make up features that don't exist
+- If genuinely unsure, say so and point to /connect/guide or /connect/tls-guide`;
+
+  const HelpChatSchema = z.object({
+    message: z.string().trim().min(1).max(2000),
+    history: z.array(z.object({
+      role: z.enum(["user", "assistant"]),
+      content: z.string().trim().min(1).max(4000)
+    })).max(16).default([])
+  });
+
+  app.post("/api/help/chat", async (request, reply) => {
+    const body = HelpChatSchema.parse(request.body);
+    const openrouterKey = process.env.OPENROUTER_API_KEY;
+    if (!openrouterKey) {
+      return reply.code(503).send({ reply: "Help chat is not configured. Check your guides at /connect/guide." });
+    }
+
+    const messages = [
+      { role: "system", content: HELP_SYSTEM_PROMPT },
+      ...body.history.map((h) => ({ role: h.role, content: h.content })),
+      { role: "user", content: body.message }
+    ];
+
+    const response = await fetch("https://openrouter.ai/api/v1/chat/completions", {
+      method: "POST",
+      headers: {
+        "Authorization": `Bearer ${openrouterKey}`,
+        "Content-Type": "application/json",
+        "HTTP-Referer": process.env.OPENROUTER_APP_URL ?? "https://claritect.app",
+        "X-Title": process.env.OPENROUTER_APP_NAME ?? "Claritect"
+      },
+      body: JSON.stringify({
+        model: "anthropic/claude-haiku-4-5-20251001",
+        messages,
+        max_tokens: 512,
+        temperature: 0.4
+      }),
+      signal: AbortSignal.timeout(15000)
+    });
+
+    if (!response.ok) {
+      return reply.code(502).send({ reply: "Couldn't reach the assistant right now. Try the guides at /connect/guide." });
+    }
+
+    const data = await response.json() as { choices?: Array<{ message?: { content?: string } }> };
+    const text = data.choices?.[0]?.message?.content?.trim() ?? "Sorry, I didn't get a response. Try rephrasing your question.";
+    return { reply: text };
+  });
+
+  function withHelpWidget(html: string): string {
+    return html
+      .replace("</style>", `${HELP_WIDGET_STYLES}</style>`)
+      .replace("</body>", `${renderHelpWidget()}</body>`);
+  }
+
   app.get("/connect", async (_request, reply) => {
-    return reply.type("text/html; charset=utf-8").send(renderConnectionPage());
+    return reply.type("text/html; charset=utf-8").send(withHelpWidget(renderConnectionPage()));
   });
 
   app.get("/usage", async (_request, reply) => {
-    return reply.type("text/html; charset=utf-8").send(renderUsageMetricsPage());
+    return reply.type("text/html; charset=utf-8").send(withHelpWidget(renderUsageMetricsPage()));
   });
 
   app.get("/config", async (_request, reply) => {
-    return reply.type("text/html; charset=utf-8").send(renderGlobalConfigPage());
+    return reply.type("text/html; charset=utf-8").send(withHelpWidget(renderGlobalConfigPage()));
   });
 
   app.get("/scheduled", async (_request, reply) => {
-    return reply.type("text/html; charset=utf-8").send(renderScheduledReportsPage());
+    return reply.type("text/html; charset=utf-8").send(withHelpWidget(renderScheduledReportsPage()));
+  });
+
+  app.get("/app", async (_request, reply) => {
+    return reply.type("text/html; charset=utf-8").send(withHelpWidget(renderChatPage()));
   });
 
   app.get("/admin", async (_request, reply) => {
