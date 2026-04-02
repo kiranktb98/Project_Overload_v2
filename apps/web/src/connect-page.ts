@@ -1639,7 +1639,7 @@ export function renderConnectionPage(): string {
                 <p class="tls-guidance-copy">Only needed if your database team gave you a custom root CA, or your corporate network intercepts TLS. Leave empty for Supabase, Neon, RDS, PlanetScale, and most cloud databases.</p>
                 <label for="tls-ca-pem">CA Certificate (PEM)</label>
                 <textarea id="tls-ca-pem" placeholder="-----BEGIN CERTIFICATE-----&#10;...&#10;-----END CERTIFICATE-----"></textarea>
-                <p class="muted" id="advanced-tls-help">Paste your org or database root CA certificate here. <a href="/connect/guide#tls-ca-corporate" target="_blank" rel="noreferrer">See the TLS guide</a>.</p>
+                <p class="muted" id="advanced-tls-help">Paste your org or database root CA certificate here. <a href="/connect/tls-guide" target="_blank" rel="noreferrer">See the full SSL / TLS guide</a>.</p>
               </div>
             </div>
 

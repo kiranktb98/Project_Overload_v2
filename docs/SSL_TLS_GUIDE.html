@@ -1,0 +1,666 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <title>SSL / TLS Guide — Claritect</title>
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <style>
+      :root {
+        --bg: #08142f;
+        --bg-2: #0d2148;
+        --card: #102754;
+        --card-2: #0f234d;
+        --text: #e8eefc;
+        --muted: #b7c5ea;
+        --accent: #6d7dff;
+        --accent-2: #78b4ff;
+        --good: #73e2a7;
+        --warn: #ffd166;
+        --danger: #ff7b7b;
+        --border: rgba(140, 173, 255, 0.22);
+      }
+
+      * { box-sizing: border-box; }
+      body {
+        margin: 0;
+        font-family: "Segoe UI", Arial, sans-serif;
+        background:
+          radial-gradient(circle at top right, rgba(109, 125, 255, 0.24), transparent 28%),
+          radial-gradient(circle at top left, rgba(120, 180, 255, 0.18), transparent 24%),
+          linear-gradient(180deg, var(--bg), #071126 68%);
+        color: var(--text);
+        line-height: 1.6;
+      }
+
+      .page {
+        max-width: 900px;
+        margin: 0 auto;
+        padding: 44px 40px 72px;
+      }
+
+      /* ── Hero ── */
+      .hero {
+        padding: 28px 30px;
+        border: 1px solid var(--border);
+        border-radius: 24px;
+        background: linear-gradient(145deg, rgba(16, 39, 84, 0.96), rgba(12, 28, 63, 0.94));
+        box-shadow: 0 20px 48px rgba(0, 0, 0, 0.24);
+        margin-bottom: 32px;
+      }
+      .hero-brand {
+        display: flex;
+        align-items: center;
+        gap: 14px;
+        margin-bottom: 12px;
+      }
+      .hero-brand img { width: 76px; height: 32px; object-fit: contain; display: block; }
+
+      /* ── Nav / TOC ── */
+      .toc {
+        background: rgba(16, 39, 84, 0.55);
+        border: 1px solid var(--border);
+        border-radius: 16px;
+        padding: 18px 22px;
+        margin-bottom: 32px;
+      }
+      .toc-title { font-size: 11px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.1em; color: var(--accent-2); margin-bottom: 10px; }
+      .toc ol { margin: 0; padding: 0 0 0 18px; }
+      .toc li { margin-bottom: 5px; }
+      .toc a { color: var(--accent-2); text-decoration: none; font-size: 14px; }
+      .toc a:hover { text-decoration: underline; }
+
+      /* ── Typography ── */
+      h1, h2, h3 { margin: 0 0 12px; line-height: 1.25; }
+      h1 { font-size: 32px; }
+      h2 { font-size: 22px; margin-top: 44px; padding-top: 16px; border-top: 1px solid rgba(140, 173, 255, 0.14); }
+      h3 { font-size: 16px; margin-top: 24px; color: var(--accent-2); }
+      p, li { color: var(--muted); }
+      strong { color: var(--text); }
+
+      a { color: var(--accent-2); }
+
+      code {
+        font-family: Consolas, "Courier New", monospace;
+        background: rgba(4, 13, 33, 0.55);
+        border: 1px solid rgba(120, 180, 255, 0.18);
+        border-radius: 6px;
+        padding: 2px 7px;
+        color: #f3f7ff;
+        font-size: 0.88em;
+      }
+      pre {
+        margin: 14px 0;
+        padding: 16px 18px;
+        background: rgba(5, 14, 35, 0.78);
+        border: 1px solid rgba(120, 180, 255, 0.18);
+        border-radius: 14px;
+        overflow-x: auto;
+        color: #f2f6ff;
+        font-size: 13px;
+        line-height: 1.6;
+      }
+
+      ol, ul { margin: 10px 0 0 20px; padding: 0; }
+      li + li { margin-top: 5px; }
+
+      /* ── Cards / Panels ── */
+      .card {
+        background: linear-gradient(160deg, var(--card), var(--card-2));
+        border: 1px solid var(--border);
+        border-radius: 18px;
+        padding: 18px 20px 16px;
+      }
+
+      .grid-3 {
+        display: grid;
+        grid-template-columns: repeat(3, minmax(0, 1fr));
+        gap: 14px;
+        margin-top: 18px;
+      }
+      .grid-2 {
+        display: grid;
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+        gap: 14px;
+        margin-top: 18px;
+      }
+
+      /* ── Pills ── */
+      .pill {
+        display: inline-block;
+        padding: 4px 10px;
+        border-radius: 999px;
+        background: rgba(109, 125, 255, 0.16);
+        color: #dce4ff;
+        font-size: 11px;
+        font-weight: 700;
+        text-transform: uppercase;
+        letter-spacing: 0.08em;
+        margin-bottom: 8px;
+      }
+      .pill-good { background: rgba(115, 226, 167, 0.16); color: #b5f5d3; }
+      .pill-warn { background: rgba(255, 209, 102, 0.16); color: #ffe599; }
+      .pill-danger { background: rgba(255, 123, 123, 0.16); color: #ffbdbd; }
+
+      /* ── Callout boxes ── */
+      .note {
+        margin: 14px 0;
+        padding: 13px 16px;
+        border-radius: 13px;
+        border: 1px solid rgba(255, 209, 102, 0.28);
+        background: rgba(255, 209, 102, 0.08);
+        color: #fff1c9;
+        font-size: 14px;
+      }
+      .tip {
+        margin: 14px 0;
+        padding: 13px 16px;
+        border-radius: 13px;
+        border: 1px solid rgba(115, 226, 167, 0.28);
+        background: rgba(115, 226, 167, 0.08);
+        color: #d5faec;
+        font-size: 14px;
+      }
+      .danger-box {
+        margin: 14px 0;
+        padding: 13px 16px;
+        border-radius: 13px;
+        border: 1px solid rgba(255, 123, 123, 0.28);
+        background: rgba(255, 123, 123, 0.08);
+        color: #ffdddd;
+        font-size: 14px;
+      }
+
+      /* ── Decision tree ── */
+      .decision-tree {
+        margin-top: 18px;
+        border-left: 3px solid rgba(109, 125, 255, 0.4);
+        padding-left: 22px;
+      }
+      .dt-node { margin-bottom: 16px; }
+      .dt-q { font-weight: 600; color: var(--text); margin-bottom: 6px; font-size: 14px; }
+      .dt-branch { margin-left: 18px; font-size: 13px; color: var(--muted); margin-bottom: 4px; }
+      .dt-branch strong { color: var(--text); }
+      .dt-answer {
+        display: inline-block;
+        margin-top: 4px;
+        padding: 3px 9px;
+        border-radius: 8px;
+        background: rgba(109, 125, 255, 0.18);
+        color: #dde5ff;
+        font-size: 12px;
+        font-weight: 600;
+      }
+
+      /* ── Table ── */
+      table {
+        width: 100%;
+        border-collapse: collapse;
+        margin-top: 16px;
+        font-size: 14px;
+      }
+      th, td {
+        text-align: left;
+        vertical-align: top;
+        border-bottom: 1px solid rgba(140, 173, 255, 0.12);
+        padding: 10px 12px;
+      }
+      th {
+        color: var(--text);
+        background: rgba(255, 255, 255, 0.03);
+        font-size: 12px;
+        text-transform: uppercase;
+        letter-spacing: 0.06em;
+      }
+
+      /* ── Mode cards ── */
+      .mode-grid {
+        display: grid;
+        grid-template-columns: repeat(3, minmax(0, 1fr));
+        gap: 14px;
+        margin-top: 20px;
+      }
+      .mode-card {
+        border-radius: 16px;
+        padding: 16px 18px;
+        border: 1px solid var(--border);
+      }
+      .mode-auto   { background: linear-gradient(145deg, rgba(109, 125, 255, 0.14), rgba(120, 180, 255, 0.08)); border-color: rgba(109, 125, 255, 0.35); }
+      .mode-req    { background: linear-gradient(145deg, rgba(115, 226, 167, 0.12), rgba(109, 125, 255, 0.07)); border-color: rgba(115, 226, 167, 0.3); }
+      .mode-off    { background: linear-gradient(145deg, rgba(255, 209, 102, 0.10), rgba(255, 123, 123, 0.06)); border-color: rgba(255, 209, 102, 0.28); }
+      .mode-title { font-size: 15px; font-weight: 700; margin-bottom: 6px; }
+      .mode-card p { font-size: 13px; margin: 0 0 8px; }
+      .mode-card ul { font-size: 12.5px; margin-top: 6px; }
+
+      /* ── Error table ── */
+      .err-table td:first-child { font-family: Consolas, monospace; font-size: 12.5px; color: #f3c6c6; }
+
+      /* ── Footer ── */
+      .footer {
+        margin-top: 44px;
+        padding-top: 18px;
+        border-top: 1px solid rgba(140, 173, 255, 0.14);
+        font-size: 13px;
+        color: #96a9d4;
+        display: flex;
+        justify-content: space-between;
+        flex-wrap: wrap;
+        gap: 8px;
+      }
+
+      /* ── Print ── */
+      @media print {
+        body { background: #ffffff; color: #111827; }
+        .hero, .card, .mode-card, .toc { background: #ffffff; box-shadow: none; border-color: #d7deee; color: #111827; }
+        p, li, .footer { color: #334155; }
+        strong, h1, h2, h3, th, code { color: #0f172a; }
+        code, pre { border-color: #d7deee; background: #f8fafc; }
+        .note { background: #fff8e8; color: #7c5200; border-color: #f3dfab; }
+        .tip { background: #eefbf3; color: #14532d; border-color: #c8e8d4; }
+        .danger-box { background: #fff0f0; color: #7c1010; border-color: #f3abab; }
+        .mode-auto, .mode-req, .mode-off { background: #f8fafc; border-color: #d7deee; }
+        .toc a { color: #1d4ed8; }
+        .err-table td:first-child { color: #991b1b; }
+      }
+    </style>
+  </head>
+  <body>
+    <div class="page">
+
+      <!-- Hero -->
+      <section class="hero">
+        <div class="hero-brand">
+          <img src="/assets/claritect-logo.svg" alt="Claritect logo" />
+          <div class="pill">Claritect</div>
+        </div>
+        <h1>SSL / TLS Connection Security Guide</h1>
+        <p>
+          Everything you need to know about securing your database connections in Claritect —
+          from the three SSL modes to custom CA certificates, corporate proxies, and what the error
+          messages actually mean.
+        </p>
+        <p style="margin: 0;">
+          <a href="/connect/guide">← Back to Database Connection Guide</a>
+          &nbsp;&nbsp;·&nbsp;&nbsp;
+          <a href="/connect">Connect a data source</a>
+        </p>
+      </section>
+
+      <!-- TOC -->
+      <nav class="toc">
+        <div class="toc-title">Contents</div>
+        <ol>
+          <li><a href="#what-is-tls">What SSL / TLS actually does</a></li>
+          <li><a href="#three-modes">The three SSL modes in Claritect</a></li>
+          <li><a href="#per-provider">Per-provider SSL behaviour</a></li>
+          <li><a href="#ca-certs">CA certificates — what they are and when you need one</a></li>
+          <li><a href="#find-ca">How to find and export your CA certificate</a></li>
+          <li><a href="#corporate-proxy">Corporate networks and SSL inspection</a></li>
+          <li><a href="#errors">Error messages decoded</a></li>
+          <li><a href="#decision-tree">Quick decision guide</a></li>
+          <li><a href="#best-practices">Security best practices</a></li>
+        </ol>
+      </nav>
+
+      <!-- ─────────────────────────────────── 1 ─── -->
+      <h2 id="what-is-tls">1 — What SSL / TLS actually does</h2>
+      <p>
+        <strong>TLS</strong> (Transport Layer Security, often still called SSL) is the protocol that encrypts the
+        connection between Claritect's API server and your database. Without it, anyone on the same network
+        can read the queries you run and the data that comes back.
+      </p>
+      <p>
+        When you connect a database source, Claritect opens a TCP connection to your database host and then
+        performs a <strong>TLS handshake</strong> before sending any credentials. During the handshake:
+      </p>
+      <ol>
+        <li>The database presents its <strong>certificate</strong>.</li>
+        <li>Claritect checks whether it trusts the authority that signed it (the <strong>CA</strong>).</li>
+        <li>If trust is established, both sides derive an encryption key and the connection proceeds securely.</li>
+      </ol>
+      <p>
+        Most cloud databases (Supabase, Neon, Amazon RDS, PlanetScale, Google Cloud SQL) use certificates
+        signed by well-known public CAs that Node already trusts. This means the handshake works out of
+        the box and you don't need to do anything extra.
+      </p>
+
+      <!-- ─────────────────────────────────── 2 ─── -->
+      <h2 id="three-modes">2 — The three SSL modes in Claritect</h2>
+      <div class="mode-grid">
+        <div class="mode-card mode-auto">
+          <div class="pill pill-good">Auto</div>
+          <div class="mode-title">Automatic (recommended)</div>
+          <p>Tries TLS first. If the server supports it, the connection is encrypted. If the server doesn't offer TLS at all, it falls back to a plain connection.</p>
+          <ul>
+            <li>Works for Supabase, Neon, RDS, PlanetScale, and most cloud databases</li>
+            <li>Correct default for nearly everyone</li>
+            <li>Still validates the CA — CA errors will surface here</li>
+          </ul>
+        </div>
+        <div class="mode-card mode-req">
+          <div class="pill pill-good">Require</div>
+          <div class="mode-title">Require TLS</div>
+          <p>Strictly requires TLS. The connection is rejected if the server does not offer it. No fallback to plain text.</p>
+          <ul>
+            <li>Preferred for production databases</li>
+            <li>Guarantees the connection is never accidentally unencrypted</li>
+            <li>Also validates the CA — use a custom CA if needed</li>
+          </ul>
+        </div>
+        <div class="mode-card mode-off">
+          <div class="pill pill-warn">Off</div>
+          <div class="mode-title">Off (no encryption)</div>
+          <p>Disables TLS entirely. The connection is plain text with no encryption and no certificate verification.</p>
+          <ul>
+            <li>Only for local or private dev databases</li>
+            <li>Should <strong>never</strong> be used for databases that hold real data</li>
+            <li>Use only when you control the network end-to-end</li>
+          </ul>
+        </div>
+      </div>
+
+      <div class="note" style="margin-top: 20px;">
+        <strong>Postgres note:</strong> these modes map to <code>sslmode</code> values in the connection string —
+        <code>prefer</code> (Auto), <code>require</code> (Require), and <code>disable</code> (Off).
+        Claritect sets this automatically based on whichever card you pick, so you don't need to include
+        <code>?sslmode=...</code> in your connection string manually.
+      </div>
+
+      <!-- ─────────────────────────────────── 3 ─── -->
+      <h2 id="per-provider">3 — Per-provider SSL behaviour</h2>
+      <table>
+        <thead>
+          <tr>
+            <th>Provider</th>
+            <th>SSL / TLS in Claritect</th>
+            <th>Notes</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr>
+            <td><strong>Postgres</strong></td>
+            <td>Controlled by the Auto / Require / Off cards</td>
+            <td>Auto works for all cloud Postgres (Supabase, Neon, RDS, Heroku). Use Require for strict enforcement. Use Off only for a local Postgres instance.</td>
+          </tr>
+          <tr>
+            <td><strong>MySQL</strong></td>
+            <td>Controlled by the Auto / Require / Off cards</td>
+            <td>Same rules as Postgres. AWS RDS MySQL and PlanetScale both work with Auto. Self-hosted MySQL without TLS configured: use Off for dev, but set up TLS before going to production.</td>
+          </tr>
+          <tr>
+            <td><strong>Snowflake</strong></td>
+            <td>Always TLS — no SSL mode selector shown</td>
+            <td>Snowflake enforces TLS at the platform level. All connections are encrypted with certificates signed by a public CA. No CA certificate or SSL mode configuration is needed or available.</td>
+          </tr>
+          <tr>
+            <td><strong>BigQuery</strong></td>
+            <td>Always TLS — no SSL mode selector shown</td>
+            <td>BigQuery communicates over HTTPS only. All traffic is encrypted and authenticated via Google's infrastructure. No SSL configuration is required.</td>
+          </tr>
+        </tbody>
+      </table>
+
+      <!-- ─────────────────────────────────── 4 ─── -->
+      <h2 id="ca-certs">4 — CA certificates — what they are and when you need one</h2>
+      <p>
+        A <strong>Certificate Authority (CA)</strong> is an organisation that signs database certificates.
+        Node (and therefore Claritect) ships with a built-in list of trusted public CAs. If your database's
+        certificate was signed by any of them, you don't need to do anything extra.
+      </p>
+      <p>You need to supply a custom CA certificate in these situations:</p>
+
+      <div class="grid-2" style="margin-top: 16px;">
+        <div class="card">
+          <div class="pill pill-warn">Corporate proxy / SSL inspection</div>
+          <p>
+            Your company network intercepts TLS connections — security products like Zscaler, Netskope,
+            Cisco Umbrella, or Palo Alto do this. The proxy presents its own certificate instead of the
+            database's certificate. Node doesn't trust the proxy's CA by default.
+          </p>
+          <p><strong>What you'll see:</strong> errors like <em>"self signed certificate in certificate chain"</em> or <em>"UNABLE_TO_VERIFY_LEAF_SIGNATURE"</em> even against a cloud database.</p>
+          <p><strong>Fix:</strong> paste your corporate TLS inspection CA. See <a href="#corporate-proxy">section 6</a>.</p>
+        </div>
+        <div class="card">
+          <div class="pill pill-warn">Self-hosted / on-prem with a private CA</div>
+          <p>
+            Your database team created their own internal CA to sign the database certificate, rather than
+            buying one from a public CA. This is common in enterprises and banks.
+          </p>
+          <p><strong>What you'll see:</strong> errors like <em>"self signed certificate"</em> or <em>"DEPTH_ZERO_SELF_SIGNED_CERT"</em>.</p>
+          <p><strong>Fix:</strong> paste the internal root CA certificate your database team provides. See <a href="#find-ca">section 5</a>.</p>
+        </div>
+      </div>
+
+      <div class="tip" style="margin-top: 16px;">
+        <strong>You do NOT need a custom CA for:</strong> Supabase, Neon, AWS RDS, Google Cloud SQL,
+        PlanetScale, Railway, Render, Heroku, or any database using a certificate from a public CA like
+        Let's Encrypt, DigiCert, or Amazon Trust Services. Just pick <strong>Auto</strong> and you're done.
+      </div>
+
+      <h3>Where to paste the CA certificate in Claritect</h3>
+      <p>
+        In the connection form, check the box labelled <strong>"My database needs a custom CA certificate"</strong>.
+        A text area will appear. Paste the full PEM block there, including the
+        <code>-----BEGIN CERTIFICATE-----</code> and <code>-----END CERTIFICATE-----</code> lines.
+      </p>
+      <p>
+        You can paste multiple certificates one after another if your chain has an intermediate CA between
+        your root and the database certificate — just stack them in the text area.
+      </p>
+
+      <!-- ─────────────────────────────────── 5 ─── -->
+      <h2 id="find-ca">5 — How to find and export your CA certificate</h2>
+
+      <h3>Option A — Ask your database or IT team (fastest)</h3>
+      <p>
+        If someone else manages the database, ask them: <em>"Can you send me the root CA certificate in PEM format?"</em>
+        They should be able to give you a <code>.pem</code> or <code>.crt</code> file. Open it in any text editor,
+        copy the whole block, and paste it into Claritect.
+      </p>
+
+      <h3>Option B — Export from Windows Certificate Manager</h3>
+      <ol>
+        <li>Press <strong>Win + R</strong>, type <code>certmgr.msc</code>, and press Enter (for your user's certificates) — or <code>certlm.msc</code> for machine-level certificates.</li>
+        <li>Expand <strong>Trusted Root Certification Authorities → Certificates</strong>.</li>
+        <li>Look for your company name or a known TLS inspection vendor: Zscaler, Netskope, Cisco, Palo Alto, Forcepoint, or similar.</li>
+        <li>Double-click the certificate to open it, then go to the <strong>Details</strong> tab.</li>
+        <li>Click <strong>Copy to File…</strong>, choose <strong>Base-64 encoded X.509 (.CER)</strong>, and save it.</li>
+        <li>Open the saved file in Notepad and copy the entire contents.</li>
+        <li>Paste it into the CA certificate field in Claritect.</li>
+      </ol>
+      <p>
+        Also check <strong>Intermediate Certification Authorities → Certificates</strong> if you don't find the relevant certificate under Trusted Roots.
+      </p>
+
+      <h3>Option C — Export from macOS Keychain Access</h3>
+      <ol>
+        <li>Open <strong>Keychain Access</strong> (Spotlight → "Keychain Access").</li>
+        <li>In the left column, select <strong>System</strong> or <strong>System Roots</strong>.</li>
+        <li>Search for your company name or the TLS inspection vendor.</li>
+        <li>Right-click the certificate → <strong>Export</strong>.</li>
+        <li>Choose format <strong>Privacy Enhanced Mail (.pem)</strong> and save.</li>
+        <li>Open the file in a text editor and copy the certificate block.</li>
+      </ol>
+
+      <h3>Option D — Fetch it from the server with OpenSSL</h3>
+      <p>If you have OpenSSL installed, you can capture the chain directly:</p>
+      <pre>openssl s_client -connect your-db-host.com:5432 -showcerts &lt; /dev/null 2&gt;/dev/null \
+  | openssl x509 -outform PEM</pre>
+      <p>
+        This prints the certificate the server presents. If you are behind a corporate proxy, it will print
+        the proxy's certificate — that is the one you need to paste into Claritect.
+      </p>
+
+      <!-- ─────────────────────────────────── 6 ─── -->
+      <h2 id="corporate-proxy">6 — Corporate networks and SSL inspection</h2>
+      <p>
+        Many enterprises route all outbound traffic through a security proxy (Zscaler, Netskope, Cisco
+        Umbrella, Palo Alto NGFW, and others). These proxies perform <strong>SSL inspection</strong>: they
+        decrypt your TLS connection, inspect the contents for threats, and then re-encrypt it — presenting
+        their own certificate to the upstream service.
+      </p>
+      <p>
+        Claritect's API server sees the proxy's certificate rather than the database's certificate.
+        Because the proxy uses an internal corporate CA that is not in Node's built-in trust list, the
+        connection fails with a certificate verification error.
+      </p>
+
+      <div class="note">
+        This is one of the most common SSL connection failures. If you are on a managed corporate laptop
+        and connecting to a cloud database, assume SSL inspection is involved until proven otherwise.
+      </div>
+
+      <h3>How to fix it</h3>
+      <ol>
+        <li>Get the corporate TLS inspection CA certificate in PEM format — ask IT, or export it from Windows/macOS using the steps in <a href="#find-ca">section 5</a>.</li>
+        <li>In the Claritect connection form, check <strong>"My database needs a custom CA certificate"</strong>.</li>
+        <li>Paste the corporate CA PEM.</li>
+        <li>Leave the SSL mode on <strong>Auto</strong> or <strong>Require</strong> — do not switch to Off.</li>
+        <li>Test the connection again.</li>
+      </ol>
+
+      <h3>Server-wide fix (for self-hosted deployments)</h3>
+      <p>
+        If you manage the Claritect API server and every connection goes through the same corporate proxy,
+        you can trust the CA globally instead of per connection:
+      </p>
+      <ol>
+        <li>Save the CA PEM to a file on the server, for example <code>/etc/ssl/corporate-ca.pem</code>.</li>
+        <li>Set the environment variable: <code>NODE_EXTRA_CA_CERTS=/etc/ssl/corporate-ca.pem</code></li>
+        <li>Restart the API server. All outgoing TLS connections from Node will now trust this CA.</li>
+      </ol>
+
+      <div class="danger-box">
+        Do not set <code>NODE_TLS_REJECT_UNAUTHORIZED=0</code> to work around TLS errors.
+        This disables certificate verification entirely for all connections from that Node process —
+        it is a serious security risk and should never be used in production.
+      </div>
+
+      <!-- ─────────────────────────────────── 7 ─── -->
+      <h2 id="errors">7 — Error messages decoded</h2>
+      <table class="err-table">
+        <thead>
+          <tr>
+            <th>Error text</th>
+            <th>What it means</th>
+            <th>What to do</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr>
+            <td>self signed certificate in certificate chain</td>
+            <td>The certificate chain includes a certificate signed by a CA Node doesn't trust — usually a corporate TLS inspection proxy or a self-signed internal CA.</td>
+            <td>Paste the corporate or internal root CA certificate in <strong>Custom CA (PEM)</strong>. Keep SSL mode on Auto or Require.</td>
+          </tr>
+          <tr>
+            <td>DEPTH_ZERO_SELF_SIGNED_CERT</td>
+            <td>The database is presenting a self-signed certificate with no CA chain at all — common with Docker-based dev databases or older self-hosted setups.</td>
+            <td>For dev: switch SSL mode to <strong>Off</strong>. For production: configure a proper certificate on the database, or paste the database's own certificate as the CA.</td>
+          </tr>
+          <tr>
+            <td>UNABLE_TO_VERIFY_LEAF_SIGNATURE</td>
+            <td>Node cannot verify the signature on the database certificate because it doesn't have the intermediate CA that signed it.</td>
+            <td>Paste the missing intermediate CA certificate (or the full chain) in <strong>Custom CA (PEM)</strong>.</td>
+          </tr>
+          <tr>
+            <td>ECONNRESET / read ECONNRESET</td>
+            <td>The TCP connection was reset during the TLS handshake. Often happens when the database rejects TLS before completing the handshake.</td>
+            <td>Check whether the database supports TLS at all. If connecting to a local dev database, try SSL mode <strong>Off</strong>.</td>
+          </tr>
+          <tr>
+            <td>certificate has expired</td>
+            <td>The database's TLS certificate has passed its expiry date.</td>
+            <td>The database admin needs to renew the certificate. If it is a corporate inspection CA that expired, ask IT to update the CA.</td>
+          </tr>
+          <tr>
+            <td>The server does not support SSL connections</td>
+            <td>The database server is not configured to accept TLS.</td>
+            <td>For a local or dev database: switch to SSL mode <strong>Off</strong>. For a production database: enable TLS on the server side — do not disable it on the client side.</td>
+          </tr>
+          <tr>
+            <td>hostname/IP does not match certificate's altnames</td>
+            <td>The hostname you connected to is not listed in the certificate's Subject Alternative Names.</td>
+            <td>Check the connection hostname matches exactly what the certificate covers. If connecting via an IP address, the certificate may only cover a hostname — use the hostname instead.</td>
+          </tr>
+          <tr>
+            <td>ENOTFOUND / ECONNREFUSED</td>
+            <td>Not a TLS error — the host could not be reached at all (DNS failure or port closed).</td>
+            <td>Verify the hostname and port in your connection string. Check firewall rules and whether the database allows remote connections.</td>
+          </tr>
+        </tbody>
+      </table>
+
+      <!-- ─────────────────────────────────── 8 ─── -->
+      <h2 id="decision-tree">8 — Quick decision guide</h2>
+      <p>Use this to find the right SSL setting without reading the whole guide.</p>
+
+      <div class="decision-tree">
+        <div class="dt-node">
+          <div class="dt-q">Is this a cloud database (Supabase, Neon, RDS, PlanetScale, Google Cloud SQL, Railway, Heroku)?</div>
+          <div class="dt-branch">→ Yes: <span class="dt-answer">Use Auto. Done.</span></div>
+          <div class="dt-branch">→ No: continue below</div>
+        </div>
+
+        <div class="dt-node">
+          <div class="dt-q">Is this a local or Docker-based dev database?</div>
+          <div class="dt-branch">→ Yes: <span class="dt-answer">Use Off</span> — it's not accessible from the public internet so plain text is acceptable for development.</div>
+          <div class="dt-branch">→ No: continue below</div>
+        </div>
+
+        <div class="dt-node">
+          <div class="dt-q">Are you on a corporate or managed network (company laptop, office VPN)?</div>
+          <div class="dt-branch">→ Yes and getting SSL errors on a cloud DB: <span class="dt-answer">SSL inspection — paste your corporate CA. Keep Auto or Require.</span></div>
+          <div class="dt-branch">→ No: continue below</div>
+        </div>
+
+        <div class="dt-node">
+          <div class="dt-q">Is the database self-hosted and managed by your team with an internal CA?</div>
+          <div class="dt-branch">→ Yes: <span class="dt-answer">Use Require + paste the internal root CA</span> that your database team gives you.</div>
+          <div class="dt-branch">→ No: continue below</div>
+        </div>
+
+        <div class="dt-node">
+          <div class="dt-q">Is the database self-hosted with a public certificate (Let's Encrypt, etc.)?</div>
+          <div class="dt-branch">→ Yes: <span class="dt-answer">Use Auto or Require — no custom CA needed.</span></div>
+          <div class="dt-branch">→ No / unsure: <span class="dt-answer">Start with Auto. If it fails, check the error in section 7 above.</span></div>
+        </div>
+      </div>
+
+      <!-- ─────────────────────────────────── 9 ─── -->
+      <h2 id="best-practices">9 — Security best practices</h2>
+
+      <div class="grid-2">
+        <div class="card">
+          <div class="pill pill-good">Do</div>
+          <ul>
+            <li>Use <strong>Auto</strong> as the default for any cloud or remote database.</li>
+            <li>Use <strong>Require</strong> for production sources where you want to guarantee encryption.</li>
+            <li>Supply the actual CA certificate when you get a CA verification error — don't downgrade to Off.</li>
+            <li>Rotate CA certificates before they expire and update the CA field in your data source settings.</li>
+            <li>Use a dedicated read-only database user for Claritect — never use a superuser or admin account.</li>
+          </ul>
+        </div>
+        <div class="card">
+          <div class="pill pill-danger">Don't</div>
+          <ul>
+            <li>Use <strong>Off</strong> for any database that holds real or sensitive data.</li>
+            <li>Set <code>NODE_TLS_REJECT_UNAUTHORIZED=0</code> on the server.</li>
+            <li>Share CA certificates over unencrypted channels.</li>
+            <li>Paste your database user's password or private key into the CA field by mistake — it only accepts CA certificates.</li>
+            <li>Use Off as a permanent workaround for a corporate CA error — find and paste the correct CA instead.</li>
+          </ul>
+        </div>
+      </div>
+
+      <!-- Footer -->
+      <div class="footer">
+        <span>Claritect SSL / TLS Guide</span>
+        <span>
+          <a href="/connect/guide">Database Connection Guide</a>
+          &nbsp;·&nbsp;
+          <a href="/connect">Connect a data source</a>
+        </span>
+      </div>
+
+    </div>
+  </body>
+</html>
