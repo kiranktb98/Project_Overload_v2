@@ -469,9 +469,8 @@ Users can schedule any report to run automatically (daily, weekly, monthly) and 
   });
 
   function withHelpWidget(html: string): string {
-    return html
-      .replace("</style>", `${HELP_WIDGET_STYLES}</style>`)
-      .replace("</body>", `${renderHelpWidget()}</body>`);
+    const widget = `<style>${HELP_WIDGET_STYLES}</style>${renderHelpWidget()}`;
+    return html.replace("</body>", `${widget}</body>`);
   }
 
   app.get("/connect", async (_request, reply) => {
