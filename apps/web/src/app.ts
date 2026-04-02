@@ -47,6 +47,10 @@ const SSL_TLS_GUIDE_HTML = readFileSync(
   new URL("../../../docs/SSL_TLS_GUIDE.html", import.meta.url),
   "utf8"
 );
+const AI_DISCOVERABILITY_PLAN_HTML = readFileSync(
+  new URL("../../../docs/AI_DISCOVERABILITY_PLAN.html", import.meta.url),
+  "utf8"
+);
 const CLARITECT_LOGO_SVG = readFileSync(
   new URL("./assets/claritect-logo.svg", import.meta.url),
   "utf8"
@@ -370,6 +374,10 @@ export function buildWebApp(options: WebAppDependencies = {}) {
 
   app.get("/connect/tls-guide", async (_request, reply) => {
     return reply.type("text/html; charset=utf-8").send(SSL_TLS_GUIDE_HTML);
+  });
+
+  app.get("/internal/ai-plan", async (_request, reply) => {
+    return reply.type("text/html; charset=utf-8").send(AI_DISCOVERABILITY_PLAN_HTML);
   });
 
   app.get("/connect", async (_request, reply) => {
@@ -1798,7 +1806,8 @@ function isPublicPath(pathname: string): boolean {
     pathname.startsWith("/marketing-assets/") ||
     pathname === "/assets/claritect-logo.svg" ||
     pathname === "/connect/guide" ||
-    pathname === "/connect/tls-guide";
+    pathname === "/connect/tls-guide" ||
+    pathname === "/internal/ai-plan";
 }
 
 function isCustomerAuthenticatedRequest(cookieHeader: string | undefined): boolean {
