@@ -1483,7 +1483,9 @@ export function renderConnectionPage(): string {
             <p class="muted">Pick the source family first. The next page will handle connection testing and source setup for that connector.</p>
             <p class="muted" style="margin-top: -2px;">
               Need examples and setup notes first?
-              <a href="/connect/guide" target="_blank" rel="noreferrer">Open the database connection guide</a>.
+              <a href="/connect/guide" target="_blank" rel="noreferrer">Open the database connection guide</a>
+              &nbsp;·&nbsp;
+              <a href="/connect/tls-guide" target="_blank" rel="noreferrer">SSL / TLS guide</a>.
             </p>
             <div class="source-grid" id="source-grid">
               <button class="source-option" data-provider="postgres" type="button">
@@ -1599,7 +1601,10 @@ export function renderConnectionPage(): string {
               </div>
 
               <div id="guided-ssl-row">
-                <label style="display: block; margin-bottom: 8px;">Connection security</label>
+                <label style="display: flex; align-items: baseline; gap: 10px; margin-bottom: 8px;">
+                  Connection security
+                  <a href="/connect/tls-guide" target="_blank" rel="noreferrer" style="font-size: 0.75rem; font-weight: 400;">What do these mean?</a>
+                </label>
                 <div class="ssl-cards">
                   <label class="ssl-card ssl-card-active" data-ssl="automatic">
                     <input type="radio" name="ssl_mode_pick" value="automatic" checked hidden />
