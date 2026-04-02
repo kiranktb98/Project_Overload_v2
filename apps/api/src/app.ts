@@ -28,6 +28,7 @@ import { registerConfigRoutes } from "./routes/config";
 import { registerScheduledReportRoutes } from "./routes/scheduled-reports";
 import { registerUsageRoutes } from "./routes/usage";
 import { registerAdminRoutes } from "./routes/admin";
+import { registerHelpChatRoutes } from "./routes/help-chat";
 import { RuntimeConnectionManager } from "./dataplane/connection-manager";
 import { UserConnectionRegistry, userContextStorage } from "./dataplane/user-connection-registry";
 import { validateApiAuth } from "./security/request-context";
@@ -175,6 +176,7 @@ export async function buildApiApp(options: Partial<ApiDependencies> = {}) {
   registerScheduledReportRoutes(app, store);
   registerUsageRoutes(app, store, connectionRegistry);
   registerAdminRoutes(app, store);
+  registerHelpChatRoutes(app, store);
 
   app.setErrorHandler((error: unknown, _request, reply) => {
     if (error instanceof ZodError) {

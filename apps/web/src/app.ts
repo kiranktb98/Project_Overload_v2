@@ -1,5 +1,6 @@
 import { AsyncLocalStorage } from "node:async_hooks";
 import { readFileSync } from "node:fs";
+import { randomUUID } from "node:crypto";
 import Fastify from "fastify";
 import { z } from "zod";
 import {
@@ -423,6 +424,7 @@ Users can schedule any report to run automatically (daily, weekly, monthly) and 
 
   const HelpChatSchema = z.object({
     message: z.string().trim().min(1).max(2000),
+    session_id: z.string().trim().min(1).max(128).optional(),
     history: z.array(z.object({
       role: z.enum(["user", "assistant"]),
       content: z.string().trim().min(1).max(4000)
@@ -465,7 +467,29 @@ Users can schedule any report to run automatically (daily, weekly, monthly) and 
 
     const data = await response.json() as { choices?: Array<{ message?: { content?: string } }> };
     const text = data.choices?.[0]?.message?.content?.trim() ?? "Sorry, I didn't get a response. Try rephrasing your question.";
-    return { reply: text };
+
+    // Persist conversation to DB — fire and forget, don't block the response
+    const updatedMessages = [
+      ...body.history,
+      { role: "user" as const, content: body.message },
+      { role: "assistant" as const, content: text }
+    ];
+    const username = getCustomerUsername(request.headers.cookie) ?? "unknown";
+    const sessionId = body.session_id ?? randomUUID();
+    void fetch(`${apiBaseUrl}/help-chat/sessions`, {
+      method: "POST",
+      headers: {
+        "content-type": "application/json",
+        ...buildApiAuthHeader()
+      },
+      body: JSON.stringify({
+        session_id: sessionId,
+        username,
+        messages: updatedMessages
+      })
+    }).catch(() => { /* non-critical */ });
+
+    return { reply: text, session_id: sessionId };
   });
 
   function withHelpWidget(html: string): string {

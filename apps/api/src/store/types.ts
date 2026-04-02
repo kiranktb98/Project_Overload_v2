@@ -165,6 +165,20 @@ export type RagChunkSearchResult = {
   similarity: number;
 };
 
+export type HelpChatMessageRecord = {
+  role: "user" | "assistant";
+  content: string;
+};
+
+export type HelpChatSessionRecord = {
+  id: string;
+  tenant_id: string;
+  username: string;
+  messages: HelpChatMessageRecord[];
+  created_at: string;
+  updated_at: string;
+};
+
 export interface MetadataStore {
   createSemantic<K extends SemanticCollectionName>(
     collection: K,
@@ -260,5 +274,15 @@ export interface MetadataStore {
   ): Promise<RagChunkSearchResult[]>;
 
   appendAuditLog(eventType: string, payload: Record<string, unknown>, context?: StoreRequestContext): Promise<void>;
+
+  saveHelpChatSession(
+    sessionId: string,
+    username: string,
+    messages: HelpChatMessageRecord[],
+    context?: StoreRequestContext
+  ): Promise<HelpChatSessionRecord>;
+  listHelpChatSessions(context?: StoreRequestContext): Promise<HelpChatSessionRecord[]>;
+  getHelpChatSession(sessionId: string, context?: StoreRequestContext): Promise<HelpChatSessionRecord | null>;
+
   close(): Promise<void>;
 }

@@ -13,6 +13,8 @@ import type {
 import type {
   ChatSessionRecord,
   CustomerAccountRecord,
+  HelpChatMessageRecord,
+  HelpChatSessionRecord,
   InfraCostLedgerRecord,
   MetadataStore,
   OpenRouterBalanceHistoryRecord,
@@ -1119,6 +1121,95 @@ export class PostgresMetadataStore implements MetadataStore {
     );
   }
 
+  async saveHelpChatSession(
+    sessionId: string,
+    username: string,
+    messages: HelpChatMessageRecord[],
+    context?: StoreRequestContext
+  ): Promise<HelpChatSessionRecord> {
+    const tenantId = resolveTenantId(context);
+    const result = await this.pool.query<{
+      id: string;
+      tenant_id: string;
+      username: string;
+      messages: HelpChatMessageRecord[];
+      created_at: string;
+      updated_at: string;
+    }>(
+      `
+      INSERT INTO help_chat_sessions (id, tenant_id, username, messages)
+      VALUES ($1, $2, $3, $4::jsonb)
+      ON CONFLICT (id) DO UPDATE SET
+        messages = EXCLUDED.messages,
+        updated_at = NOW()
+      RETURNING id, tenant_id, username, messages, created_at, updated_at
+      `,
+      [sessionId, tenantId, username, JSON.stringify(messages)]
+    );
+    const row = result.rows[0];
+    return {
+      id: row.id,
+      tenant_id: row.tenant_id,
+      username: row.username,
+      messages: Array.isArray(row.messages) ? row.messages : [],
+      created_at: row.created_at,
+      updated_at: row.updated_at
+    };
+  }
+
+  async listHelpChatSessions(context?: StoreRequestContext): Promise<HelpChatSessionRecord[]> {
+    const tenantId = resolveTenantId(context);
+    const result = await this.pool.query<{
+      id: string;
+      tenant_id: string;
+      username: string;
+      messages: HelpChatMessageRecord[];
+      created_at: string;
+      updated_at: string;
+    }>(
+      `SELECT id, tenant_id, username, messages, created_at, updated_at
+       FROM help_chat_sessions
+       WHERE tenant_id = $1
+       ORDER BY updated_at DESC`,
+      [tenantId]
+    );
+    return result.rows.map((row) => ({
+      id: row.id,
+      tenant_id: row.tenant_id,
+      username: row.username,
+      messages: Array.isArray(row.messages) ? row.messages : [],
+      created_at: row.created_at,
+      updated_at: row.updated_at
+    }));
+  }
+
+  async getHelpChatSession(sessionId: string, context?: StoreRequestContext): Promise<HelpChatSessionRecord | null> {
+    const tenantId = resolveTenantId(context);
+    const result = await this.pool.query<{
+      id: string;
+      tenant_id: string;
+      username: string;
+      messages: HelpChatMessageRecord[];
+      created_at: string;
+      updated_at: string;
+    }>(
+      `SELECT id, tenant_id, username, messages, created_at, updated_at
+       FROM help_chat_sessions
+       WHERE id = $1 AND tenant_id = $2`,
+      [sessionId, tenantId]
+    );
+    if (result.rows.length === 0) return null;
+    const row = result.rows[0];
+    return {
+      id: row.id,
+      tenant_id: row.tenant_id,
+      username: row.username,
+      messages: Array.isArray(row.messages) ? row.messages : [],
+      created_at: row.created_at,
+      updated_at: row.updated_at
+    };
+  }
+
   async close(): Promise<void> {
     await this.pool.end();
   }
@@ -1279,6 +1370,20 @@ export class PostgresMetadataStore implements MetadataStore {
     await this.pool.query(`
       CREATE INDEX IF NOT EXISTS chat_rag_chunks_lookup_idx
         ON chat_rag_chunks(tenant_id, user_id, session_id, updated_at DESC);
+    `);
+    await this.pool.query(`
+      CREATE TABLE IF NOT EXISTS help_chat_sessions (
+        id TEXT PRIMARY KEY,
+        tenant_id TEXT NOT NULL DEFAULT '${DEFAULT_TENANT_ID}',
+        username TEXT NOT NULL,
+        messages JSONB NOT NULL DEFAULT '[]'::jsonb,
+        created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+        updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+      );
+    `);
+    await this.pool.query(`
+      CREATE INDEX IF NOT EXISTS help_chat_sessions_tenant_updated_idx
+        ON help_chat_sessions(tenant_id, updated_at DESC);
     `);
     await this.pool.query(
       `

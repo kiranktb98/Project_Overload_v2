@@ -292,6 +292,7 @@ export function renderHelpWidget(): string {
     var suggestionsEl = document.getElementById("help-suggestions");
 
     var history = [];
+    var sessionId = null;
     var busy = false;
 
     function openPanel() {
@@ -390,12 +391,13 @@ export function renderHelpWidget(): string {
       fetch("/api/help/chat", {
         method: "POST",
         headers: { "content-type": "application/json" },
-        body: JSON.stringify({ message: message, history: historyToSend })
+        body: JSON.stringify({ message: message, history: historyToSend, session_id: sessionId })
       })
         .then(function(r) { return r.ok ? r.json() : Promise.reject(r.status); })
         .then(function(data) {
           removeTyping();
           var reply = data.reply || "Sorry, something went wrong.";
+          if (data.session_id) sessionId = data.session_id;
           addBubble("assistant", reply);
           history.push({ role: "user", content: message });
           history.push({ role: "assistant", content: reply });
