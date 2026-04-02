@@ -409,19 +409,20 @@ export function renderHelpWidget(): string {
         });
     }
 
-    // Basic markdown: bold, inline code, lists, line breaks
+    // Lightweight markdown renderer (all regex built at runtime to avoid template-literal escape issues)
+    var rBold = new RegExp("\\*\\*(.+?)\\*\\*", "g");
+    var rCode = new RegExp("\\x60([^\\x60]+)\\x60", "g");
+    var rBullet = new RegExp("^[-\\u2022]\\s+(.+)$", "gm");
+    var rNL2 = new RegExp("\\n\\n+", "g");
+    var rNL1 = new RegExp("\\n", "g");
     function formatMarkdown(text) {
-      return text
-        .replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;")
-        .replace(/\*\*(.+?)\*\*/g, "<strong>$1</strong>")
-        .replace(/\x60([^\x60]+)\x60/g, "<code>$1</code>")
-        .replace(/^[-•]\s+(.+)$/gm, "<li>$1</li>")
-        .replace(/(<li>.*<\/li>)/s, "<ul>$1</ul>")
-        .replace(/\n\n+/g, "</p><p>")
-        .replace(/\n/g, "<br>")
-        .replace(/^(?!<)/, "<p>")
-        .replace(/(?<!>)$/, "</p>")
-        .replace(/<p><\/p>/g, "");
+      var safe = text.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+      safe = safe.replace(rBold, "<strong>$1</strong>");
+      safe = safe.replace(rCode, "<code>$1</code>");
+      safe = safe.replace(rBullet, "<li>$1</li>");
+      safe = safe.replace(rNL2, "</p><p>");
+      safe = safe.replace(rNL1, "<br>");
+      return "<p>" + safe + "</p>";
     }
   })();
   </script>
