@@ -1294,6 +1294,51 @@ export function renderConnectionPage(): string {
         }
       }
 
+      .ssl-cards {
+        display: grid;
+        grid-template-columns: repeat(3, minmax(0, 1fr));
+        gap: 8px;
+        margin-bottom: 10px;
+      }
+      .ssl-card {
+        display: flex;
+        flex-direction: column;
+        gap: 4px;
+        border: 1px solid rgba(107, 92, 138, 0.24);
+        border-radius: 14px;
+        padding: 12px 13px;
+        cursor: pointer;
+        background: rgba(24, 18, 39, 0.78);
+        transition: border-color 150ms ease, background 150ms ease;
+        user-select: none;
+      }
+      .ssl-card:hover { border-color: rgba(107, 92, 138, 0.44); background: rgba(34, 25, 56, 0.88); }
+      .ssl-card-active { border-color: rgba(108, 58, 237, 0.6); background: rgba(108, 58, 237, 0.14); }
+      .ssl-card-warn.ssl-card-active { border-color: rgba(245, 159, 11, 0.48); background: rgba(245, 159, 11, 0.12); }
+      .ssl-card-label { display: block; font-size: 0.82rem; font-weight: 700; color: #F5F3FF; margin-bottom: 2px; }
+      .ssl-card-desc { display: block; font-size: 0.71rem; color: var(--ink-soft); line-height: 1.48; }
+      .ca-toggle {
+        display: flex;
+        align-items: flex-start;
+        gap: 10px;
+        cursor: pointer;
+        font-size: 0.78rem;
+        color: var(--ink-soft);
+        padding: 10px 12px;
+        border: 1px solid rgba(107, 92, 138, 0.22);
+        border-radius: 14px;
+        background: rgba(24, 18, 39, 0.76);
+        user-select: none;
+      }
+      .ca-toggle input[type="checkbox"] {
+        flex-shrink: 0;
+        width: 16px;
+        height: 16px;
+        margin-top: 2px;
+        cursor: pointer;
+        accent-color: #6C3AED;
+      }
+
       [data-theme="light"] {
         --ink: #1A1533;
         --ink-soft: #3D2E6B;
@@ -1349,6 +1394,11 @@ export function renderConnectionPage(): string {
       }
       [data-theme="light"] .mode-btn strong { color: #1A1533; }
       [data-theme="light"] .mode-btn small { color: #3D2E6B; }
+      [data-theme="light"] .ssl-card { background: rgba(244, 241, 255, 0.78); border-color: rgba(107, 92, 138, 0.22); }
+      [data-theme="light"] .ssl-card:hover { background: rgba(237, 232, 255, 0.88); }
+      [data-theme="light"] .ssl-card-active { background: rgba(108, 58, 237, 0.10); border-color: rgba(108, 58, 237, 0.5); }
+      [data-theme="light"] .ssl-card-label { color: #1A1533; }
+      [data-theme="light"] .ca-toggle { background: rgba(244, 241, 255, 0.78); border-color: rgba(107, 92, 138, 0.18); color: #2D1F56; }
     </style>
     <script>(function(){try{var t=localStorage.getItem("claritect_theme_v1");if(t==="light")document.documentElement.setAttribute("data-theme","light");}catch(e){}})()</script>
   </head>
@@ -1548,20 +1598,26 @@ export function renderConnectionPage(): string {
                 </div>
               </div>
 
-              <div class="row" id="guided-ssl-row">
-                <div>
-                  <label for="guided-ssl-mode">SSL mode</label>
-                  <select id="guided-ssl-mode">
-                    <option value="automatic">Automatic (recommended)</option>
-                    <option value="require">Require TLS</option>
-                    <option value="disable">Disable TLS (local/dev)</option>
-                    <option value="no-verify">TLS without certificate verification (dev only)</option>
-                  </select>
+              <div id="guided-ssl-row">
+                <label style="display: block; margin-bottom: 8px;">Connection security</label>
+                <div class="ssl-cards">
+                  <label class="ssl-card ssl-card-active" data-ssl="automatic">
+                    <input type="radio" name="ssl_mode_pick" value="automatic" checked hidden />
+                    <span class="ssl-card-label">Auto</span>
+                    <span class="ssl-card-desc">Try TLS first — works for Supabase, Neon, RDS, and most cloud databases</span>
+                  </label>
+                  <label class="ssl-card" data-ssl="require">
+                    <input type="radio" name="ssl_mode_pick" value="require" hidden />
+                    <span class="ssl-card-label">Require</span>
+                    <span class="ssl-card-desc">Strictly require TLS — reject connection if the server does not support it</span>
+                  </label>
+                  <label class="ssl-card ssl-card-warn" data-ssl="disable">
+                    <input type="radio" name="ssl_mode_pick" value="disable" hidden />
+                    <span class="ssl-card-label">Off</span>
+                    <span class="ssl-card-desc">Local or private dev databases only — not for production</span>
+                  </label>
                 </div>
-                <div class="builder-hint-card" id="guided-ssl-hint">
-                  <strong>SSL hint</strong>
-                  <span>Use Disable TLS only for local or private dev databases that do not support SSL.</span>
-                </div>
+                <input type="hidden" id="guided-ssl-mode" value="automatic" />
               </div>
             </section>
 
@@ -1571,16 +1627,21 @@ export function renderConnectionPage(): string {
               <p class="muted" id="connection-string-help">Credentials never run in the browser. This string is sent to the server, stored encrypted, and used for governed SELECT-only execution.</p>
             </div>
 
-            <details class="panel-hidden" style="margin-top: 10px;" id="advanced-tls-section">
-              <summary class="muted" style="cursor: pointer;"><strong id="advanced-tls-title">Advanced TLS</strong> <span id="advanced-tls-optional">(optional)</span></summary>
-              <div style="margin-top: 10px;">
-                <p class="tls-guidance-kicker">For corporate VPN / SSL inspection</p>
-                <p class="tls-guidance-copy">Only use this if your company network intercepts TLS or your database team gave you a custom CA certificate. For normal cloud Postgres or MySQL connections, leave this empty.</p>
-                <label for="tls-ca-pem">Custom CA (PEM)</label>
-                <textarea id="tls-ca-pem" placeholder="-----BEGIN CERTIFICATE-----\n..."></textarea>
-                <p class="muted" id="advanced-tls-help">If you see TLS errors like "self-signed certificate in certificate chain", paste your org or DB root CA here. It is used only for this session. Need help finding it? <a href="/connect/guide#tls-ca-corporate" target="_blank" rel="noreferrer">Open the TLS CA guide</a>.</p>
+            <div class="panel-hidden" style="margin-top: 12px;" id="advanced-tls-section">
+              <label class="ca-toggle" for="ca-cert-toggle">
+                <input type="checkbox" id="ca-cert-toggle" />
+                <span>
+                  <strong id="advanced-tls-title">My database needs a custom CA certificate</strong>
+                  <span id="advanced-tls-optional" style="font-weight: 400; color: var(--ink-muted); font-size: 0.72rem;"> — optional, most cloud databases don't need this</span>
+                </span>
+              </label>
+              <div class="panel-hidden" id="ca-cert-fields" style="margin-top: 10px;">
+                <p class="tls-guidance-copy">Only needed if your database team gave you a custom root CA, or your corporate network intercepts TLS. Leave empty for Supabase, Neon, RDS, PlanetScale, and most cloud databases.</p>
+                <label for="tls-ca-pem">CA Certificate (PEM)</label>
+                <textarea id="tls-ca-pem" placeholder="-----BEGIN CERTIFICATE-----&#10;...&#10;-----END CERTIFICATE-----"></textarea>
+                <p class="muted" id="advanced-tls-help">Paste your org or database root CA certificate here. <a href="/connect/guide#tls-ca-corporate" target="_blank" rel="noreferrer">See the TLS guide</a>.</p>
               </div>
-            </details>
+            </div>
 
             <div class="actions">
               <button class="secondary" id="test-connection" type="button">Test Postgres connection</button>
@@ -1842,7 +1903,6 @@ export function renderConnectionPage(): string {
           guidedWarehouse: document.getElementById("guided-warehouse"),
           guidedSslRow: document.getElementById("guided-ssl-row"),
           guidedSslMode: document.getElementById("guided-ssl-mode"),
-          guidedSslHint: document.getElementById("guided-ssl-hint"),
           advancedTlsSection: document.getElementById("advanced-tls-section"),
           advancedTlsTitle: document.getElementById("advanced-tls-title"),
           advancedTlsOptional: document.getElementById("advanced-tls-optional"),
@@ -2052,6 +2112,8 @@ export function renderConnectionPage(): string {
           elements.guidedSnowflakeRow.classList.toggle("panel-hidden", !isSnowflake);
           elements.guidedSslRow.classList.toggle("panel-hidden", !(isPostgres || isMySql));
           elements.advancedTlsSection.classList.toggle("panel-hidden", !(isPostgres || isMySql));
+          elements.guidedTlsQuickstart.classList.toggle("panel-hidden", !(isPostgres || isMySql));
+          resetSslCards();
 
           if (isPostgres) {
             elements.sourceDetailsTitle.textContent = "Step A2 - Set up your Postgres connection";
@@ -2065,11 +2127,8 @@ export function renderConnectionPage(): string {
             elements.guidedDb.placeholder = "analytics";
             elements.guidedBuilderTip.textContent = "Use plain credentials here. We will URL-encode usernames and passwords for you before sending the connection to the API.";
             elements.guidedProviderQuickstart.textContent = "For Supabase, copy Host, Port, Database, Username, and Password from the connection details page. There is no warehouse for Postgres.";
-            elements.guidedTlsQuickstart.textContent = "For Supabase or Neon, leave Custom CA empty and keep SSL mode on Automatic or Require TLS. Use Disable TLS only for localhost or private dev Postgres that does not support SSL.";
-            elements.guidedSslHint.querySelector("span").textContent = "Use Disable TLS only for local or private dev Postgres instances that do not support SSL.";
-            elements.advancedTlsTitle.textContent = "Advanced TLS";
-            elements.advancedTlsOptional.textContent = "(optional)";
-            setAdvancedTlsHelp('If you see TLS errors like "self-signed certificate in certificate chain", paste your org or DB root CA here. It is used only for this session.');
+            elements.guidedTlsQuickstart.textContent = "Auto works for Supabase, Neon, and most cloud Postgres. Use Off only for localhost or private dev databases.";
+            setAdvancedTlsHelp('Paste your org or database root CA certificate here. Only needed if you see TLS certificate errors.');
             elements.testBtn.textContent = "Test Postgres connection";
             elements.connectSourceBtn.textContent = "Connect Postgres source";
             elements.name.placeholder = "Supabase Prod Reader";
@@ -2090,11 +2149,8 @@ export function renderConnectionPage(): string {
             elements.guidedDb.placeholder = "analytics";
             elements.guidedBuilderTip.textContent = "Guided setup will build a MySQL URI for you and keep special characters in credentials properly encoded.";
             elements.guidedProviderQuickstart.textContent = "Copy Host, Port, Database, Username, and Password from your MySQL read-only connection details.";
-            elements.guidedTlsQuickstart.textContent = "Use Require TLS for managed MySQL. Use Disable TLS only for local or private dev MySQL that does not support SSL.";
-            elements.guidedSslHint.querySelector("span").textContent = "Use Disable TLS only for local or private dev MySQL instances that do not support SSL.";
-            elements.advancedTlsTitle.textContent = "Advanced TLS";
-            elements.advancedTlsOptional.textContent = "(optional)";
-            setAdvancedTlsHelp('If your MySQL server uses a custom CA chain, paste the CA certificate here for this session.');
+            elements.guidedTlsQuickstart.textContent = "Auto or Require works for managed MySQL (RDS, PlanetScale). Use Off only for local or private dev databases.";
+            setAdvancedTlsHelp('Paste your org or database root CA certificate here. Only needed if you see TLS certificate errors.');
             elements.testBtn.textContent = "Test MySQL connection";
             elements.connectSourceBtn.textContent = "Connect MySQL source";
             elements.name.placeholder = "MySQL Reporting Replica";
@@ -2148,6 +2204,17 @@ export function renderConnectionPage(): string {
           elements.advancedTlsHelp.innerHTML =
             escapeHtml(copy) +
             ' Need help finding it? <a href="/connect/guide#tls-ca-corporate" target="_blank" rel="noreferrer">Open the TLS CA guide</a>.';
+        }
+
+        function resetSslCards() {
+          document.querySelectorAll(".ssl-card").forEach(function(c) { c.classList.remove("ssl-card-active"); });
+          const autoCard = document.querySelector(".ssl-card[data-ssl='automatic']");
+          if (autoCard) autoCard.classList.add("ssl-card-active");
+          if (elements.guidedSslMode) elements.guidedSslMode.value = "automatic";
+          const caCertToggle = document.getElementById("ca-cert-toggle");
+          const caCertFields = document.getElementById("ca-cert-fields");
+          if (caCertToggle) caCertToggle.checked = false;
+          if (caCertFields) caCertFields.classList.add("panel-hidden");
         }
 
         function buildGuidedConnectionString(provider) {
@@ -2234,7 +2301,7 @@ export function renderConnectionPage(): string {
             /does not support ssl connections/i.test(message) &&
             getTrimmedValue(elements.guidedSslMode) !== "disable"
           ) {
-            return message + " Switch SSL mode to Disable TLS (local/dev) and retry.";
+            return message + " Switch SSL mode to Off (local/dev only) and retry.";
           }
           return message;
         }
@@ -2929,6 +2996,26 @@ export function renderConnectionPage(): string {
             }
           }
         });
+
+        document.querySelectorAll(".ssl-card").forEach(function(card) {
+          card.addEventListener("click", function() {
+            const val = this.dataset.ssl;
+            if (!val) return;
+            document.querySelectorAll(".ssl-card").forEach(function(c) { c.classList.remove("ssl-card-active"); });
+            this.classList.add("ssl-card-active");
+            if (elements.guidedSslMode) elements.guidedSslMode.value = val;
+            const radio = this.querySelector("input[type=radio]");
+            if (radio) radio.checked = true;
+          });
+        });
+
+        const caCertToggleEl = document.getElementById("ca-cert-toggle");
+        const caCertFieldsEl = document.getElementById("ca-cert-fields");
+        if (caCertToggleEl && caCertFieldsEl) {
+          caCertToggleEl.addEventListener("change", function() {
+            caCertFieldsEl.classList.toggle("panel-hidden", !this.checked);
+          });
+        }
 
         elements.sourceKindContinueBtn.addEventListener("click", () => {
           updateProviderSelectionUi();
