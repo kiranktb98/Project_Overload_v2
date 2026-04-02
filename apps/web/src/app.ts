@@ -451,7 +451,7 @@ Users can schedule any report to run automatically (daily, weekly, monthly) and 
         "X-Title": process.env.OPENROUTER_APP_NAME ?? "Claritect"
       },
       body: JSON.stringify({
-        model: "anthropic/claude-haiku-4-5-20251001",
+        model: "anthropic/claude-haiku-4.5",
         messages,
         max_tokens: 512,
         temperature: 0.4
