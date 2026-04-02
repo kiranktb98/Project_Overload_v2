@@ -25,7 +25,7 @@ export const HELP_WIDGET_STYLES = `
     color: #fff;
   }
   #help-fab:hover { transform: scale(1.08); box-shadow: 0 6px 24px rgba(108, 58, 237, 0.55); }
-  #help-fab svg { width: 22px; height: 22px; stroke: #fff; fill: none; stroke-width: 2; stroke-linecap: round; stroke-linejoin: round; }
+  #help-fab svg { width: 26px; height: 26px; }
 
   #help-panel {
     position: fixed;
@@ -225,7 +225,21 @@ export function renderHelpWidget(): string {
   return `
   <!-- Help Chat Widget -->
   <button id="help-fab" type="button" aria-label="Open help chat" title="Ask Claritect Assistant">
-    <svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="10"/><path d="M9.09 9a3 3 0 0 1 5.83 1c0 2-3 3-3 3"/><path d="M12 17h.01"/></svg>
+    <svg viewBox="0 0 24 24" fill="none" stroke="#fff" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round">
+      <!-- head -->
+      <rect x="4" y="8" width="16" height="11" rx="3"/>
+      <!-- antenna -->
+      <line x1="12" y1="8" x2="12" y2="4"/>
+      <circle cx="12" cy="3.5" r="1" fill="#fff" stroke="none"/>
+      <!-- eyes -->
+      <circle cx="9" cy="13" r="1.2" fill="#fff" stroke="none"/>
+      <circle cx="15" cy="13" r="1.2" fill="#fff" stroke="none"/>
+      <!-- mouth -->
+      <path d="M9 16.5 Q12 18 15 16.5" stroke="#fff" fill="none"/>
+      <!-- ears -->
+      <line x1="4" y1="12" x2="2" y2="12"/>
+      <line x1="20" y1="12" x2="22" y2="12"/>
+    </svg>
   </button>
 
   <div id="help-panel" role="dialog" aria-label="Claritect Assistant">
