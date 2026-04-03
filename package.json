@@ -7,7 +7,7 @@
     "dev": "pnpm -r --parallel --filter @project-overload/api --filter @project-overload/worker --filter @project-overload/web dev",
     "start": "node scripts/railway-start.mjs",
     "test": "pnpm -w exec vitest run",
-    "build": "pnpm -r --if-present build",
+    "build": "node scripts/railway-build.mjs",
     "lint": "pnpm -w exec eslint . --ext .ts",
     "db:migrate": "pnpm --filter @project-overload/api db:migrate"
   },
