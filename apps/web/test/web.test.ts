@@ -127,14 +127,14 @@ describe("web chat interface", () => {
     expect(connectPage.body).toContain("BigQuery");
     expect(connectPage.body).toContain("Guided setup");
     expect(connectPage.body).toContain("Paste connection string");
-    expect(connectPage.body).toContain("Disable TLS (local/dev)");
+    expect(connectPage.body).toContain("Local or private dev databases only");
     expect(connectPage.body).toContain("URL-encodes credentials safely");
     expect(connectPage.body).toContain("Step A2 - Set up your Postgres connection");
       expect(connectPage.body).toContain("Postgres connection details");
       expect(connectPage.body).toContain("There is no warehouse for Postgres");
       expect(connectPage.body).toContain("Test Postgres connection");
       expect(connectPage.body).toContain("Connect Postgres source");
-      expect(connectPage.body).toContain("For corporate VPN / SSL inspection");
+      expect(connectPage.body).toContain("My database needs a custom CA certificate");
       expect(connectPage.body).not.toContain("Role (optional)");
       expect(connectPage.body).not.toContain("Location (optional)");
       expect(connectPage.body).not.toContain("Credentials JSON (optional)");
@@ -161,9 +161,9 @@ describe("web chat interface", () => {
 
     const usagePage = await app.inject({ method: "GET", url: "/usage" });
     expect(usagePage.statusCode).toBe(200);
-    expect(usagePage.body).toContain("Claritect | Usage and AI balance");
-    expect(usagePage.body).toContain("OpenRouter Credits");
-    expect(usagePage.body).toContain("AI usage by model");
+    expect(usagePage.body).toContain("Platform Activity");
+    expect(usagePage.body).toContain("Reports Delivered");
+    expect(usagePage.body).toContain("Avg Time to Insight");
 
     const adminPage = await app.inject({ method: "GET", url: "/admin" });
     expect(adminPage.statusCode).toBe(200);
@@ -4692,10 +4692,10 @@ describe("web chat interface", () => {
     const body = response.json();
     expect(body.assistant_message).toContain("Clarifications to confirm:");
     expect(body.assistant_message).toContain(
-      "Q1: I assumed this should use Nov 2025 to Feb 2026 with monthly buckets. Is that fine, or do you want a change?"
+      "Q1: I assumed this should use Dec 2025 to Mar 2026 with monthly buckets. Is that fine, or do you want a change?"
     );
     expect(body.assistant_message).toContain(
-      "Q2: I assumed this should compare Jan 2026 to Feb 2026 vs Nov 2025 to Dec 2025 and show both absolute and percentage change. Is that fine, or do you want a change?"
+      "Q2: I assumed this should compare Feb 2026 to Mar 2026 vs Dec 2025 to Jan 2026 and show both absolute and percentage change. Is that fine, or do you want a change?"
     );
     expect(body.assistant_message).not.toContain("Default:");
 

@@ -12,6 +12,8 @@ import type {
 import type {
   ChatSessionRecord,
   CustomerAccountRecord,
+  HelpChatMessageRecord,
+  HelpChatSessionRecord,
   InfraCostLedgerRecord,
   MetadataStore,
   OpenRouterBalanceHistoryRecord,

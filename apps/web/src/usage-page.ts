@@ -473,6 +473,10 @@ export function renderUsageMetricsPage(): string {
             <a class="platform-link" href="/scheduled"><span class="link-icon"><svg viewBox="0 0 24 24"><rect x="3" y="4" width="18" height="18" rx="2"/><path d="M16 2v4"/><path d="M8 2v4"/><path d="M3 10h18"/><path d="M8 14h3"/><path d="M8 18h6"/></svg></span>Scheduled Reports</a>
             <a class="platform-link" href="/config"><span class="link-icon"><svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83-2.83l.06-.06A1.65 1.65 0 0 0 4.68 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 2.83-2.83l.06.06A1.65 1.65 0 0 0 9 4.68a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 2.83l-.06.06A1.65 1.65 0 0 0 19.4 9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg></span>Global Config</a>
           </nav>
+          <div class="platform-section">Resources</div>
+          <nav class="platform-nav">
+            <a class="platform-link" href="/connect/tls-guide" target="_blank" rel="noreferrer"><span class="link-icon"><svg viewBox="0 0 24 24"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/></svg></span>SSL / TLS Guide</a>
+          </nav>
           <div class="platform-footer">
             <div class="platform-user">
               <div class="platform-user-avatar">@</div>
@@ -498,49 +502,24 @@ export function renderUsageMetricsPage(): string {
           <div class="content-head">
             <div>
               <span class="eyebrow">Operations</span>
-              <h1>Usage &amp; AI Balance</h1>
-              <p class="sub">Track governed query activity, report execution, schedules, token usage, and remaining OpenRouter credits from one customer-facing operations page.</p>
+              <h1>Platform Activity</h1>
+              <p class="sub">Report delivery, schedule health, and platform usage for your Claritect workspace.</p>
             </div>
-            <span class="badge">Live Usage</span>
+            <span class="badge">Live</span>
           </div>
 
           <section class="cards">
-            <article class="card"><small>Total Queries</small><strong id="m-total">0</strong></article>
-            <article class="card"><small>Success Rate</small><strong id="m-success">0%</strong></article>
-            <article class="card"><small>Avg Rows</small><strong id="m-rows">0</strong></article>
-            <article class="card"><small>Avg Latency</small><strong id="m-latency">0ms</strong></article>
+            <article class="card"><small>Reports Delivered</small><strong id="r-total">—</strong></article>
+            <article class="card"><small>Success Rate</small><strong id="r-success">—</strong></article>
+            <article class="card"><small>Avg Time to Insight</small><strong id="r-avg-time">—</strong></article>
+            <article class="card"><small>Active Schedules</small><strong id="r-active-schedules">—</strong></article>
           </section>
 
           <section class="cards" style="margin-top:12px;">
-            <article class="card"><small>Total Report Runs</small><strong id="r-total">0</strong></article>
-            <article class="card"><small>Scheduled Runs</small><strong id="r-scheduled">0</strong></article>
-            <article class="card"><small>Success Rate</small><strong id="r-success">0%</strong></article>
-            <article class="card"><small>Active Schedules</small><strong id="r-active-schedules">0</strong></article>
-          </section>
-
-          <section class="cards" style="margin-top:12px;">
-            <article class="card"><small>OpenRouter Credits</small><strong id="ai-balance">Unavailable</strong></article>
-            <article class="card"><small>Total Tokens</small><strong id="ai-total">0</strong></article>
-            <article class="card"><small>Last 24 Hours</small><strong id="ai-24h">0</strong></article>
-            <article class="card"><small>Last 7 Days</small><strong id="ai-7d">0</strong></article>
-          </section>
-
-          <section class="table-wrap">
-            <h2 style="margin:0 0 14px;font-size:1rem;">Recent query activity</h2>
-            <table>
-              <thead>
-                <tr>
-                  <th>Timestamp</th>
-                  <th>Query ID</th>
-                  <th>Status</th>
-                  <th>Rows</th>
-                  <th>Latency</th>
-                </tr>
-              </thead>
-              <tbody id="usage-rows">
-                <tr><td colspan="5">Loading usage metrics...</td></tr>
-              </tbody>
-            </table>
+            <article class="card"><small>Active Users</small><strong id="p-users">—</strong></article>
+            <article class="card"><small>Last Activity</small><strong id="p-last-active">—</strong></article>
+            <article class="card"><small>Reports This Week</small><strong id="p-week">—</strong></article>
+            <article class="card"><small>Failed Reports</small><strong id="p-failed">—</strong></article>
           </section>
 
           <section class="table-wrap" style="margin-top:14px;">
@@ -548,49 +527,15 @@ export function renderUsageMetricsPage(): string {
             <table>
               <thead>
                 <tr>
-                  <th>Timestamp</th>
-                  <th>Run ID</th>
-                  <th>Trigger</th>
-                  <th>Status</th>
+                  <th>Completed</th>
                   <th>Contract</th>
+                  <th>Trigger</th>
+                  <th>Duration</th>
+                  <th>Status</th>
                 </tr>
               </thead>
               <tbody id="report-rows">
                 <tr><td colspan="5">Loading report activity...</td></tr>
-              </tbody>
-            </table>
-          </section>
-
-          <section class="table-wrap" style="margin-top:14px;">
-            <h2 style="margin:0 0 14px;font-size:1rem;">AI usage by agent</h2>
-            <table>
-              <thead>
-                <tr>
-                  <th>Agent</th>
-                  <th>Input</th>
-                  <th>Output</th>
-                  <th>Total</th>
-                </tr>
-              </thead>
-              <tbody id="ai-agent-rows">
-                <tr><td colspan="4">Loading AI usage...</td></tr>
-              </tbody>
-            </table>
-          </section>
-
-          <section class="table-wrap" style="margin-top:14px;">
-            <h2 style="margin:0 0 14px;font-size:1rem;">AI usage by model</h2>
-            <table>
-              <thead>
-                <tr>
-                  <th>Model</th>
-                  <th>Input</th>
-                  <th>Output</th>
-                  <th>Total</th>
-                </tr>
-              </thead>
-              <tbody id="ai-model-rows">
-                <tr><td colspan="4">Loading AI usage...</td></tr>
               </tbody>
             </table>
           </section>
@@ -642,115 +587,96 @@ export function renderUsageMetricsPage(): string {
           return Number.isFinite(d.getTime()) ? d.toLocaleString() : "-";
         }
 
+        function fmtDuration(startedAt, finishedAt) {
+          const start = new Date(String(startedAt || ""));
+          const end = new Date(String(finishedAt || ""));
+          if (!Number.isFinite(start.getTime()) || !Number.isFinite(end.getTime())) return "-";
+          const ms = end.getTime() - start.getTime();
+          if (ms < 0) return "-";
+          if (ms < 60000) return Math.round(ms / 1000) + "s";
+          return (ms / 60000).toFixed(1) + " min";
+        }
+
+        function fmtLastActive(isoString) {
+          const d = new Date(String(isoString || ""));
+          if (!Number.isFinite(d.getTime())) return "—";
+          const now = new Date();
+          const diffMs = now.getTime() - d.getTime();
+          const diffDays = Math.floor(diffMs / 86400000);
+          if (diffDays === 0) return "Today";
+          if (diffDays === 1) return "Yesterday";
+          if (diffDays < 7) return diffDays + " days ago";
+          return d.toLocaleDateString();
+        }
+
+        function fmtAvgTime(ms) {
+          const n = Number(ms);
+          if (!Number.isFinite(n) || n <= 0) return "—";
+          if (n < 60000) return Math.round(n / 1000) + "s";
+          return (n / 60000).toFixed(1) + " min";
+        }
+
         async function load() {
-          const tbody = document.getElementById("usage-rows");
           const reportTbody = document.getElementById("report-rows");
-          const agentTbody = document.getElementById("ai-agent-rows");
-          const modelTbody = document.getElementById("ai-model-rows");
-          const [summaryResponse, activityResponse, aiResponse] = await Promise.all([
+          const [summaryResponse, activityResponse] = await Promise.all([
             fetch("/api/usage/summary"),
-            fetch("/api/usage/activity"),
-            fetch("/api/usage/ai")
+            fetch("/api/usage/activity")
           ]);
           const summaryPayload = await summaryResponse.json();
           const activityPayload = await activityResponse.json();
-          const aiPayload = await aiResponse.json();
 
           if (!summaryResponse.ok || !activityResponse.ok) {
-            tbody.innerHTML = "<tr><td colspan=\\"5\\">Unable to load metrics.</td></tr>";
             reportTbody.innerHTML = "<tr><td colspan=\\"5\\">Unable to load report activity.</td></tr>";
             return;
           }
 
           const summary = summaryPayload.summary || {};
-          const governed = summary.governed_queries || {};
           const reports = summary.reports || {};
           const schedules = summary.schedules || {};
-          const logs = Array.isArray(activityPayload.queries) ? activityPayload.queries : [];
+          const users = summary.users || {};
           const runs = Array.isArray(activityPayload.runs) ? activityPayload.runs : [];
-          const balance = aiPayload.balance || {};
-          const aiUsage = aiPayload.usage || {};
-          const byAgent = aiUsage.by_agent || {};
-          const byModel = aiUsage.by_model || {};
 
-          document.getElementById("m-total").textContent = String(toNumber(governed.total));
-          document.getElementById("m-success").textContent = Math.round(toNumber(governed.success_rate) * 100) + "%";
-          document.getElementById("m-rows").textContent = Math.round(toNumber(governed.average_rows)).toLocaleString();
-          document.getElementById("m-latency").textContent = Math.round(toNumber(governed.average_latency_ms)) + "ms";
+          // Row 1 — report performance
           document.getElementById("r-total").textContent = String(toNumber(reports.total_runs));
-          document.getElementById("r-scheduled").textContent = String(toNumber(reports.scheduled_runs));
-          document.getElementById("r-success").textContent = Math.round(toNumber(reports.success_rate) * 100) + "%";
+          document.getElementById("r-success").textContent = toNumber(reports.total_runs) === 0
+            ? "—"
+            : Math.round(toNumber(reports.success_rate) * 100) + "%";
+          document.getElementById("r-avg-time").textContent = fmtAvgTime(reports.average_duration_ms);
           document.getElementById("r-active-schedules").textContent = String(toNumber(schedules.active));
-          document.getElementById("ai-balance").textContent =
-            balance.remaining_credits == null ? "Unavailable" : Number(balance.remaining_credits).toFixed(2);
-          document.getElementById("ai-total").textContent = Math.round(toNumber(aiUsage.total_tokens)).toLocaleString();
-          document.getElementById("ai-24h").textContent = Math.round(toNumber(aiUsage.last_24h_tokens)).toLocaleString();
-          document.getElementById("ai-7d").textContent = Math.round(toNumber(aiUsage.last_7d_tokens)).toLocaleString();
 
-          if (logs.length === 0) {
-            tbody.innerHTML = "<tr><td colspan=\\"5\\">No queries executed yet.</td></tr>";
-          } else {
-            tbody.innerHTML = logs.slice(0, 120).map((entry) => {
-              const id = String(entry.id || "-");
-              const status = String(entry.status || "-");
-              const rows = toNumber(entry.row_count).toLocaleString();
-              const latency = Math.round(toNumber(entry.execution_ms)) + "ms";
-              return "<tr>" +
-                "<td>" + fmtTs(entry.timestamp) + "</td>" +
-                "<td><code>" + esc(id) + "</code></td>" +
-                "<td>" + esc(status) + "</td>" +
-                "<td>" + rows + "</td>" +
-                "<td>" + latency + "</td>" +
-                "</tr>";
-            }).join("");
-          }
+          // Row 2 — platform activity
+          document.getElementById("p-users").textContent = String(toNumber(users.active || users.total));
+          document.getElementById("p-last-active").textContent = fmtLastActive(users.most_recent_login_at);
+          const weekAgo = Date.now() - 7 * 86400000;
+          const recentRuns = runs.filter(function(r) {
+            const t = new Date(String(r.finished_at || r.started_at || "")).getTime();
+            return Number.isFinite(t) && t >= weekAgo;
+          });
+          document.getElementById("p-week").textContent = String(recentRuns.length);
+          const failedCount = runs.filter(function(r) { return r.status === "failed"; }).length;
+          document.getElementById("p-failed").textContent = String(failedCount);
 
+          // Report runs table
           if (runs.length === 0) {
             reportTbody.innerHTML = "<tr><td colspan=\\"5\\">No report runs yet.</td></tr>";
           } else {
-            reportTbody.innerHTML = runs.map((entry) => {
+            reportTbody.innerHTML = runs.map(function(entry) {
+              const statusClass = entry.status === "failed" ? " style=\\"color:#ef4444;\\"" : entry.status === "succeeded" ? " style=\\"color:#22c55e;\\"" : "";
+              const shortContract = esc(String(entry.contract_id || "-").replace(/^contract_/, "").slice(0, 12)) + "…";
               return "<tr>" +
                 "<td>" + fmtTs(entry.finished_at || entry.started_at) + "</td>" +
-                "<td><code>" + esc(entry.id || "-") + "</code></td>" +
+                "<td><code title=\\"" + esc(entry.contract_id || "") + "\\">" + shortContract + "</code></td>" +
                 "<td>" + esc(entry.trigger || "-") + "</td>" +
-                "<td>" + esc(entry.status || "-") + "</td>" +
-                "<td><code>" + esc(entry.contract_id || "-") + "</code></td>" +
+                "<td>" + fmtDuration(entry.started_at, entry.finished_at) + "</td>" +
+                "<td" + statusClass + ">" + esc(entry.status || "-") + "</td>" +
                 "</tr>";
             }).join("");
           }
-
-          const renderUsageRows = function (target, record, emptyCopy) {
-            const entries = Object.entries(record || {}).sort((left, right) => {
-              return toNumber(right[1] && right[1].total_tokens) - toNumber(left[1] && left[1].total_tokens);
-            });
-            if (entries.length === 0) {
-              target.innerHTML = "<tr><td colspan=\\"4\\">" + emptyCopy + "</td></tr>";
-              return;
-            }
-            target.innerHTML = entries.slice(0, 12).map((entry) => {
-              const usage = entry[1] || {};
-              return "<tr>" +
-                "<td><code>" + esc(entry[0]) + "</code></td>" +
-                "<td>" + Math.round(toNumber(usage.input_tokens)).toLocaleString() + "</td>" +
-                "<td>" + Math.round(toNumber(usage.output_tokens)).toLocaleString() + "</td>" +
-                "<td>" + Math.round(toNumber(usage.total_tokens)).toLocaleString() + "</td>" +
-                "</tr>";
-            }).join("");
-          };
-
-          renderUsageRows(agentTbody, byAgent, "No AI agent usage captured yet.");
-          renderUsageRows(modelTbody, byModel, "No model usage captured yet.");
         }
 
-        load().catch(() => {
-          const tbody = document.getElementById("usage-rows");
-          tbody.innerHTML = "<tr><td colspan=\\"5\\">Unable to load metrics.</td></tr>";
+        load().catch(function() {
           const reportTbody = document.getElementById("report-rows");
           reportTbody.innerHTML = "<tr><td colspan=\\"5\\">Unable to load report activity.</td></tr>";
-          const agentTbody = document.getElementById("ai-agent-rows");
-          const modelTbody = document.getElementById("ai-model-rows");
-          agentTbody.innerHTML = "<tr><td colspan=\\"4\\">Unable to load AI usage.</td></tr>";
-          modelTbody.innerHTML = "<tr><td colspan=\\"4\\">Unable to load AI usage.</td></tr>";
         });
       })();
     </script>

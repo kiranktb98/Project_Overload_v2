@@ -1424,6 +1424,10 @@ export function renderConnectionPage(): string {
             <a class="platform-link" href="/scheduled"><span class="link-icon"><svg viewBox="0 0 24 24"><rect x="3" y="4" width="18" height="18" rx="2"/><path d="M16 2v4"/><path d="M8 2v4"/><path d="M3 10h18"/><path d="M8 14h3"/><path d="M8 18h6"/></svg></span>Scheduled Reports</a>
             <a class="platform-link" href="/config"><span class="link-icon"><svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83-2.83l.06-.06A1.65 1.65 0 0 0 4.68 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 2.83-2.83l.06.06A1.65 1.65 0 0 0 9 4.68a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 2.83l-.06.06A1.65 1.65 0 0 0 19.4 9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg></span>Global Config</a>
           </nav>
+          <div class="platform-section">Resources</div>
+          <nav class="platform-nav">
+            <a class="platform-link" href="/connect/tls-guide" target="_blank" rel="noreferrer"><span class="link-icon"><svg viewBox="0 0 24 24"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/></svg></span>SSL / TLS Guide</a>
+          </nav>
           <div class="platform-footer">
             <div class="platform-user">
               <div class="platform-user-avatar">@</div>
@@ -1483,7 +1487,9 @@ export function renderConnectionPage(): string {
             <p class="muted">Pick the source family first. The next page will handle connection testing and source setup for that connector.</p>
             <p class="muted" style="margin-top: -2px;">
               Need examples and setup notes first?
-              <a href="/connect/guide" target="_blank" rel="noreferrer">Open the database connection guide</a>.
+              <a href="/connect/guide" target="_blank" rel="noreferrer">Open the database connection guide</a>
+              &nbsp;·&nbsp;
+              <a href="/connect/tls-guide" target="_blank" rel="noreferrer">SSL / TLS guide</a>.
             </p>
             <div class="source-grid" id="source-grid">
               <button class="source-option" data-provider="postgres" type="button">
@@ -1541,7 +1547,7 @@ export function renderConnectionPage(): string {
             <div class="row">
               <div>
                 <label for="connection-name">Connection Name</label>
-                <input id="connection-name" placeholder="Customer Prod Read Replica" />
+                <input id="connection-name" placeholder="Prod Analytics Replica" />
               </div>
               <div>
                 <label for="query-limit">Safe Query Limit</label>
@@ -1599,7 +1605,10 @@ export function renderConnectionPage(): string {
               </div>
 
               <div id="guided-ssl-row">
-                <label style="display: block; margin-bottom: 8px;">Connection security</label>
+                <label style="display: flex; align-items: baseline; gap: 10px; margin-bottom: 8px;">
+                  Connection security
+                  <a href="/connect/tls-guide" target="_blank" rel="noreferrer" style="font-size: 0.75rem; font-weight: 400;">What do these mean?</a>
+                </label>
                 <div class="ssl-cards">
                   <label class="ssl-card ssl-card-active" data-ssl="automatic">
                     <input type="radio" name="ssl_mode_pick" value="automatic" checked hidden />
@@ -1623,7 +1632,7 @@ export function renderConnectionPage(): string {
 
             <div id="manual-connection-fields" class="panel-hidden" style="margin-top: 10px;">
               <label for="connection-string">Connection String</label>
-              <input id="connection-string" type="password" placeholder="postgresql://user:pass@host:5432/db?sslmode=require" />
+              <input id="connection-string" type="password" placeholder="postgresql://reader:password@db.example.com:5432/analytics?sslmode=require" />
               <p class="muted" id="connection-string-help">Credentials never run in the browser. This string is sent to the server, stored encrypted, and used for governed SELECT-only execution.</p>
             </div>
 
@@ -1639,7 +1648,7 @@ export function renderConnectionPage(): string {
                 <p class="tls-guidance-copy">Only needed if your database team gave you a custom root CA, or your corporate network intercepts TLS. Leave empty for Supabase, Neon, RDS, PlanetScale, and most cloud databases.</p>
                 <label for="tls-ca-pem">CA Certificate (PEM)</label>
                 <textarea id="tls-ca-pem" placeholder="-----BEGIN CERTIFICATE-----&#10;...&#10;-----END CERTIFICATE-----"></textarea>
-                <p class="muted" id="advanced-tls-help">Paste your org or database root CA certificate here. <a href="/connect/guide#tls-ca-corporate" target="_blank" rel="noreferrer">See the TLS guide</a>.</p>
+                <p class="muted" id="advanced-tls-help">Paste your org or database root CA certificate here. <a href="/connect/tls-guide" target="_blank" rel="noreferrer">See the full SSL / TLS guide</a>.</p>
               </div>
             </div>
 
@@ -1986,25 +1995,25 @@ export function renderConnectionPage(): string {
           postgres: {
             label: "Postgres",
             note: "Use a Postgres-compatible connection string. This is also the best fit for Neon and similar read replicas.",
-            placeholder: "postgresql://user:pass@host:5432/db?sslmode=require",
+            placeholder: "postgresql://reader:password@db.example.com:5432/analytics?sslmode=require",
             help: "Credentials never run in the browser. This string is sent to the server, stored encrypted, and used for governed SELECT-only execution."
           },
           mysql: {
             label: "MySQL",
             note: "Use a MySQL-compatible connection string. The flow stays the same: test, govern, catalogue, then activate.",
-            placeholder: "mysql://user:pass@host:3306/db?sslmode=require",
+            placeholder: "mysql://reader:password@db.example.com:3306/analytics?sslmode=require",
             help: "Use a MySQL-compatible connection string. The runtime will validate access before governance."
           },
           snowflake: {
             label: "Snowflake",
             note: "Use a Snowflake connection string with account, database, schema, and warehouse so we can test access and catalog the governed tables.",
-            placeholder: "snowflake://user:pass@account/db/schema?warehouse=COMPUTE_WH",
+            placeholder: "snowflake://reader:password@orgname-accountname/ANALYTICS_DB/PUBLIC?warehouse=COMPUTE_WH",
             help: "We will validate access first, then move into allowlist governance and safe-query activation."
           },
           bigquery: {
             label: "BigQuery",
             note: "Use a BigQuery project and dataset connection string so we can validate the dataset, catalogue it, and activate safe queries.",
-            placeholder: "bigquery://project-id/dataset?credentials_json=...",
+            placeholder: "bigquery://my-project-123/analytics",
             help: "We will validate the dataset first, then move into allowlist governance and safe-query activation."
           }
         };
@@ -2119,20 +2128,20 @@ export function renderConnectionPage(): string {
             elements.sourceDetailsTitle.textContent = "Step A2 - Set up your Postgres connection";
             elements.sourceDetailsSub.textContent = "Fill in the Postgres connection details, validate access, and connect the source before you govern the allowlist.";
             elements.guidedFormTitle.textContent = "Postgres connection details";
-            elements.guidedFormSubtitle.textContent = "Use the values from your Postgres, Supabase, or Neon connection screen. We will build the URI for you.";
+            elements.guidedFormSubtitle.textContent = "Fill in your Postgres connection details below. We will build the URI for you.";
             elements.guidedHostLabel.textContent = "Host";
-            elements.guidedHost.placeholder = "db.company.com";
+            elements.guidedHost.placeholder = "db.example.com";
             elements.guidedPort.placeholder = "5432";
             elements.guidedDbLabel.textContent = "Database";
             elements.guidedDb.placeholder = "analytics";
             elements.guidedBuilderTip.textContent = "Use plain credentials here. We will URL-encode usernames and passwords for you before sending the connection to the API.";
-            elements.guidedProviderQuickstart.textContent = "For Supabase, copy Host, Port, Database, Username, and Password from the connection details page. There is no warehouse for Postgres.";
-            elements.guidedTlsQuickstart.textContent = "Auto works for Supabase, Neon, and most cloud Postgres. Use Off only for localhost or private dev databases.";
+            elements.guidedProviderQuickstart.textContent = "Copy Host, Port, Database, Username, and Password from your connection details. There is no warehouse for Postgres.";
+            elements.guidedTlsQuickstart.textContent = "Auto works for most cloud Postgres. Use Off only for localhost or private dev databases.";
             setAdvancedTlsHelp('Paste your org or database root CA certificate here. Only needed if you see TLS certificate errors.');
             elements.testBtn.textContent = "Test Postgres connection";
             elements.connectSourceBtn.textContent = "Connect Postgres source";
-            elements.name.placeholder = "Supabase Prod Reader";
-            elements.guidedUsername.placeholder = "postgres.xxxxx";
+            elements.name.placeholder = "Prod Analytics Replica";
+            elements.guidedUsername.placeholder = "reader";
             elements.guidedPassword.placeholder = "********";
             if (!getTrimmedValue(elements.guidedPort)) {
               elements.guidedPort.value = "5432";
@@ -2165,16 +2174,16 @@ export function renderConnectionPage(): string {
             elements.guidedFormTitle.textContent = "Snowflake connection details";
             elements.guidedFormSubtitle.textContent = "Use your Snowflake account, database, schema, and warehouse. We will build the Snowflake connection string for you.";
             elements.guidedHostLabel.textContent = "Account";
-            elements.guidedHost.placeholder = "acme or acme.us-east-1";
+            elements.guidedHost.placeholder = "orgname-accountname";
             elements.guidedDbLabel.textContent = "Database";
-            elements.guidedDb.placeholder = "TESTDB";
+            elements.guidedDb.placeholder = "ANALYTICS_DB";
             elements.guidedSchema.placeholder = "PUBLIC";
             elements.guidedBuilderTip.textContent = "Enter your Snowflake username, password, account, database, schema, and warehouse. We will build the Snowflake connection string for you.";
             elements.guidedProviderQuickstart.textContent = "Warehouse is a Snowflake concept only. Get it from your Snowflake admin or from the worksheet/connection details your team uses, for example COMPUTE_WH.";
             elements.guidedTlsQuickstart.textContent = "Snowflake handles transport security itself in the connector. You do not need the Postgres/MySQL SSL mode dropdown here.";
             elements.testBtn.textContent = "Test Snowflake connection";
             elements.connectSourceBtn.textContent = "Connect Snowflake source";
-            elements.name.placeholder = "Snowflake Finance Reader";
+            elements.name.placeholder = "Snowflake Analytics Reader";
             elements.guidedUsername.placeholder = "reader";
             elements.guidedPassword.placeholder = "********";
           } else {
@@ -2183,7 +2192,7 @@ export function renderConnectionPage(): string {
             elements.guidedFormTitle.textContent = "BigQuery connection details";
             elements.guidedFormSubtitle.textContent = "Use your project and dataset. If you need custom auth details, use the manual connection string mode.";
             elements.guidedHostLabel.textContent = "Project ID";
-            elements.guidedHost.placeholder = "demo-project";
+            elements.guidedHost.placeholder = "my-project-123";
             elements.guidedDbLabel.textContent = "Dataset";
             elements.guidedDb.placeholder = "analytics";
             elements.guidedBuilderTip.textContent = "Use your BigQuery project and dataset here. Guided mode keeps this simple. If you need credentials_json or other advanced auth options, switch to Paste connection string.";
