@@ -432,7 +432,11 @@ Users can schedule any report to run automatically (daily, weekly, monthly) and 
   });
 
   app.post("/api/help/chat", async (request, reply) => {
-    const body = HelpChatSchema.parse(request.body);
+    const parsed = HelpChatSchema.safeParse(request.body);
+    if (!parsed.success) {
+      return reply.code(400).send({ reply: "Invalid request." });
+    }
+    const body = parsed.data;
     const openrouterKey = process.env.OPENROUTER_API_KEY;
     if (!openrouterKey) {
       return reply.code(503).send({ reply: "Help chat is not configured. Check your guides at /connect/guide." });
