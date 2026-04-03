@@ -29,8 +29,6 @@ import { renderAdminLoggedOutPage, renderCustomerLoggedOutPage } from "./logout-
 import { renderUsageMetricsPage } from "./usage-page";
 import { renderGlobalConfigPage } from "./config-page";
 import { renderScheduledReportsPage } from "./scheduled-page";
-import { renderMarketingHomePage, renderMarketingPricingPage } from "./marketing-page";
-import { ensureMarketingBundle, readMarketingAsset, readStubMarketingAsset } from "./marketing-build";
 import {
   renderAdminAccountsPage,
   renderAdminDashboardPage,
@@ -53,13 +51,13 @@ export type WebAppDependencies = {
   fetch_impl?: typeof fetch;
   conversation_client?: ConversationClient;
   query_router?: QueryRouterClient;
-  marketing_asset_mode?: "build" | "stub";
 };
 
 class ChatStageError extends Error {
   readonly stage: string;
 
-  constructor(stage: string, _cause: unknown) {
+  constructor(stage: string, cause: unknown) {
+    void cause;
     super(`Something went wrong while processing your message — please try again in a moment.`);
     this.name = "ChatStageError";
     this.stage = stage;
@@ -95,7 +93,6 @@ export function buildWebApp(options: WebAppDependencies = {}) {
     options.query_router ?? createQueryRouterClientFromEnv({ fetch_impl: options.fetch_impl });
   const authEnabled = isUiAuthEnabled();
   const orchestratorEnabled = isConversationOrchestratorEnabled();
-  const marketingAssetMode = options.marketing_asset_mode ?? "build";
 
   // Allow HTML form POSTs (e.g. logout buttons) without body parsing
   app.addContentTypeParser("application/x-www-form-urlencoded", (_request, _payload, done) => {
@@ -283,26 +280,6 @@ export function buildWebApp(options: WebAppDependencies = {}) {
   app.get("/assets/claritect-logo.svg", async (_request, reply) => {
     return reply.type("image/svg+xml; charset=utf-8").send(CLARITECT_LOGO_SVG);
   });
-
-  app.get("/marketing-assets/*", async (request, reply) => {
-    const fileName = typeof request.params === "object" && request.params !== null && "*" in request.params
-      ? String((request.params as Record<string, unknown>)["*"] ?? "").trim()
-      : "";
-    if (fileName.length === 0) {
-      return reply.code(404).send({ message: "Marketing asset not found" });
-    }
-    const asset =
-      marketingAssetMode === "stub"
-        ? readStubMarketingAsset(fileName)
-        : await (async () => {
-            await ensureMarketingBundle();
-            return readMarketingAsset(fileName);
-          })();
-    if (!asset) {
-      return reply.code(404).send({ message: "Marketing asset not found" });
-    }
-    return reply.type(asset.contentType).send(asset.body);
-  });
   app.get("/api/chat/runtime", async () => ({
     provider: conversationClient.provider,
     mode: conversationClient.mode,
@@ -346,14 +323,21 @@ export function buildWebApp(options: WebAppDependencies = {}) {
     }
   });
 
-  app.get("/", async (_request, reply) => {
-    await ensureMarketingBundle();
-    return reply.type("text/html; charset=utf-8").send(renderMarketingHomePage());
+  app.get("/", async (request, reply) => {
+    if (!authEnabled) {
+      return reply.redirect("/app");
+    }
+    if (isAdminAuthenticatedRequest(request.headers.cookie)) {
+      return reply.redirect("/admin");
+    }
+    if (isCustomerAuthenticatedRequest(request.headers.cookie)) {
+      return reply.redirect("/app");
+    }
+    return reply.redirect("/login");
   });
 
   app.get("/pricing", async (_request, reply) => {
-    await ensureMarketingBundle();
-    return reply.type("text/html; charset=utf-8").send(renderMarketingPricingPage());
+    return reply.redirect("/");
   });
 
   app.get("/app", async (_request, reply) => {
@@ -1787,7 +1771,6 @@ function isPublicPath(pathname: string): boolean {
     pathname === "/admin/login" ||
     pathname === "/admin/logout" ||
     pathname === "/admin/auth/login" ||
-    pathname.startsWith("/marketing-assets/") ||
     pathname === "/assets/claritect-logo.svg" ||
     pathname === "/connect/guide";
 }

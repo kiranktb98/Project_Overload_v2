@@ -504,6 +504,42 @@ export class InMemoryMetadataStore implements MetadataStore {
     });
   }
 
+<<<<<<< HEAD
+=======
+  private readonly helpChatSessions = new Map<string, HelpChatSessionRecord>();
+
+  async saveHelpChatSession(
+    sessionId: string,
+    username: string,
+    messages: HelpChatMessageRecord[],
+    context?: StoreRequestContext
+  ): Promise<HelpChatSessionRecord> {
+    const tenantId = resolveTenantId(context);
+    const now = new Date().toISOString();
+    const existing = this.helpChatSessions.get(sessionId);
+    const record: HelpChatSessionRecord = {
+      id: sessionId,
+      tenant_id: tenantId,
+      username,
+      messages,
+      created_at: existing?.created_at ?? now,
+      updated_at: now
+    };
+    this.helpChatSessions.set(sessionId, record);
+    return record;
+  }
+
+  async listHelpChatSessions(context?: StoreRequestContext): Promise<HelpChatSessionRecord[]> {
+    const tenantId = resolveTenantId(context);
+    return Array.from(this.helpChatSessions.values())
+      .filter((s) => s.tenant_id === tenantId)
+      .sort((a, b) => b.updated_at.localeCompare(a.updated_at));
+  }
+
+  async getHelpChatSession(sessionId: string, context?: StoreRequestContext): Promise<HelpChatSessionRecord | null> {
+    void context;
+    return this.helpChatSessions.get(sessionId) ?? null;
+  }
   async close(): Promise<void> {
     this.semanticByTenant.clear();
     this.reportContractsByTenant.clear();

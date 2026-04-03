@@ -79,37 +79,20 @@ describe("web chat interface", () => {
 
   it("serves health and html routes", async () => {
     const app = buildWebApp({
-      conversation_client: createPassthroughConversationClient(),
-      marketing_asset_mode: "stub"
+      conversation_client: createPassthroughConversationClient()
     });
 
     const health = await app.inject({ method: "GET", url: "/health" });
     expect(health.statusCode).toBe(200);
     expect(health.json()).toEqual({ status: "ok", service: "web" });
 
-    const marketingPage = await app.inject({ method: "GET", url: "/" });
-    expect(marketingPage.statusCode).toBe(200);
-    expect(marketingPage.body).toContain("Claritect");
-    expect(marketingPage.body).toContain("Turn data into decisions");
-    expect(marketingPage.body).toContain("/marketing-assets/home.js");
-    expect(marketingPage.body).toContain("Book a Live Pilot");
+    const rootPage = await app.inject({ method: "GET", url: "/" });
+    expect(rootPage.statusCode).toBe(302);
+    expect(rootPage.headers.location).toBe("/app");
 
     const pricingPage = await app.inject({ method: "GET", url: "/pricing" });
-    expect(pricingPage.statusCode).toBe(200);
-    expect(pricingPage.body).toContain("Claritect | Pricing");
-    expect(pricingPage.body).toContain("How Claritect compares");
-    expect(pricingPage.body).toContain("Self-serve AI tools");
-    expect(pricingPage.body).toContain("/marketing-assets/pricing.js");
-
-    const marketingHomeScript = await app.inject({ method: "GET", url: "/marketing-assets/home.js" });
-    expect(marketingHomeScript.statusCode).toBe(200);
-    expect(marketingHomeScript.headers["content-type"]).toContain("text/javascript");
-    expect(marketingHomeScript.body).toContain("HomeHeroScene");
-
-    const marketingPricingStyles = await app.inject({ method: "GET", url: "/marketing-assets/pricing.css" });
-    expect(marketingPricingStyles.statusCode).toBe(200);
-    expect(marketingPricingStyles.headers["content-type"]).toContain("text/css");
-    expect(marketingPricingStyles.body).toContain(".mk-pricing-hero");
+    expect(pricingPage.statusCode).toBe(302);
+    expect(pricingPage.headers.location).toBe("/");
 
     const loginPage = await app.inject({ method: "GET", url: "/login" });
     expect(loginPage.statusCode).toBe(200);
