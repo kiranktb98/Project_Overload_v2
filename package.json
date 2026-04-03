@@ -5,6 +5,7 @@
   "packageManager": "pnpm@10.16.1",
   "scripts": {
     "dev": "pnpm -r --parallel --filter @project-overload/api --filter @project-overload/worker --filter @project-overload/web dev",
+    "start": "node scripts/railway-start.mjs",
     "test": "pnpm -w exec vitest run",
     "build": "pnpm -r --if-present build",
     "lint": "pnpm -w exec eslint . --ext .ts",

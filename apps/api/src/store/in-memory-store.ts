@@ -504,8 +504,6 @@ export class InMemoryMetadataStore implements MetadataStore {
     });
   }
 
-<<<<<<< HEAD
-=======
   private readonly helpChatSessions = new Map<string, HelpChatSessionRecord>();
 
   async saveHelpChatSession(
