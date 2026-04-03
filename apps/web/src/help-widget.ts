@@ -411,6 +411,7 @@ export function renderHelpWidget(): string {
         })
         .catch(function(err) {
           removeTyping();
+          console.error("[help-chat] error:", err);
           if (err === "auth") {
             addBubble("assistant", "Your session has expired. Please refresh the page and log in again.");
           } else if (typeof err === "string" && err.length > 0 && err.length < 300) {

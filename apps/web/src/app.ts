@@ -442,58 +442,64 @@ Users can schedule any report to run automatically (daily, weekly, monthly) and 
       return reply.code(503).send({ reply: "Help chat is not configured. Check your guides at /connect/guide." });
     }
 
-    const messages = [
-      { role: "system", content: HELP_SYSTEM_PROMPT },
-      ...body.history.map((h) => ({ role: h.role, content: h.content })),
-      { role: "user", content: body.message }
-    ];
+    try {
+      const messages = [
+        { role: "system", content: HELP_SYSTEM_PROMPT },
+        ...body.history.map((h) => ({ role: h.role, content: h.content })),
+        { role: "user", content: body.message }
+      ];
 
-    const response = await fetch("https://openrouter.ai/api/v1/chat/completions", {
-      method: "POST",
-      headers: {
-        "Authorization": `Bearer ${openrouterKey}`,
-        "Content-Type": "application/json",
-        "HTTP-Referer": process.env.OPENROUTER_APP_URL ?? "https://claritect.app",
-        "X-Title": process.env.OPENROUTER_APP_NAME ?? "Claritect"
-      },
-      body: JSON.stringify({
-        model: "anthropic/claude-haiku-4.5",
-        messages,
-        max_tokens: 512,
-        temperature: 0.4
-      }),
-      signal: AbortSignal.timeout(15000)
-    });
+      const response = await fetch("https://openrouter.ai/api/v1/chat/completions", {
+        method: "POST",
+        headers: {
+          "Authorization": `Bearer ${openrouterKey}`,
+          "Content-Type": "application/json",
+          "HTTP-Referer": process.env.OPENROUTER_APP_URL ?? "https://claritect.app",
+          "X-Title": process.env.OPENROUTER_APP_NAME ?? "Claritect"
+        },
+        body: JSON.stringify({
+          model: "anthropic/claude-haiku-4.5",
+          messages,
+          max_tokens: 512,
+          temperature: 0.4
+        }),
+        signal: AbortSignal.timeout(15000)
+      });
 
-    if (!response.ok) {
-      return reply.code(502).send({ reply: "Couldn't reach the assistant right now. Try the guides at /connect/guide." });
+      if (!response.ok) {
+        return reply.code(502).send({ reply: "Couldn't reach the assistant right now. Try the guides at /connect/guide." });
+      }
+
+      const data = await response.json() as { choices?: Array<{ message?: { content?: string } }> };
+      const text = data.choices?.[0]?.message?.content?.trim() ?? "Sorry, I didn't get a response. Try rephrasing your question.";
+
+      // Persist conversation to DB — fire and forget, don't block the response
+      const updatedMessages = [
+        ...body.history,
+        { role: "user" as const, content: body.message },
+        { role: "assistant" as const, content: text }
+      ];
+      const username = getCustomerUsername(request.headers.cookie) ?? "unknown";
+      const sessionId = body.session_id ?? randomUUID();
+      void fetch(`${apiBaseUrl}/help-chat/sessions`, {
+        method: "POST",
+        headers: {
+          "content-type": "application/json",
+          ...buildApiAuthHeader()
+        },
+        body: JSON.stringify({
+          session_id: sessionId,
+          username,
+          messages: updatedMessages
+        })
+      }).catch(() => { /* non-critical */ });
+
+      return { reply: text, session_id: sessionId };
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      request.log.error({ err }, "help-chat error");
+      return reply.code(500).send({ reply: `Something went wrong: ${msg}` });
     }
-
-    const data = await response.json() as { choices?: Array<{ message?: { content?: string } }> };
-    const text = data.choices?.[0]?.message?.content?.trim() ?? "Sorry, I didn't get a response. Try rephrasing your question.";
-
-    // Persist conversation to DB — fire and forget, don't block the response
-    const updatedMessages = [
-      ...body.history,
-      { role: "user" as const, content: body.message },
-      { role: "assistant" as const, content: text }
-    ];
-    const username = getCustomerUsername(request.headers.cookie) ?? "unknown";
-    const sessionId = body.session_id ?? randomUUID();
-    void fetch(`${apiBaseUrl}/help-chat/sessions`, {
-      method: "POST",
-      headers: {
-        "content-type": "application/json",
-        ...buildApiAuthHeader()
-      },
-      body: JSON.stringify({
-        session_id: sessionId,
-        username,
-        messages: updatedMessages
-      })
-    }).catch(() => { /* non-critical */ });
-
-    return { reply: text, session_id: sessionId };
   });
 
   function withHelpWidget(html: string): string {
