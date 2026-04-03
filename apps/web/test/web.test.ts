@@ -178,9 +178,9 @@ describe("web chat interface", () => {
 
     const usagePage = await app.inject({ method: "GET", url: "/usage" });
     expect(usagePage.statusCode).toBe(200);
-    expect(usagePage.body).toContain("Claritect | Usage and AI balance");
-    expect(usagePage.body).toContain("OpenRouter Credits");
-    expect(usagePage.body).toContain("AI usage by model");
+    expect(usagePage.body).toContain("Platform Activity");
+    expect(usagePage.body).toContain("Reports Delivered");
+    expect(usagePage.body).toContain("Avg Time to Insight");
 
     const adminPage = await app.inject({ method: "GET", url: "/admin" });
     expect(adminPage.statusCode).toBe(200);
