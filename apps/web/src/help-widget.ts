@@ -390,10 +390,17 @@ export function renderHelpWidget(): string {
 
       fetch("/api/help/chat", {
         method: "POST",
+        credentials: "same-origin",
         headers: { "content-type": "application/json" },
         body: JSON.stringify({ message: message, history: historyToSend, session_id: sessionId })
       })
-        .then(function(r) { return r.ok ? r.json() : Promise.reject(r.status); })
+        .then(function(r) {
+          if (r.status === 401) { return Promise.reject("auth"); }
+          return r.json().then(function(data) {
+            if (!r.ok) { return Promise.reject(data.reply || r.status); }
+            return data;
+          });
+        })
         .then(function(data) {
           removeTyping();
           var reply = data.reply || "Sorry, something went wrong.";
@@ -402,9 +409,15 @@ export function renderHelpWidget(): string {
           history.push({ role: "user", content: message });
           history.push({ role: "assistant", content: reply });
         })
-        .catch(function() {
+        .catch(function(err) {
           removeTyping();
-          addBubble("assistant", "Sorry, I couldn't connect right now. Try refreshing or check the guides at /connect/guide.");
+          if (err === "auth") {
+            addBubble("assistant", "Your session has expired. Please refresh the page and log in again.");
+          } else if (typeof err === "string" && err.length > 0 && err.length < 300) {
+            addBubble("assistant", err);
+          } else {
+            addBubble("assistant", "Sorry, I couldn't connect right now. Try refreshing or check the guides at /connect/guide.");
+          }
         })
         .finally(function() {
           setBusy(false);
