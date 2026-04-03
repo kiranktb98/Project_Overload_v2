@@ -392,7 +392,7 @@ export function renderHelpWidget(): string {
         method: "POST",
         credentials: "same-origin",
         headers: { "content-type": "application/json" },
-        body: JSON.stringify({ message: message, history: historyToSend, session_id: sessionId })
+        body: JSON.stringify(Object.assign({ message: message, history: historyToSend }, sessionId ? { session_id: sessionId } : {}))
       })
         .then(function(r) {
           if (r.status === 401) { return Promise.reject("auth"); }
