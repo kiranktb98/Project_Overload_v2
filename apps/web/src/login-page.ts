@@ -427,7 +427,6 @@ export function renderLoginPage(): string {
             <button type="submit">Sign In</button>
             <div class="status" id="status"></div>
           </form>
-          <div class="hint">Demo credentials: <strong>test123</strong> / <strong>test123</strong>, <strong>krypton123</strong> / <strong>test123</strong>, or <strong>test456</strong> / <strong>test456</strong></div>
           <div class="hint-grid">
             <div class="hint-card">
               <small>Best for</small>
@@ -459,7 +458,7 @@ export function renderLoginPage(): string {
           });
 
           if (!response.ok) {
-            statusEl.textContent = "Invalid credentials. Use test123 / test123, krypton123 / test123, or test456 / test456.";
+            statusEl.textContent = "Invalid credentials. Please try again or contact your workspace administrator.";
             return;
           }
 

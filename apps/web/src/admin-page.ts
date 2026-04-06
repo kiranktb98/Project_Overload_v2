@@ -976,7 +976,6 @@ export function renderAdminLoginPage(): string {
       <input id="password" name="password" type="password" autocomplete="current-password" required />
       <div class="error" id="login-error"></div>
       <button type="submit">Open admin console</button>
-      <div class="meta">Demo admin: claritect_admin / test123</div>
     </form>
     <script>
       document.getElementById('admin-login-form').addEventListener('submit', async (event) => {
