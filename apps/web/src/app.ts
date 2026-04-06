@@ -31,6 +31,7 @@ import { renderUsageMetricsPage } from "./usage-page";
 import { renderHomePage, renderPricingPage, renderSignupPage } from "./public-page";
 import { renderGlobalConfigPage } from "./config-page";
 import { renderScheduledReportsPage } from "./scheduled-page";
+import { CLARITECT_FAVICON_SVG } from "./brand";
 import {
   renderAdminAccountsPage,
   renderAdminDashboardPage,
@@ -314,6 +315,10 @@ export function buildWebApp(options: WebAppDependencies = {}) {
   app.get("/assets/claritect-logo.svg", async (_request, reply) => {
     return reply.type("image/svg+xml; charset=utf-8").send(CLARITECT_LOGO_SVG);
   });
+  app.get("/favicon.svg", async (_request, reply) => {
+    return reply.type("image/svg+xml; charset=utf-8").send(CLARITECT_FAVICON_SVG);
+  });
+  app.get("/favicon.ico", async (_request, reply) => reply.redirect("/favicon.svg"));
   app.get("/api/chat/runtime", async () => ({
     provider: conversationClient.provider,
     mode: conversationClient.mode,
@@ -1934,12 +1939,14 @@ function isPublicPath(pathname: string): boolean {
     pathname === "/health" ||
     pathname === "/login" ||
     pathname === "/logout" ||
-    pathname === "/auth/login" ||
-    pathname === "/admin/login" ||
-    pathname === "/admin/logout" ||
-    pathname === "/admin/auth/login" ||
-    pathname === "/assets/claritect-logo.svg" ||
-    pathname === "/connect/guide" ||
+      pathname === "/auth/login" ||
+      pathname === "/admin/login" ||
+      pathname === "/admin/logout" ||
+      pathname === "/admin/auth/login" ||
+      pathname === "/favicon.svg" ||
+      pathname === "/favicon.ico" ||
+      pathname === "/assets/claritect-logo.svg" ||
+      pathname === "/connect/guide" ||
     pathname === "/connect/tls-guide" ||
     pathname === "/internal/ai-plan";
 }

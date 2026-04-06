@@ -90,6 +90,8 @@ describe("web chat interface", () => {
     expect(rootPage.statusCode).toBe(200);
     expect(rootPage.body).toContain("Home page");
     expect(rootPage.body).toContain("<title>Claritect | Home page</title>");
+    expect(rootPage.body).toContain('rel="icon"');
+    expect(rootPage.body).toContain('href="/favicon.svg"');
     expect(rootPage.body).toContain('href="/signup"');
     expect(rootPage.body).toContain(">Sign up<");
     expect(rootPage.body).toContain('href="/login"');
@@ -111,6 +113,16 @@ describe("web chat interface", () => {
     const loginPage = await app.inject({ method: "GET", url: "/login" });
     expect(loginPage.statusCode).toBe(200);
     expect(loginPage.body).toContain("Claritect | Customer login");
+    expect(loginPage.body).toContain('href="/favicon.svg"');
+
+    const faviconSvg = await app.inject({ method: "GET", url: "/favicon.svg" });
+    expect(faviconSvg.statusCode).toBe(200);
+    expect(faviconSvg.headers["content-type"]).toContain("image/svg+xml");
+    expect(faviconSvg.body).toContain("<svg");
+
+    const faviconIco = await app.inject({ method: "GET", url: "/favicon.ico" });
+    expect(faviconIco.statusCode).toBe(302);
+    expect(faviconIco.headers.location).toBe("/favicon.svg");
 
     const adminLoginPage = await app.inject({ method: "GET", url: "/admin/login" });
     expect(adminLoginPage.statusCode).toBe(200);

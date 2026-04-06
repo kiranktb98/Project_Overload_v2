@@ -1,4 +1,4 @@
-import { renderClaritectLogoImage } from "./brand";
+import { renderClaritectFaviconLinks, renderClaritectLogoImage } from "./brand";
 
 export function renderUsageMetricsPage(): string {
   return `<!doctype html>
@@ -7,6 +7,7 @@ export function renderUsageMetricsPage(): string {
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <title>Claritect | Usage and AI balance</title>
+    ${renderClaritectFaviconLinks()}
     <style>
       @import url("https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&display=swap");
 

@@ -1,4 +1,4 @@
-import { renderClaritectLogoImage } from "./brand";
+import { renderClaritectFaviconLinks, renderClaritectLogoImage } from "./brand";
 
 export function renderScheduledReportsPage(): string {
   return `<!doctype html>
@@ -7,6 +7,7 @@ export function renderScheduledReportsPage(): string {
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <title>Claritect | Scheduled reports</title>
+    ${renderClaritectFaviconLinks()}
     <style>
       @import url("https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&display=swap");
       :root{--ink:#F5F3FF;--ink-soft:#D7CFE6;--ink-muted:#9D90BC;--line:rgba(107,92,138,.28);--panel:rgba(24,18,39,.92);--accent:#6C3AED;--accent-2:#EC4899;--accent-3:#EC4899;--success:#7ff0d5;--danger:#fca5a5;--shadow:0 24px 60px rgba(1,8,28,.44)}

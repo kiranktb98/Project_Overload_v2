@@ -1,4 +1,4 @@
-import { renderClaritectLogoImage } from "./brand";
+import { renderClaritectFaviconLinks, renderClaritectLogoImage } from "./brand";
 
 type AdminPageKey = "dashboard" | "accounts" | "support" | "finance";
 
@@ -346,6 +346,7 @@ function renderAdminShell(input: AdminShellInput): string {
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <title>${input.title}</title>
+    ${renderClaritectFaviconLinks()}
     <style>${SHARED_STYLE}</style>
     <script>(function(){try{var t=localStorage.getItem("claritect_theme_v1");if(t==="light")document.documentElement.setAttribute("data-theme","light");}catch(e){}})()</script>
   </head>
@@ -927,6 +928,7 @@ export function renderAdminLoginPage(): string {
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <title>Claritect | Admin login</title>
+    ${renderClaritectFaviconLinks()}
     <style>
       @import url("https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&display=swap");
       :root { --ink:#F5F3FF; --ink-soft:#D7CFE6; --ink-muted:#9D90BC; --line:rgba(107,92,138,0.24); }

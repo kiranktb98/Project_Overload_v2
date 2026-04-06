@@ -1,4 +1,4 @@
-import { renderClaritectLogoImage } from "./brand";
+import { renderClaritectFaviconLinks, renderClaritectLogoImage } from "./brand";
 
 export function renderChatPage(): string {
   return `<!doctype html>
@@ -7,6 +7,7 @@ export function renderChatPage(): string {
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <title>Claritect | Decision workspace</title>
+    ${renderClaritectFaviconLinks()}
     <script>
       (function(){try{var t=localStorage.getItem("claritect_theme_v1");if(t==="light")document.documentElement.setAttribute("data-theme","light");}catch(e){}})();
     </script>
