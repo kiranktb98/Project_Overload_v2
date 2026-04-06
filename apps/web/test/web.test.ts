@@ -92,6 +92,8 @@ describe("web chat interface", () => {
     expect(rootPage.body).toContain("<title>Claritect | Home page</title>");
     expect(rootPage.body).toContain('href="/signup"');
     expect(rootPage.body).toContain(">Sign up<");
+    expect(rootPage.body).toContain('href="/login"');
+    expect(rootPage.body).toContain(">Login<");
 
     const pricingPage = await app.inject({ method: "GET", url: "/pricing" });
     expect(pricingPage.statusCode).toBe(200);

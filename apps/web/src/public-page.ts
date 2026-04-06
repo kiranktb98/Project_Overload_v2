@@ -31,6 +31,12 @@ function renderPublicLayout(title: string, body: string): string {
         gap: 16px;
       }
 
+      .actions {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 12px;
+      }
+
       h1 {
         margin: 0;
         font-size: 40px;
@@ -97,7 +103,10 @@ export function renderHomePage(): string {
   return renderPublicLayout(
     "Claritect | Home page",
     `<h1>Home page</h1>
-    <a class="button-link" href="/signup">Sign up</a>`
+    <div class="actions">
+      <a class="button-link" href="/signup">Sign up</a>
+      <a class="button-link" href="/login">Login</a>
+    </div>`
   );
 }
 
