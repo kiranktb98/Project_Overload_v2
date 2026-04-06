@@ -107,7 +107,7 @@ describe("web chat interface", () => {
     const privacyPage = await app.inject({ method: "GET", url: "/privacy-policy" });
     expect(privacyPage.statusCode).toBe(200);
     expect(privacyPage.body).toContain("<title>Privacy Policy — Claritect</title>");
-    expect(privacyPage.body).toContain("privacy@claritect.io");
+    expect(privacyPage.body).toContain("hello@claritect.io");
 
     const termsPage = await app.inject({ method: "GET", url: "/terms-of-service" });
     expect(termsPage.statusCode).toBe(200);
