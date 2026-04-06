@@ -112,7 +112,7 @@ describe("web chat interface", () => {
     const termsPage = await app.inject({ method: "GET", url: "/terms-of-service" });
     expect(termsPage.statusCode).toBe(200);
     expect(termsPage.body).toContain("<title>Terms of Service — Claritect</title>");
-    expect(termsPage.body).toContain("legal@claritect.io");
+    expect(termsPage.body).toContain("hello@claritect.io");
 
     const blogPage = await app.inject({ method: "GET", url: "/blog" });
     expect(blogPage.statusCode).toBe(200);
