@@ -1,0 +1,205 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Terms of Service — Claritect</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&display=swap" rel="stylesheet" />
+  <style>
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+    :root {
+      --bg: #0A0714; --bg2: #110E22; --bg3: #19153A;
+      --purple: #7C3AED; --purple-light: #A78BFA; --pink: #EC4899;
+      --text: #F0ECFF; --text2: #C4BBEA; --muted: #7B72A8;
+      --border: rgba(124,58,237,0.18); --border2: rgba(124,58,237,0.32);
+    }
+    html { scroll-behavior: smooth; }
+    body { font-family: "Inter", system-ui, sans-serif; background: var(--bg); color: var(--text); -webkit-font-smoothing: antialiased; }
+    .bg-grid {
+      position: fixed; inset: 0; z-index: 0; pointer-events: none;
+      background-image: linear-gradient(rgba(124,58,237,0.03) 1px, transparent 1px), linear-gradient(90deg, rgba(124,58,237,0.03) 1px, transparent 1px);
+      background-size: 52px 52px;
+    }
+    nav { position: sticky; top: 0; z-index: 100; background: rgba(10,7,20,0.85); backdrop-filter: blur(20px); border-bottom: 1px solid var(--border); }
+    .nav-inner { display: flex; align-items: center; justify-content: space-between; padding: 0 40px; height: 60px; max-width: 1100px; margin: 0 auto; }
+    .logo { display: flex; align-items: center; gap: 9px; text-decoration: none; color: var(--text); font-size: 1rem; font-weight: 700; letter-spacing: -.02em; }
+    .logo-mark { width: 30px; height: 30px; border-radius: 8px; background: var(--bg); border: 1px solid rgba(124,58,237,.5); display: flex; align-items: center; justify-content: center; }
+    .btn-back { color: var(--muted); text-decoration: none; font-size: .82rem; font-weight: 600; padding: 7px 14px; border-radius: 7px; border: 1px solid var(--border2); transition: color .18s, border-color .18s; }
+    .btn-back:hover { color: var(--text); border-color: var(--purple); }
+    main { position: relative; z-index: 1; max-width: 760px; margin: 0 auto; padding: 72px 40px 100px; }
+    .doc-header { margin-bottom: 52px; padding-bottom: 32px; border-bottom: 1px solid var(--border); }
+    .doc-label { display: inline-block; font-size: .72rem; font-weight: 700; text-transform: uppercase; letter-spacing: .1em; color: var(--pink); margin-bottom: 14px; }
+    .doc-header h1 { font-size: clamp(1.8rem, 3vw, 2.4rem); font-weight: 900; letter-spacing: -.035em; margin-bottom: 12px; }
+    .doc-meta { font-size: .82rem; color: var(--muted); display: flex; gap: 20px; flex-wrap: wrap; }
+    .notice { background: rgba(124,58,237,.08); border: 1px solid rgba(124,58,237,.22); border-radius: 12px; padding: 16px 20px; margin-bottom: 40px; font-size: .85rem; color: var(--text2); line-height: 1.65; }
+    .notice strong { color: var(--purple-light); }
+    h2 { font-size: 1.15rem; font-weight: 700; margin: 40px 0 14px; color: var(--text); padding-top: 8px; border-top: 1px solid var(--border); }
+    h2:first-of-type { border-top: none; margin-top: 0; }
+    p { font-size: .92rem; color: var(--text2); line-height: 1.78; margin-bottom: 14px; }
+    ul { list-style: none; padding: 0; margin: 0 0 14px; }
+    ul li { font-size: .92rem; color: var(--text2); line-height: 1.78; padding: 4px 0 4px 22px; position: relative; }
+    ul li::before { content: "—"; position: absolute; left: 0; color: var(--purple-light); font-weight: 600; }
+    strong { color: var(--text); font-weight: 600; }
+    a { color: var(--purple-light); text-decoration: none; }
+    a:hover { text-decoration: underline; }
+    .highlight { background: rgba(124,58,237,.06); border-left: 2px solid var(--purple); border-radius: 0 8px 8px 0; padding: 12px 16px; margin: 16px 0; font-size: .88rem; color: var(--text2); line-height: 1.65; }
+    .contact-box { background: var(--bg2); border: 1px solid var(--border2); border-radius: 14px; padding: 24px 28px; margin-top: 40px; }
+    .contact-box p { margin: 0; }
+    footer { border-top: 1px solid var(--border); padding: 28px 40px; position: relative; z-index: 1; }
+    .footer-inner { max-width: 1100px; margin: 0 auto; display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 12px; }
+    footer p { font-size: .78rem; color: var(--muted); }
+    .footer-links { display: flex; gap: 18px; flex-wrap: wrap; }
+    .footer-links a { font-size: .78rem; color: var(--muted); text-decoration: none; transition: color .18s; }
+    .footer-links a:hover { color: var(--text); }
+    @media(max-width:600px){ main { padding: 48px 20px 80px; } .nav-inner { padding: 0 20px; } footer { padding: 24px 20px; } }
+  </style>
+</head>
+<body>
+<div class="bg-grid" aria-hidden="true"></div>
+
+<nav>
+  <div class="nav-inner">
+    <a class="logo" href="/pitch.html">
+      <div class="logo-mark">
+        <svg width="18" height="18" viewBox="0 0 64 64" fill="none">
+          <circle cx="21" cy="32" r="6.5" fill="url(#lg)"/>
+          <path d="M14 27.5H30.5" stroke="#F0ECFF" stroke-width="3.2" stroke-linecap="round"/>
+          <path d="M10.5 32H30.5" stroke="#F0ECFF" stroke-width="3.2" stroke-linecap="round"/>
+          <path d="M13 36.5H30.5" stroke="#F0ECFF" stroke-width="3.2" stroke-linecap="round"/>
+          <path d="M33 25.5H49.5V38.5H33" stroke="#F0ECFF" stroke-width="3.2" stroke-linecap="round" stroke-linejoin="round"/>
+          <path d="M39.5 21.5L47.5 21.5" stroke="#EC4899" stroke-width="2.4" stroke-linecap="round"/>
+          <defs><radialGradient id="lg" cx="0" cy="0" r="1" gradientUnits="userSpaceOnUse" gradientTransform="translate(21 32) rotate(49.4) scale(10.8)"><stop stop-color="#FFB7D7"/><stop offset="1" stop-color="#7C3AED"/></radialGradient></defs>
+        </svg>
+      </div>
+      Claritect
+    </a>
+    <a class="btn-back" href="/pitch.html">← Back to Home</a>
+  </div>
+</nav>
+
+<main>
+  <div class="doc-header">
+    <span class="doc-label">Legal</span>
+    <h1>Terms of Service</h1>
+    <div class="doc-meta">
+      <span>Effective: 1 January 2025</span>
+      <span>Last updated: April 2025</span>
+    </div>
+  </div>
+
+  <div class="notice">
+    <strong>Please read these Terms carefully.</strong> By applying for a pilot, accessing, or using the Claritect platform, you agree to be bound by these Terms of Service. If you do not agree, please do not use the service.
+  </div>
+
+  <h2>1. Acceptance of Terms</h2>
+  <p>These Terms of Service ("Terms") govern your access to and use of the Claritect platform, website, and related services (collectively, the "Service"), operated by Claritect ("we", "our", "us"), a business registered in India.</p>
+  <p>By clicking "Accept", submitting a pilot application, or otherwise accessing the Service, you confirm that you are authorised to act on behalf of your organisation and that your organisation agrees to these Terms.</p>
+
+  <h2>2. Description of Service</h2>
+  <p>Claritect is a data intelligence platform that:</p>
+  <ul>
+    <li>Connects to databases provided and controlled by you (the customer)</li>
+    <li>Uses AI to generate SQL queries in response to natural-language questions</li>
+    <li>Returns structured reports and written commentary based on your data</li>
+    <li>Enables exporting of reports in PDF and other formats</li>
+  </ul>
+  <p>The Service is currently in a pilot stage. Features, pricing, and availability may change. We will communicate material changes in advance where possible.</p>
+
+  <h2>3. Pilot Programme Terms</h2>
+  <p>During the pilot programme:</p>
+  <ul>
+    <li>The Service is provided free of charge</li>
+    <li>We may limit the number of queries, reports, or connected databases</li>
+    <li>We may discontinue the pilot at any time with reasonable notice</li>
+    <li>In exchange for free access, you agree to provide good-faith product feedback when requested</li>
+    <li>Pilot access does not constitute a commitment to continued free service</li>
+  </ul>
+
+  <h2>4. Your Responsibilities</h2>
+  <p>You agree to:</p>
+  <ul>
+    <li>Provide accurate information when applying for and using the Service</li>
+    <li>Ensure you have the legal right to connect the databases you provide</li>
+    <li>Use the Service only for lawful purposes and in accordance with these Terms</li>
+    <li>Keep your login credentials confidential and notify us immediately of any unauthorised access</li>
+    <li>Not attempt to reverse-engineer, decompile, or extract our proprietary AI models or logic</li>
+    <li>Not use the Service to process data you are not authorised to access</li>
+  </ul>
+
+  <h2>5. Database Access &amp; Data Ownership</h2>
+  <div class="highlight">
+    You retain full ownership of your data at all times. Claritect does not claim any rights over the contents of your database or the reports generated from it.
+  </div>
+  <p>By connecting a database, you grant Claritect a limited, read-only, non-transferable licence to access that database solely for the purpose of providing the Service to you. This licence terminates immediately upon termination of your account.</p>
+  <p>We will not access your database for any purpose other than responding to report requests you initiate.</p>
+
+  <h2>6. Intellectual Property</h2>
+  <p><strong>Our IP:</strong> The Claritect platform, including its AI models, interface, and underlying technology, is owned by us and protected by intellectual property laws. You may not copy, reproduce, or distribute any part of the platform without our written consent.</p>
+  <p><strong>Your IP:</strong> Reports generated by Claritect using your data are your property. You may use, share, and distribute them freely.</p>
+  <p><strong>Feedback:</strong> If you provide feedback or suggestions about the Service, we may use that feedback without obligation to you.</p>
+
+  <h2>7. Confidentiality</h2>
+  <p>Both parties agree to keep confidential any non-public information received from the other party in connection with the Service. This obligation survives termination of these Terms for a period of three (3) years.</p>
+  <p>Our confidentiality obligations with respect to your data are described in our <a href="/privacy-policy.html">Privacy Policy</a>.</p>
+
+  <h2>8. Disclaimer of Warranties</h2>
+  <p>The Service is provided <strong>"as is"</strong> and <strong>"as available"</strong> without warranties of any kind, express or implied, including but not limited to warranties of merchantability, fitness for a particular purpose, or non-infringement.</p>
+  <p>We do not warrant that:</p>
+  <ul>
+    <li>The Service will be uninterrupted, error-free, or completely secure</li>
+    <li>AI-generated SQL queries or report commentary will be 100% accurate</li>
+    <li>Results will meet your specific business requirements</li>
+  </ul>
+  <p>Reports generated by Claritect are decision-support tools. You are responsible for verifying the accuracy of any information before making business decisions based on it.</p>
+
+  <h2>9. Limitation of Liability</h2>
+  <p>To the maximum extent permitted by applicable law, Claritect shall not be liable for any indirect, incidental, special, consequential, or punitive damages, including loss of profits, data, or goodwill, arising out of your use of or inability to use the Service.</p>
+  <p>Our total liability to you for any claim arising out of these Terms or the Service shall not exceed the amount you paid us in the three (3) months preceding the claim (or INR 1,000 if you are a free pilot customer).</p>
+
+  <h2>10. Termination</h2>
+  <p>Either party may terminate access to the Service at any time by providing written notice. We may terminate or suspend access immediately if you breach these Terms or if we determine (in good faith) that continued access creates a security or legal risk.</p>
+  <p>Upon termination, your right to use the Service ceases immediately. We will delete your database credentials within 30 days. Reports you have already exported remain yours.</p>
+
+  <h2>11. Governing Law &amp; Disputes</h2>
+  <p>These Terms are governed by the laws of India. Any disputes arising out of or in connection with these Terms shall be subject to the exclusive jurisdiction of the courts of India.</p>
+  <p>Before initiating formal proceedings, both parties agree to attempt to resolve disputes in good faith through direct negotiation for at least 30 days.</p>
+
+  <h2>12. Changes to These Terms</h2>
+  <p>We may update these Terms from time to time. Material changes will be communicated to registered users by email at least 14 days before they take effect. Continued use of the Service after changes take effect constitutes acceptance of the revised Terms.</p>
+
+  <div class="contact-box">
+    <h2 style="margin-top:0;border-top:none;">13. Contact</h2>
+    <p>For questions about these Terms, please contact us:</p>
+    <p style="margin-top:10px;"><strong>Email:</strong> <a href="mailto:legal@claritect.io">legal@claritect.io</a><br/>
+    <strong>General:</strong> <a href="mailto:hello@claritect.io">hello@claritect.io</a></p>
+  </div>
+</main>
+
+<footer>
+  <div class="footer-inner">
+    <a class="logo" href="/pitch.html">
+      <div class="logo-mark">
+        <svg width="18" height="18" viewBox="0 0 64 64" fill="none">
+          <circle cx="21" cy="32" r="6.5" fill="url(#fg)"/>
+          <path d="M14 27.5H30.5" stroke="#F0ECFF" stroke-width="3.2" stroke-linecap="round"/>
+          <path d="M10.5 32H30.5" stroke="#F0ECFF" stroke-width="3.2" stroke-linecap="round"/>
+          <path d="M13 36.5H30.5" stroke="#F0ECFF" stroke-width="3.2" stroke-linecap="round"/>
+          <path d="M33 25.5H49.5V38.5H33" stroke="#F0ECFF" stroke-width="3.2" stroke-linecap="round" stroke-linejoin="round"/>
+          <path d="M39.5 21.5L47.5 21.5" stroke="#EC4899" stroke-width="2.4" stroke-linecap="round"/>
+          <defs><radialGradient id="fg" cx="0" cy="0" r="1" gradientUnits="userSpaceOnUse" gradientTransform="translate(21 32) rotate(49.4) scale(10.8)"><stop stop-color="#FFB7D7"/><stop offset="1" stop-color="#7C3AED"/></radialGradient></defs>
+        </svg>
+      </div>
+      Claritect
+    </a>
+    <div class="footer-links">
+      <a href="/privacy-policy.html">Privacy Policy</a>
+      <a href="/terms-of-service.html">Terms of Service</a>
+      <a href="/blog.html">Blog</a>
+    </div>
+    <p>© 2025 Claritect. All rights reserved.</p>
+  </div>
+</footer>
+</body>
+</html>

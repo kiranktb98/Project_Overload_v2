@@ -28,7 +28,15 @@ import { renderConnectionPage } from "./connect-page";
 import { renderLoginPage } from "./login-page";
 import { renderAdminLoggedOutPage, renderCustomerLoggedOutPage } from "./logout-page";
 import { renderUsageMetricsPage } from "./usage-page";
-import { renderHomePage, renderPricingPage, renderSignupPage } from "./public-page";
+import {
+  renderBlogPage,
+  renderHomePage,
+  renderPitchPage,
+  renderPricingPage,
+  renderPrivacyPolicyPage,
+  renderSignupPage,
+  renderTermsOfServicePage
+} from "./public-page";
 import { renderGlobalConfigPage } from "./config-page";
 import { renderScheduledReportsPage } from "./scheduled-page";
 import { CLARITECT_FAVICON_SVG } from "./brand";
@@ -366,8 +374,36 @@ export function buildWebApp(options: WebAppDependencies = {}) {
     return reply.type("text/html; charset=utf-8").send(renderHomePage());
   });
 
+  app.get("/pitch.html", async (_request, reply) => {
+    return reply.type("text/html; charset=utf-8").send(renderPitchPage());
+  });
+
   app.get("/pricing", async (_request, reply) => {
     return reply.type("text/html; charset=utf-8").send(renderPricingPage());
+  });
+
+  app.get("/privacy-policy", async (_request, reply) => {
+    return reply.type("text/html; charset=utf-8").send(renderPrivacyPolicyPage());
+  });
+
+  app.get("/privacy-policy.html", async (_request, reply) => {
+    return reply.type("text/html; charset=utf-8").send(renderPrivacyPolicyPage());
+  });
+
+  app.get("/terms-of-service", async (_request, reply) => {
+    return reply.type("text/html; charset=utf-8").send(renderTermsOfServicePage());
+  });
+
+  app.get("/terms-of-service.html", async (_request, reply) => {
+    return reply.type("text/html; charset=utf-8").send(renderTermsOfServicePage());
+  });
+
+  app.get("/blog", async (_request, reply) => {
+    return reply.type("text/html; charset=utf-8").send(renderBlogPage());
+  });
+
+  app.get("/blog.html", async (_request, reply) => {
+    return reply.type("text/html; charset=utf-8").send(renderBlogPage());
   });
 
   app.get("/signup", async (_request, reply) => {
@@ -1934,7 +1970,14 @@ function isUiAuthEnabled(): boolean {
 
 function isPublicPath(pathname: string): boolean {
   return pathname === "/" ||
+    pathname === "/pitch.html" ||
     pathname === "/pricing" ||
+    pathname === "/privacy-policy" ||
+    pathname === "/privacy-policy.html" ||
+    pathname === "/terms-of-service" ||
+    pathname === "/terms-of-service.html" ||
+    pathname === "/blog" ||
+    pathname === "/blog.html" ||
     pathname === "/signup" ||
     pathname === "/health" ||
     pathname === "/login" ||

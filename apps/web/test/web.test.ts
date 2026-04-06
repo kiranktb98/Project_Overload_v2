@@ -88,19 +88,36 @@ describe("web chat interface", () => {
 
     const rootPage = await app.inject({ method: "GET", url: "/" });
     expect(rootPage.statusCode).toBe(200);
-    expect(rootPage.body).toContain("Home page");
-    expect(rootPage.body).toContain("<title>Claritect | Home page</title>");
+    expect(rootPage.body).toContain("Claritect — Your Data Answers Itself");
     expect(rootPage.body).toContain('rel="icon"');
     expect(rootPage.body).toContain('href="/favicon.svg"');
-    expect(rootPage.body).toContain('href="/signup"');
-    expect(rootPage.body).toContain(">Sign up<");
-    expect(rootPage.body).toContain('href="/login"');
-    expect(rootPage.body).toContain(">Login<");
+    expect(rootPage.body).toContain('href="/blog"');
+    expect(rootPage.body).toContain('href="/privacy-policy"');
+    expect(rootPage.body).toContain('href="/terms-of-service"');
+
+    const pitchPage = await app.inject({ method: "GET", url: "/pitch.html" });
+    expect(pitchPage.statusCode).toBe(200);
+    expect(pitchPage.body).toContain("Claritect — Your Data Answers Itself");
 
     const pricingPage = await app.inject({ method: "GET", url: "/pricing" });
     expect(pricingPage.statusCode).toBe(200);
     expect(pricingPage.body).toContain("Pricing page");
     expect(pricingPage.body).toContain("<title>Claritect | Pricing page</title>");
+
+    const privacyPage = await app.inject({ method: "GET", url: "/privacy-policy" });
+    expect(privacyPage.statusCode).toBe(200);
+    expect(privacyPage.body).toContain("<title>Privacy Policy — Claritect</title>");
+    expect(privacyPage.body).toContain("privacy@claritect.io");
+
+    const termsPage = await app.inject({ method: "GET", url: "/terms-of-service" });
+    expect(termsPage.statusCode).toBe(200);
+    expect(termsPage.body).toContain("<title>Terms of Service — Claritect</title>");
+    expect(termsPage.body).toContain("legal@claritect.io");
+
+    const blogPage = await app.inject({ method: "GET", url: "/blog" });
+    expect(blogPage.statusCode).toBe(200);
+    expect(blogPage.body).toContain("Claritect Blog | AI Reporting, SQL, and Decision Intelligence");
+    expect(blogPage.body).toContain("AI business analyst");
 
     const signupPage = await app.inject({ method: "GET", url: "/signup" });
     expect(signupPage.statusCode).toBe(200);

@@ -1,0 +1,1285 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Claritect — Your Data Answers Itself</title>
+  <meta name="description" content="Claritect turns business questions into executive-grade reports in under an hour. Connect your database, ask in plain English, get insights instantly." />
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800;900&display=swap" rel="stylesheet" />
+  <style>
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+    :root {
+      --bg:          #0A0714;
+      --bg2:         #110E22;
+      --bg3:         #19153A;
+      --bg4:         #211C45;
+      --purple:      #7C3AED;
+      --purple-light:#A78BFA;
+      --pink:        #EC4899;
+      --green:       #10B981;
+      --red:         #F87171;
+      --text:        #F0ECFF;
+      --text2:       #C4BBEA;
+      --muted:       #7B72A8;
+      --border:      rgba(124,58,237,0.18);
+      --border2:     rgba(124,58,237,0.32);
+      --grad:        linear-gradient(135deg, #7C3AED 0%, #EC4899 100%);
+      --grad-soft:   linear-gradient(135deg, rgba(124,58,237,0.14) 0%, rgba(236,72,153,0.08) 100%);
+      --shadow-xl:   0 24px 80px rgba(0,0,0,0.65);
+      --r-sm: 8px; --r-md: 12px; --r-lg: 20px; --r-xl: 28px;
+    }
+
+    html { scroll-behavior: smooth; }
+    body {
+      font-family: "Inter", -apple-system, BlinkMacSystemFont, system-ui, sans-serif;
+      background: var(--bg); color: var(--text);
+      -webkit-font-smoothing: antialiased; overflow-x: hidden;
+    }
+
+    /* ── BACKGROUND ─────────────────────────────────── */
+    .bg-grid {
+      position: fixed; inset: 0; z-index: 0; pointer-events: none;
+      background-image:
+        linear-gradient(rgba(124,58,237,0.04) 1px, transparent 1px),
+        linear-gradient(90deg, rgba(124,58,237,0.04) 1px, transparent 1px);
+      background-size: 52px 52px;
+    }
+    .bg-orb {
+      position: fixed; border-radius: 50%; pointer-events: none; z-index: 0;
+      filter: blur(90px); will-change: transform;
+    }
+    .bg-orb-1 {
+      width: 700px; height: 700px; top: -250px; left: -200px;
+      background: radial-gradient(circle, rgba(124,58,237,0.18) 0%, transparent 65%);
+      animation: orbDrift1 25s ease-in-out infinite;
+    }
+    .bg-orb-2 {
+      width: 600px; height: 600px; top: 35%; right: -180px;
+      background: radial-gradient(circle, rgba(236,72,153,0.12) 0%, transparent 65%);
+      animation: orbDrift2 30s ease-in-out infinite;
+    }
+    .bg-orb-3 {
+      width: 500px; height: 500px; bottom: 5%; left: 15%;
+      background: radial-gradient(circle, rgba(124,58,237,0.09) 0%, transparent 65%);
+      animation: orbDrift3 20s ease-in-out infinite;
+    }
+    @keyframes orbDrift1 { 0%,100%{transform:translate(0,0);} 33%{transform:translate(40px,-30px);} 66%{transform:translate(-25px,40px);} }
+    @keyframes orbDrift2 { 0%,100%{transform:translate(0,0);} 50%{transform:translate(-35px,25px);} }
+    @keyframes orbDrift3 { 0%,100%{transform:translate(0,0);} 40%{transform:translate(30px,-20px);} 80%{transform:translate(-20px,15px);} }
+
+    /* ── UTILS ──────────────────────────────────────── */
+    .wrap { position: relative; z-index: 1; max-width: 1200px; margin: 0 auto; padding: 0 40px; }
+    @media(max-width:640px){ .wrap { padding: 0 20px; } }
+
+    .grad-text {
+      background: linear-gradient(135deg, #A78BFA 0%, #EC4899 50%, #A78BFA 100%);
+      background-size: 200% 200%;
+      -webkit-background-clip: text; -webkit-text-fill-color: transparent;
+      background-clip: text;
+      animation: gradShift 5s ease infinite;
+    }
+    @keyframes gradShift { 0%,100%{background-position:0% 50%;} 50%{background-position:100% 50%;} }
+
+    /* reveal */
+    .reveal {
+      opacity: 0; transform: translateY(32px); filter: blur(6px);
+      transition: opacity .75s cubic-bezier(.22,1,.36,1),
+                  transform .75s cubic-bezier(.22,1,.36,1),
+                  filter .75s cubic-bezier(.22,1,.36,1);
+    }
+    .reveal.in { opacity: 1; transform: translateY(0); filter: blur(0); }
+    .d1{transition-delay:.08s;} .d2{transition-delay:.16s;} .d3{transition-delay:.24s;} .d4{transition-delay:.34s;} .d5{transition-delay:.44s;}
+
+    /* gradient border */
+    .gcard { position: relative; background: var(--bg2); border-radius: var(--r-lg); }
+    .gcard::before {
+      content:""; position:absolute; inset:0; border-radius: var(--r-lg); padding:1px;
+      background: linear-gradient(135deg,rgba(124,58,237,.5),rgba(236,72,153,.25));
+      -webkit-mask: linear-gradient(#fff 0 0) content-box, linear-gradient(#fff 0 0);
+      -webkit-mask-composite: xor; mask-composite: exclude; pointer-events:none;
+    }
+
+    /* ── NAV ────────────────────────────────────────── */
+    nav {
+      position: sticky; top: 0; z-index: 100;
+      background: rgba(10,7,20,0.8);
+      backdrop-filter: blur(24px) saturate(1.6);
+      -webkit-backdrop-filter: blur(24px) saturate(1.6);
+      border-bottom: 1px solid var(--border);
+    }
+    .nav-inner {
+      display: flex; align-items: center; justify-content: space-between;
+      padding: 0 40px; height: 62px; max-width: 1200px; margin: 0 auto;
+    }
+    .logo {
+      display: flex; align-items: center; gap: 9px;
+      text-decoration: none; color: var(--text);
+      font-size: 1rem; font-weight: 700; letter-spacing: -.02em; flex-shrink: 0;
+    }
+    .logo-mark {
+      width: 31px; height: 31px; border-radius: 8px;
+      background: var(--bg); border: 1px solid rgba(124,58,237,.5);
+      display: flex; align-items: center; justify-content: center;
+    }
+    .nav-links { display: flex; align-items: center; gap: 4px; list-style: none; }
+    .nav-links a {
+      color: var(--muted); text-decoration: none; font-size: .85rem;
+      font-weight: 500; padding: 6px 13px; border-radius: var(--r-sm);
+      transition: color .18s, background .18s;
+    }
+    .nav-links a:hover { color: var(--text); background: rgba(124,58,237,.09); }
+    .nav-right { display: flex; align-items: center; gap: 8px; }
+
+    .btn-login {
+      color: var(--text2); text-decoration: none; font-size: .82rem; font-weight: 600;
+      padding: 7px 16px; border-radius: var(--r-sm); border: 1px solid var(--border2);
+      transition: color .18s, border-color .18s, background .18s; white-space: nowrap;
+    }
+    .btn-login:hover { color: var(--text); border-color: var(--purple); background: rgba(124,58,237,.08); }
+
+    .btn-nav {
+      background: var(--grad); color: #fff; border: none;
+      padding: 8px 18px; border-radius: var(--r-sm);
+      font-size: .82rem; font-weight: 700; cursor: pointer; text-decoration: none;
+      transition: opacity .18s, transform .18s; white-space: nowrap;
+      box-shadow: 0 2px 16px rgba(124,58,237,.35);
+    }
+    .btn-nav:hover { opacity: .88; transform: translateY(-1px); }
+
+    .hamburger {
+      display: none; flex-direction: column; gap: 5px; cursor: pointer;
+      background: none; border: none; padding: 4px;
+    }
+    .hamburger span {
+      display: block; width: 22px; height: 2px;
+      background: var(--text2); border-radius: 2px;
+      transition: transform .3s, opacity .3s;
+    }
+    .hamburger.open span:nth-child(1){transform:translateY(7px) rotate(45deg);}
+    .hamburger.open span:nth-child(2){opacity:0;}
+    .hamburger.open span:nth-child(3){transform:translateY(-7px) rotate(-45deg);}
+    .mobile-menu {
+      display: none; position: absolute; top: 62px; left: 0; right: 0;
+      background: rgba(10,7,20,.97); backdrop-filter: blur(20px);
+      border-bottom: 1px solid var(--border); padding: 12px 24px 20px;
+    }
+    .mobile-menu.open { display: block; }
+    .mobile-menu a {
+      display: block; color: var(--text2); text-decoration: none;
+      font-size: .95rem; font-weight: 500; padding: 13px 0;
+      border-bottom: 1px solid var(--border);
+    }
+    .mobile-menu a:last-child { border-bottom: none; }
+
+    /* ── BUTTONS ────────────────────────────────────── */
+    .btn-primary {
+      display: inline-flex; align-items: center; gap: 8px;
+      background: var(--grad); color: #fff; border: none;
+      padding: 14px 28px; border-radius: var(--r-md);
+      font-size: .95rem; font-weight: 700; cursor: pointer; text-decoration: none;
+      box-shadow: 0 4px 28px rgba(124,58,237,.42);
+      transition: transform .2s, box-shadow .2s;
+      position: relative; overflow: hidden;
+    }
+    .btn-primary::after {
+      content:""; position:absolute; inset:0;
+      background: linear-gradient(135deg,rgba(255,255,255,.12),transparent);
+      opacity:0; transition: opacity .2s;
+    }
+    .btn-primary:hover { transform:translateY(-2px); box-shadow: 0 10px 40px rgba(124,58,237,.55); }
+    .btn-primary:hover::after { opacity:1; }
+    .btn-primary:active { transform: translateY(0); }
+
+    .btn-ghost {
+      display: inline-flex; align-items: center; gap: 8px;
+      background: transparent; color: var(--text2);
+      border: 1px solid var(--border2);
+      padding: 14px 24px; border-radius: var(--r-md);
+      font-size: .95rem; font-weight: 600; cursor: pointer; text-decoration: none;
+      transition: border-color .2s, background .2s, color .2s;
+    }
+    .btn-ghost:hover { border-color: var(--purple); background: rgba(124,58,237,.07); color: var(--text); }
+
+    /* ── BADGE ──────────────────────────────────────── */
+    .badge {
+      display: inline-flex; align-items: center; gap: 7px;
+      background: rgba(124,58,237,.1); border: 1px solid rgba(124,58,237,.28);
+      border-radius: 99px; padding: 5px 14px 5px 10px;
+      font-size: .72rem; font-weight: 700; color: var(--purple-light);
+      letter-spacing: .06em; text-transform: uppercase;
+      position: relative; overflow: hidden;
+    }
+    .badge::after {
+      content:""; position:absolute; top:0; left:-100%; width:60%; height:100%;
+      background: linear-gradient(90deg,transparent,rgba(255,255,255,.12),transparent);
+      animation: shimmer 3s ease-in-out infinite;
+    }
+    @keyframes shimmer { 0%{left:-100%;} 100%{left:200%;} }
+    .badge-dot {
+      width: 7px; height: 7px; background: var(--pink);
+      border-radius: 50%; flex-shrink: 0;
+      box-shadow: 0 0 8px rgba(236,72,153,.7);
+      animation: blink 2.2s ease-in-out infinite;
+    }
+    @keyframes blink { 0%,100%{opacity:1;} 50%{opacity:.3;} }
+
+    /* ── HERO ───────────────────────────────────────── */
+    .hero { padding: 100px 0 72px; position: relative; z-index: 1; overflow: hidden; }
+    .hero-layout {
+      display: grid;
+      grid-template-columns: 1fr 1.15fr;
+      gap: 56px; align-items: center;
+      max-width: 1200px; margin: 0 auto; padding: 0 40px;
+    }
+    .hero-left { text-align: left; }
+    .hero-eyebrow { margin-bottom: 28px; }
+
+    h1 {
+      font-size: clamp(2.6rem, 4.8vw, 4rem);
+      font-weight: 900; line-height: 1.04; letter-spacing: -.04em;
+      margin-bottom: 22px;
+    }
+    .hero-sub {
+      font-size: clamp(.95rem, 1.5vw, 1.15rem); color: var(--text2);
+      line-height: 1.78; margin-bottom: 36px; max-width: 500px;
+    }
+    .hero-btns { display: flex; gap: 12px; flex-wrap: wrap; margin-bottom: 48px; }
+
+    /* mini stats under left col */
+    .hero-mini-stats {
+      display: flex; gap: 0;
+      border: 1px solid var(--border); border-radius: var(--r-lg);
+      background: var(--bg2); overflow: hidden; max-width: 460px;
+    }
+    .hms-item {
+      flex: 1; padding: 18px 16px; border-right: 1px solid var(--border);
+      text-align: center;
+    }
+    .hms-item:last-child { border-right: none; }
+    .hms-num {
+      display: block; font-size: 1.35rem; font-weight: 900;
+      letter-spacing: -.035em; line-height: 1;
+      background: var(--grad); -webkit-background-clip:text;
+      -webkit-text-fill-color:transparent; background-clip:text;
+    }
+    .hms-lbl { font-size: .67rem; color: var(--muted); margin-top: 5px; font-weight: 500; line-height: 1.4; }
+
+    /* demo right side */
+    .hero-right { position: relative; }
+    .demo-glow {
+      position: absolute; top: -60px; left: 50%; transform: translateX(-50%);
+      width: 100%; height: 360px;
+      background: radial-gradient(ellipse at center, rgba(124,58,237,.22) 0%, transparent 68%);
+      pointer-events: none;
+    }
+    .demo-window {
+      position: relative; border-radius: var(--r-xl);
+      background: var(--bg2); border: 1px solid var(--border2);
+      overflow: hidden;
+      box-shadow: var(--shadow-xl), 0 0 0 1px rgba(124,58,237,.1), 0 0 80px rgba(124,58,237,.08);
+      animation: floatDemo 7s ease-in-out infinite;
+    }
+    @keyframes floatDemo { 0%,100%{transform:translateY(0);} 50%{transform:translateY(-10px);} }
+    .demo-bar {
+      display: flex; align-items: center; gap: 6px;
+      padding: 13px 18px; background: var(--bg3);
+      border-bottom: 1px solid var(--border);
+    }
+    .dot-w { width: 11px; height: 11px; border-radius: 50%; flex-shrink: 0; }
+    .d-red{background:#FF5F57;} .d-amb{background:#FEBC2E;} .d-grn{background:#28C840;}
+    .demo-url {
+      flex: 1; margin-left: 8px; height: 26px;
+      background: rgba(0,0,0,.3); border: 1px solid var(--border);
+      border-radius: 6px; display: flex; align-items: center; justify-content: center;
+      font-size: .7rem; color: var(--muted); font-family: monospace; letter-spacing:.02em;
+    }
+    .demo-body { padding: 22px; display: flex; flex-direction: column; gap: 16px; }
+    .msg { display: flex; gap: 10px; align-items: flex-start; }
+    .msg.user { flex-direction: row-reverse; }
+    .avatar {
+      width: 29px; height: 29px; border-radius: 50%; flex-shrink: 0;
+      display: flex; align-items: center; justify-content: center;
+      font-size: .68rem; font-weight: 700;
+    }
+    .av-ai { background: var(--grad); color: #fff; }
+    .av-user { background: var(--bg4); border: 1px solid var(--border2); color: var(--muted); }
+    .bubble {
+      max-width: 78%; padding: 11px 15px; font-size: .84rem; line-height: 1.65;
+      border-radius: 16px;
+    }
+    .b-ai  { background: var(--bg3); border: 1px solid var(--border); color: var(--text2); border-top-left-radius:4px; }
+    .b-user{ background: rgba(124,58,237,.16); border: 1px solid rgba(124,58,237,.28); color: var(--text); border-top-right-radius:4px; }
+    .report-card {
+      margin-top: 9px; background: var(--bg);
+      border: 1px solid var(--border); border-radius: var(--r-md); overflow: hidden;
+    }
+    .rc-head {
+      padding: 11px 15px; background: var(--bg2);
+      border-bottom: 1px solid var(--border);
+      display: flex; align-items: center; justify-content: space-between;
+    }
+    .rc-title { font-size: .77rem; font-weight: 700; }
+    .rc-live { font-size:.65rem; font-weight:700; padding:2px 8px; border-radius:99px; background:rgba(16,185,129,.12); border:1px solid rgba(16,185,129,.25); color:#34D399; }
+    .rc-body { padding: 13px 15px; display: flex; flex-direction: column; gap: 8px; }
+    .bar-row { display: flex; align-items: center; gap: 9px; }
+    .bar-lbl { font-size: .72rem; color: var(--muted); width: 128px; flex-shrink:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+    .bar-track { flex: 1; height: 5px; background: rgba(255,255,255,.05); border-radius:99px; overflow:hidden; }
+    .bar-fill { height:100%; border-radius:99px; }
+    .bar-val { font-size:.72rem; font-weight:700; color:var(--text); width:48px; text-align:right; flex-shrink:0; }
+    .bar-chg { font-size:.65rem; font-weight:700; width:36px; text-align:right; flex-shrink:0; }
+    .up{color:#34D399;} .dn{color:#F87171;}
+    .rc-insight {
+      margin:9px 0 2px; padding:8px 11px;
+      background:rgba(124,58,237,.08); border-left:2px solid var(--purple);
+      border-radius:0 6px 6px 0; font-size:.74rem; color:var(--purple-light); line-height:1.55;
+    }
+
+    /* ── SECTION BASE ───────────────────────────────── */
+    .section { padding: 100px 0; position: relative; z-index: 1; }
+    .section-alt { background: linear-gradient(180deg, var(--bg) 0%, var(--bg2) 50%, var(--bg) 100%); }
+    .eyebrow { display:block; font-size:.71rem; font-weight:700; text-transform:uppercase; letter-spacing:.12em; color:var(--pink); margin-bottom:14px; }
+    h2 { font-size:clamp(1.85rem,3.2vw,2.75rem); font-weight:900; letter-spacing:-.035em; line-height:1.1; margin-bottom:18px; }
+    .section-sub { font-size:1.02rem; color:var(--text2); max-width:520px; line-height:1.78; }
+
+    /* ── ICON WRAPPER ───────────────────────────────── */
+    .icon-wrap {
+      width: 46px; height: 46px; border-radius: var(--r-md);
+      background: var(--grad-soft); border: 1px solid var(--border);
+      display: flex; align-items: center; justify-content: center; flex-shrink: 0;
+    }
+    .icon-wrap svg { width: 22px; height: 22px; }
+
+    /* ── PAIN ───────────────────────────────────────── */
+    .pain-grid { display:grid; grid-template-columns:repeat(auto-fit,minmax(290px,1fr)); gap:20px; margin-top:52px; }
+    .pain-card {
+      position:relative; padding:32px; border-radius:var(--r-lg);
+      background:var(--bg2); border:1px solid var(--border);
+      transition:border-color .25s, background .25s, transform .25s;
+      will-change: transform;
+    }
+    .pain-card:hover { border-color:var(--border2); background:var(--bg3); transform:translateY(-4px); }
+    .pain-card h3 { font-size:1rem; font-weight:700; margin:18px 0 10px; }
+    .pain-card p { font-size:.875rem; color:var(--text2); line-height:1.72; }
+    .pain-quote {
+      margin-top:16px; padding:10px 14px;
+      background:rgba(255,255,255,.025); border-radius:var(--r-sm);
+      font-size:.78rem; color:var(--muted); font-style:italic; line-height:1.55;
+    }
+
+    /* ── HOW IT WORKS ───────────────────────────────── */
+    .timeline-grid {
+      display:grid; grid-template-columns:repeat(3,1fr);
+      border:1px solid var(--border); border-radius:var(--r-xl);
+      overflow:hidden; background:var(--bg2); margin-top:60px;
+    }
+    .step-item {
+      padding:40px 32px; border-right:1px solid var(--border);
+      transition:background .2s; cursor:default;
+    }
+    .step-item:last-child { border-right:none; }
+    .step-item:hover { background:var(--bg3); }
+    .step-pill {
+      display:inline-flex; align-items:center; justify-content:center;
+      width:26px; height:26px; border-radius:99px;
+      background:var(--grad); color:#fff;
+      font-size:.68rem; font-weight:800; margin-bottom:18px;
+    }
+    .step-item h3 { font-size:1.02rem; font-weight:700; margin:16px 0 10px; }
+    .step-item p { font-size:.875rem; color:var(--text2); line-height:1.72; }
+    .step-detail {
+      margin-top:18px; padding-top:18px; border-top:1px solid var(--border);
+      font-size:.77rem; color:var(--muted);
+      display:flex; align-items:center; gap:8px;
+    }
+    .step-detail::before { content:"→"; color:var(--purple); font-weight:700; }
+
+    /* ── FEATURES ───────────────────────────────────── */
+    .feature-block {
+      display:grid; grid-template-columns:1fr 1fr;
+      gap:72px; align-items:center; margin-top:80px;
+    }
+    .feature-block.rev { direction:rtl; }
+    .feature-block.rev > * { direction:ltr; }
+    .feature-tag {
+      display:inline-block; background:rgba(124,58,237,.1);
+      border:1px solid rgba(124,58,237,.22); color:var(--purple-light);
+      font-size:.7rem; font-weight:700; padding:3px 10px;
+      border-radius:99px; text-transform:uppercase; letter-spacing:.07em; margin-bottom:16px;
+    }
+    .feature-text h3 { font-size:clamp(1.4rem,2.4vw,1.85rem); font-weight:800; letter-spacing:-.03em; line-height:1.15; margin-bottom:14px; }
+    .feature-text p { font-size:.93rem; color:var(--text2); line-height:1.8; margin-bottom:22px; }
+    .feat-bullets { list-style:none; display:flex; flex-direction:column; gap:10px; }
+    .feat-bullets li { display:flex; align-items:flex-start; gap:10px; font-size:.875rem; color:var(--text2); line-height:1.6; }
+    .f-check {
+      width:18px; height:18px; border-radius:50%; flex-shrink:0; margin-top:2px;
+      background:rgba(124,58,237,.14); border:1px solid rgba(124,58,237,.28);
+      display:flex; align-items:center; justify-content:center;
+      font-size:.58rem; color:var(--purple-light);
+    }
+    .feature-visual {
+      border-radius:var(--r-xl); background:var(--bg2);
+      border:1px solid var(--border2); overflow:hidden;
+      box-shadow:var(--shadow-xl);
+    }
+    .fv-head {
+      padding:13px 18px; background:var(--bg3);
+      border-bottom:1px solid var(--border);
+      display:flex; align-items:center; gap:8px;
+    }
+    .fv-title { font-size:.77rem; font-weight:600; color:var(--text2); }
+    .fv-body { padding:18px; }
+    .aud-card { border-radius:var(--r-md); border:1px solid var(--border); overflow:hidden; margin-bottom:10px; }
+    .aud-card:last-child { margin-bottom:0; }
+    .aud-head {
+      padding:9px 14px; background:var(--bg3);
+      border-bottom:1px solid var(--border);
+      display:flex; align-items:center; justify-content:space-between;
+    }
+    .aud-persona { font-size:.75rem; font-weight:700; display:flex; align-items:center; gap:8px; }
+    .aud-mode { font-size:.62rem; padding:2px 8px; border-radius:99px; font-weight:700; text-transform:uppercase; letter-spacing:.05em; }
+    .mode-exec { background:rgba(124,58,237,.15); color:var(--purple-light); border:1px solid rgba(124,58,237,.25); }
+    .mode-data { background:rgba(236,72,153,.1); color:#F9A8D4; border:1px solid rgba(236,72,153,.2); }
+    .aud-body { padding:10px 14px; }
+    .aud-line { font-size:.77rem; color:var(--text2); padding:2px 0; line-height:1.55; }
+    .sv-row {
+      display:flex; align-items:center; gap:12px; padding:11px 14px;
+      background:var(--bg3); border:1px solid var(--border);
+      border-radius:var(--r-md); margin-bottom:8px;
+    }
+    .sv-row:last-child { margin-bottom:0; }
+    .sv-text { flex:1; }
+    .sv-label { font-size:.77rem; font-weight:600; color:var(--text); }
+    .sv-desc { font-size:.7rem; color:var(--muted); margin-top:1px; }
+    .sv-badge { font-size:.62rem; font-weight:700; padding:2px 8px; border-radius:99px; background:rgba(16,185,129,.12); border:1px solid rgba(16,185,129,.25); color:#34D399; text-transform:uppercase; letter-spacing:.05em; white-space:nowrap; }
+
+    /* ── METRICS STRIP ──────────────────────────────── */
+    .metrics-strip { border-top:1px solid var(--border); border-bottom:1px solid var(--border); background:var(--bg2); position:relative; z-index:1; }
+    .metrics-grid { display:grid; grid-template-columns:repeat(4,1fr); max-width:1200px; margin:0 auto; }
+    .metric-item { padding:48px 28px; text-align:center; border-right:1px solid var(--border); }
+    .metric-item:last-child { border-right:none; }
+    .metric-big {
+      display:block; font-size:clamp(2rem,3.5vw,3rem); font-weight:900;
+      letter-spacing:-.04em; line-height:1;
+      background:var(--grad); -webkit-background-clip:text;
+      -webkit-text-fill-color:transparent; background-clip:text;
+    }
+    .metric-label { font-size:.78rem; color:var(--muted); margin-top:9px; font-weight:500; line-height:1.45; max-width:140px; margin-left:auto; margin-right:auto; }
+
+    /* ── BEFORE / AFTER ─────────────────────────────── */
+    .ba-grid { display:grid; grid-template-columns:1fr 1fr; gap:24px; margin-top:52px; }
+    .ba-col { border-radius:var(--r-lg); overflow:hidden; }
+    .ba-before { border:1px solid rgba(248,113,113,.22); background:var(--bg2); }
+    .ba-after  { border:1px solid rgba(16,185,129,.22);  background:var(--bg2); }
+    .ba-head {
+      padding:18px 24px; display:flex; align-items:center; gap:10px;
+    }
+    .ba-before .ba-head { background:rgba(248,113,113,.05); border-bottom:1px solid rgba(248,113,113,.15); }
+    .ba-after  .ba-head { background:rgba(16,185,129,.05);  border-bottom:1px solid rgba(16,185,129,.15); }
+    .ba-head-label { font-size:.875rem; font-weight:700; }
+    .ba-before .ba-head-label { color:#F87171; }
+    .ba-after  .ba-head-label { color:#34D399; }
+    .ba-item {
+      display:flex; align-items:flex-start; gap:12px;
+      padding:14px 24px; border-bottom:1px solid var(--border);
+    }
+    .ba-item:last-child { border-bottom:none; }
+    .ba-item-text { font-size:.875rem; color:var(--text2); line-height:1.55; }
+    .ba-item-text strong { color:var(--text); }
+
+    /* ── TESTIMONIAL ────────────────────────────────── */
+    .testi-wrap { max-width:740px; margin:0 auto; text-align:center; }
+    .testi-qmark {
+      font-size:4.5rem; line-height:1;
+      background:var(--grad); -webkit-background-clip:text;
+      -webkit-text-fill-color:transparent; background-clip:text;
+      font-family:Georgia,serif; margin-bottom:4px;
+    }
+    .testi-text { font-size:clamp(1.1rem,1.8vw,1.35rem); font-weight:500; line-height:1.72; color:var(--text); margin-bottom:28px; }
+    .testi-info { display:flex; align-items:center; justify-content:center; gap:12px; }
+    .testi-av { width:40px; height:40px; border-radius:50%; background:var(--grad); display:flex; align-items:center; justify-content:center; font-size:.82rem; font-weight:700; color:#fff; }
+    .testi-name { font-size:.875rem; font-weight:700; }
+    .testi-role { font-size:.76rem; color:var(--muted); }
+
+    /* ── PERSONAS ───────────────────────────────────── */
+    .persona-grid { display:grid; grid-template-columns:repeat(auto-fit,minmax(220px,1fr)); gap:16px; margin-top:48px; }
+    .persona-card {
+      position:relative; padding:28px 22px;
+      border-radius:var(--r-lg); background:var(--bg2); border:1px solid var(--border);
+      transition:border-color .22s, background .22s, transform .22s;
+      cursor:default;
+    }
+    .persona-card:hover { border-color:var(--border2); background:var(--bg3); transform:translateY(-4px); }
+    .persona-card h4 { font-size:.93rem; font-weight:700; margin:14px 0 8px; }
+    .persona-card p { font-size:.82rem; color:var(--text2); line-height:1.65; }
+    .persona-outcome { display:inline-block; margin-top:14px; font-size:.72rem; font-weight:600; color:var(--purple-light); }
+
+    /* ── PILOT CTA ──────────────────────────────────── */
+    .cta-section { padding:100px 0; position:relative; z-index:1; }
+    .cta-inner {
+      max-width:760px; margin:0 auto;
+      border-radius:var(--r-xl); background:var(--bg2);
+      border:1px solid var(--border2);
+      padding:72px 56px; text-align:center;
+      position:relative; overflow:hidden;
+    }
+    .cta-inner::before {
+      content:""; position:absolute; top:-120px; left:50%; transform:translateX(-50%);
+      width:600px; height:500px;
+      background:radial-gradient(ellipse,rgba(124,58,237,.2) 0%,transparent 68%);
+      pointer-events:none;
+    }
+    .cta-inner h2 { font-size:clamp(1.8rem,2.8vw,2.6rem); margin-bottom:16px; }
+    .cta-inner p { color:var(--text2); font-size:1.02rem; margin-bottom:36px; line-height:1.72; max-width:460px; margin-left:auto; margin-right:auto; }
+    .pilot-form { display:flex; gap:10px; max-width:480px; margin:0 auto; flex-wrap:wrap; justify-content:center; }
+    .pilot-input {
+      flex:1; min-width:220px; padding:14px 18px;
+      border-radius:var(--r-md); border:1px solid var(--border2);
+      background:var(--bg3); color:var(--text); font-size:1rem; font-family:inherit;
+      outline:none; transition:border-color .2s, box-shadow .2s;
+    }
+    .pilot-input::placeholder { color:var(--muted); }
+    .pilot-input:focus { border-color:var(--purple); box-shadow:0 0 0 3px rgba(124,58,237,.14); }
+    .pilot-note { margin-top:14px; font-size:.77rem; color:var(--muted); transition:color .3s; }
+    .pilot-perks { display:flex; flex-wrap:wrap; justify-content:center; gap:20px; margin-top:36px; }
+    .perk { display:flex; align-items:center; gap:8px; font-size:.82rem; color:var(--text2); }
+    .perk-tick {
+      width:17px; height:17px; border-radius:50%;
+      background:rgba(124,58,237,.12); border:1px solid rgba(124,58,237,.28);
+      display:flex; align-items:center; justify-content:center;
+      font-size:.55rem; color:var(--purple-light); flex-shrink:0;
+    }
+
+    /* ── FOOTER ─────────────────────────────────────── */
+    footer { border-top:1px solid var(--border); padding:32px 40px; position:relative; z-index:1; }
+    .footer-inner { max-width:1200px; margin:0 auto; display:flex; align-items:center; justify-content:space-between; flex-wrap:wrap; gap:16px; }
+    footer p { font-size:.78rem; color:var(--muted); }
+    .footer-links { display:flex; gap:20px; }
+    .footer-links a { font-size:.78rem; color:var(--muted); text-decoration:none; transition:color .2s; }
+    .footer-links a:hover { color:var(--text); }
+
+    .divider { height:1px; background:linear-gradient(90deg,transparent,var(--border2),transparent); position:relative; z-index:1; }
+
+    /* ── RESPONSIVE ─────────────────────────────────── */
+    @media(max-width:960px){
+      .hero { padding: 80px 0 60px; }
+      .hero-layout { grid-template-columns:1fr; gap:48px; padding: 0 28px; text-align:center; }
+      .hero-left { text-align: center; }
+      .hero-sub { max-width: 100%; margin-left:auto; margin-right:auto; }
+      .hero-btns { justify-content:center; }
+      .hero-mini-stats { max-width:100%; }
+      .hero-right { max-width: 600px; margin: 0 auto; width: 100%; }
+      .feature-block { grid-template-columns:1fr; gap:40px; direction:ltr; }
+      .feature-block.rev { direction:ltr; }
+      .feature-visual { order:-1; }
+    }
+    @media(max-width:768px){
+      .wrap { padding: 0 24px; }
+      .nav-inner { padding: 0 20px; }
+      .nav-links { display:none; }
+      .hamburger { display:flex; }
+      .section { padding: 72px 0; }
+      .timeline-grid { display:flex; flex-direction:column; }
+      .step-item { border-right:none; border-bottom:1px solid var(--border); }
+      .step-item:last-child { border-bottom:none; }
+      .metrics-grid { grid-template-columns:repeat(2,1fr); }
+      .metric-item:nth-child(2){ border-right:none; }
+      .metric-item:nth-child(3){ border-top:1px solid var(--border); }
+      .metric-item:nth-child(4){ border-top:1px solid var(--border); border-right:none; }
+      .ba-grid { grid-template-columns:1fr; }
+      .btn-login { display:none; }
+    }
+    @media(max-width:480px){
+      .section { padding: 56px 0; }
+      .hero { padding: 64px 0 48px; }
+      .hero-layout { padding: 0 20px; }
+      h1 { font-size:2rem; }
+      h2 { font-size:1.7rem; }
+      .hero-btns { flex-direction:column; align-items:center; }
+      .btn-primary, .btn-ghost { width:100%; max-width:320px; justify-content:center; }
+      .hero-mini-stats { flex-direction:column; }
+      .hms-item { border-right:none; border-bottom:1px solid var(--border); }
+      .hms-item:last-child { border-bottom:none; }
+      .metrics-grid { grid-template-columns:1fr; }
+      .metric-item { border-right:none; border-bottom:1px solid var(--border); }
+      .metric-item:last-child { border-bottom:none; }
+      .pilot-form { flex-direction:column; }
+      .pilot-input { min-width:unset; width:100%; }
+      .btn-primary[type=submit]{ width:100%; }
+      .cta-inner { padding:40px 20px; }
+      .pain-grid { grid-template-columns:1fr; }
+      .persona-grid { grid-template-columns:1fr 1fr; }
+      .bar-lbl { width:82px; font-size:.68rem; }
+      .bar-val { width:42px; font-size:.68rem; }
+      .demo-body { padding: 14px; }
+      .bubble { max-width:86%; font-size:.8rem; }
+      footer { padding: 28px 20px; }
+    }
+  </style>
+</head>
+<body>
+
+<div class="bg-grid" aria-hidden="true"></div>
+<div class="bg-orb bg-orb-1" aria-hidden="true"></div>
+<div class="bg-orb bg-orb-2" aria-hidden="true"></div>
+<div class="bg-orb bg-orb-3" aria-hidden="true"></div>
+
+<!-- ═══════════════════════════════════════════ NAV -->
+<nav>
+  <div class="nav-inner">
+    <a class="logo" href="#">
+      <div class="logo-mark">
+        <svg width="18" height="18" viewBox="0 0 64 64" fill="none">
+          <circle cx="21" cy="32" r="6.5" fill="url(#lg)"/>
+          <path d="M14 27.5H30.5" stroke="#F0ECFF" stroke-width="3.2" stroke-linecap="round"/>
+          <path d="M10.5 32H30.5"  stroke="#F0ECFF" stroke-width="3.2" stroke-linecap="round"/>
+          <path d="M13 36.5H30.5" stroke="#F0ECFF" stroke-width="3.2" stroke-linecap="round"/>
+          <path d="M33 25.5H49.5V38.5H33" stroke="#F0ECFF" stroke-width="3.2" stroke-linecap="round" stroke-linejoin="round"/>
+          <path d="M39.5 21.5L47.5 21.5" stroke="#EC4899" stroke-width="2.4" stroke-linecap="round"/>
+          <defs>
+            <radialGradient id="lg" cx="0" cy="0" r="1" gradientUnits="userSpaceOnUse" gradientTransform="translate(21 32) rotate(49.4) scale(10.8)">
+              <stop stop-color="#FFB7D7"/><stop offset="1" stop-color="#7C3AED"/>
+            </radialGradient>
+          </defs>
+        </svg>
+      </div>
+      Claritect
+    </a>
+    <ul class="nav-links">
+      <li><a href="#pain">Problem</a></li>
+      <li><a href="#how">How It Works</a></li>
+      <li><a href="#features">Features</a></li>
+      <li><a href="/blog.html">Blog</a></li>
+      <li><a href="#pilot">Pilot</a></li>
+    </ul>
+    <div class="nav-right">
+      <a class="btn-login" href="/login">Log In</a>
+      <a class="btn-nav"   href="#pilot">Apply for Pilot</a>
+      <button class="hamburger" id="menuBtn" aria-label="Toggle menu" aria-expanded="false">
+        <span></span><span></span><span></span>
+      </button>
+    </div>
+  </div>
+  <div class="mobile-menu" id="mobileMenu">
+    <a href="#pain">The Problem</a>
+    <a href="#how">How It Works</a>
+    <a href="#features">Features</a>
+    <a href="/blog.html">Blog</a>
+    <a href="/login">Log In</a>
+    <a href="#pilot" style="color:var(--purple-light);font-weight:700;">Apply for Pilot →</a>
+  </div>
+</nav>
+
+<!-- ═══════════════════════════════════════════ HERO -->
+<section class="hero">
+  <div class="hero-layout">
+    <!-- LEFT -->
+    <div class="hero-left">
+      <div class="hero-eyebrow reveal">
+        <span class="badge"><span class="badge-dot"></span>Now accepting pilot customers</span>
+      </div>
+      <h1 class="reveal d1">
+        Your team asks.<br/>
+        <span class="grad-text">Your data answers.</span>
+      </h1>
+      <p class="hero-sub reveal d2">
+        Turn plain-English business questions into executive-grade reports — directly from
+        your own database, in under an hour, with zero SQL required.
+      </p>
+      <div class="hero-btns reveal d3">
+        <a class="btn-primary" href="#pilot">Apply for Free Pilot <span aria-hidden="true">→</span></a>
+        <a class="btn-ghost"   href="#how">See How It Works</a>
+      </div>
+      <div class="hero-mini-stats reveal d4">
+        <div class="hms-item">
+          <span class="hms-num" data-count="1" data-suffix=" hr">&lt; 1 hr</span>
+          <span class="hms-lbl">From question to insight</span>
+        </div>
+        <div class="hms-item">
+          <span class="hms-num">0 SQL</span>
+          <span class="hms-lbl">Required from your team</span>
+        </div>
+        <div class="hms-item">
+          <span class="hms-num">100%</span>
+          <span class="hms-lbl">Your data, your database</span>
+        </div>
+      </div>
+    </div>
+
+    <!-- RIGHT: DEMO -->
+    <div class="hero-right reveal d2">
+      <div class="demo-glow" aria-hidden="true"></div>
+      <div class="demo-window">
+        <div class="demo-bar">
+          <span class="dot-w d-red"></span>
+          <span class="dot-w d-amb"></span>
+          <span class="dot-w d-grn"></span>
+          <div class="demo-url">claritect.io</div>
+        </div>
+        <div class="demo-body">
+          <div class="msg user">
+            <div class="avatar av-user">SR</div>
+            <div class="bubble b-user">What were our top revenue categories last quarter — and which ones are declining?</div>
+          </div>
+          <div class="msg">
+            <div class="avatar av-ai">C</div>
+            <div class="bubble b-ai">I can pull that from your <strong>transactions</strong> and <strong>product_catalog</strong> tables. Should I compare against Q2 or year-over-year? And flag declines above 10%?</div>
+          </div>
+          <div class="msg user">
+            <div class="avatar av-user">SR</div>
+            <div class="bubble b-user">Quarter-over-quarter. Yes, flag declines.</div>
+          </div>
+          <div class="msg">
+            <div class="avatar av-ai">C</div>
+            <div class="bubble b-ai">
+              Here's your Q3 revenue breakdown:
+              <div class="report-card" id="demoCard">
+                <div class="rc-head">
+                  <span class="rc-title">Q3 Revenue — Category Breakdown</span>
+                  <span class="rc-live">Live Data</span>
+                </div>
+                <div class="rc-body">
+                  <div class="bar-row">
+                    <span class="bar-lbl">Enterprise Licences</span>
+                    <div class="bar-track"><div class="bar-fill" style="width:85%;background:linear-gradient(90deg,#7C3AED,#A78BFA)"></div></div>
+                    <span class="bar-val">$1.24M</span><span class="bar-chg up">↑18%</span>
+                  </div>
+                  <div class="bar-row">
+                    <span class="bar-lbl">Professional Services</span>
+                    <div class="bar-track"><div class="bar-fill" style="width:62%;background:linear-gradient(90deg,#7C3AED,#A78BFA)"></div></div>
+                    <span class="bar-val">$890K</span><span class="bar-chg up">↑4%</span>
+                  </div>
+                  <div class="bar-row">
+                    <span class="bar-lbl">Managed Support</span>
+                    <div class="bar-track"><div class="bar-fill" style="width:38%;background:linear-gradient(90deg,#EC4899,#F87171)"></div></div>
+                    <span class="bar-val">$540K</span><span class="bar-chg dn">↓12%</span>
+                  </div>
+                  <div class="bar-row">
+                    <span class="bar-lbl">SMB Subscriptions</span>
+                    <div class="bar-track"><div class="bar-fill" style="width:22%;background:linear-gradient(90deg,#EC4899,#F87171)"></div></div>
+                    <span class="bar-val">$310K</span><span class="bar-chg dn">↓21%</span>
+                  </div>
+                  <div class="bar-row">
+                    <span class="bar-lbl">Add-on Modules</span>
+                    <div class="bar-track"><div class="bar-fill" style="width:14%;background:linear-gradient(90deg,#7C3AED,#A78BFA)"></div></div>
+                    <span class="bar-val">$195K</span><span class="bar-chg up">↑9%</span>
+                  </div>
+                  <div class="rc-insight">
+                    ⚠ <strong>SMB Subscriptions</strong> down 21% QoQ. <strong>Managed Support</strong> down 12%. Want a churn analysis before Q4 planning?
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- ═══════════════════════════════════════════ PAIN -->
+<div class="divider"></div>
+<section class="section" id="pain">
+  <div class="wrap">
+    <span class="eyebrow reveal">The Problem</span>
+    <h2 class="reveal d1">Your data has the answers.<br/>Getting to them costs days.</h2>
+    <p class="section-sub reveal d2">Most teams aren't failing because of bad data — they're failing because there's no fast path from a business question to a trustworthy answer.</p>
+
+    <div class="pain-grid">
+
+      <div class="pain-card reveal">
+        <!-- Clock icon -->
+        <div class="icon-wrap">
+          <svg viewBox="0 0 24 24" fill="none" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round">
+            <defs><linearGradient id="ic1" x1="0" y1="0" x2="24" y2="24" gradientUnits="userSpaceOnUse"><stop stop-color="#7C3AED"/><stop offset="1" stop-color="#EC4899"/></linearGradient></defs>
+            <circle cx="12" cy="12" r="9.5" stroke="url(#ic1)"/>
+            <polyline points="12 6.5 12 12 15.5 14.5" stroke="url(#ic1)"/>
+          </svg>
+        </div>
+        <h3>Reports that take days</h3>
+        <p>Every business question becomes a ticket. By the time the report arrives, the decision has already been made — or delayed until it was too late.</p>
+        <p class="pain-quote">"Can you pull me the churn numbers for last month? I need it before the board call Thursday."</p>
+      </div>
+
+      <div class="pain-card reveal d1">
+        <!-- Lock icon -->
+        <div class="icon-wrap">
+          <svg viewBox="0 0 24 24" fill="none" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round">
+            <defs><linearGradient id="ic2" x1="0" y1="0" x2="24" y2="24" gradientUnits="userSpaceOnUse"><stop stop-color="#7C3AED"/><stop offset="1" stop-color="#EC4899"/></linearGradient></defs>
+            <rect x="5" y="11" width="14" height="10" rx="2" stroke="url(#ic2)"/>
+            <path d="M8 11V7a4 4 0 1 1 8 0v4" stroke="url(#ic2)"/>
+            <circle cx="12" cy="16" r="1.2" fill="url(#ic2)"/>
+          </svg>
+        </div>
+        <h3>Insights locked behind SQL</h3>
+        <p>Your analysts speak SQL. Your CFO, ops lead, and sales director don't. Every insight flows through one bottleneck, slowly, in one direction.</p>
+        <p class="pain-quote">"I'd love to check the numbers myself, but I have to wait for someone to write the query."</p>
+      </div>
+
+      <div class="pain-card reveal d2">
+        <!-- Chart icon -->
+        <div class="icon-wrap">
+          <svg viewBox="0 0 24 24" fill="none" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round">
+            <defs><linearGradient id="ic3" x1="0" y1="0" x2="24" y2="24" gradientUnits="userSpaceOnUse"><stop stop-color="#7C3AED"/><stop offset="1" stop-color="#EC4899"/></linearGradient></defs>
+            <rect x="3" y="12" width="4" height="9" rx="1" stroke="url(#ic3)"/>
+            <rect x="10" y="7"  width="4" height="14" rx="1" stroke="url(#ic3)"/>
+            <rect x="17" y="3"  width="4" height="18" rx="1" stroke="url(#ic3)"/>
+            <path d="M3 3h18" stroke="url(#ic3)" stroke-opacity=".3"/>
+          </svg>
+        </div>
+        <h3>Dashboards that go stale</h3>
+        <p>Static dashboards answer the questions you had last quarter. They can't answer the specific question you have this week, in the context of right now.</p>
+        <p class="pain-quote">"I need this broken down by region and segment, for this campaign only. The dashboard can't do that."</p>
+      </div>
+
+    </div>
+  </div>
+</section>
+
+<!-- ═══════════════════════════════════════════ HOW IT WORKS -->
+<div class="divider"></div>
+<section class="section section-alt" id="how">
+  <div class="wrap">
+    <span class="eyebrow reveal">How It Works</span>
+    <h2 class="reveal d1">From question to report<br/>in three steps</h2>
+    <p class="section-sub reveal d2">No new data warehouse. No migrations. No training sprints. Claritect works directly with the database you already have.</p>
+
+    <div class="timeline-grid">
+
+      <div class="step-item reveal">
+        <div class="step-pill">01</div>
+        <!-- Plug icon -->
+        <div class="icon-wrap">
+          <svg viewBox="0 0 24 24" fill="none" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round">
+            <defs><linearGradient id="si1" x1="0" y1="0" x2="24" y2="24" gradientUnits="userSpaceOnUse"><stop stop-color="#7C3AED"/><stop offset="1" stop-color="#EC4899"/></linearGradient></defs>
+            <path d="M12 19v3M8 19v3M16 2v3M8 2v3" stroke="url(#si1)"/>
+            <rect x="6" y="5" width="12" height="10" rx="2" stroke="url(#si1)"/>
+            <path d="M6 11h12" stroke="url(#si1)" stroke-opacity=".4"/>
+            <circle cx="12" cy="19" r="2" stroke="url(#si1)"/>
+          </svg>
+        </div>
+        <h3>Connect your database</h3>
+        <p>Plug in your existing Postgres or MySQL instance. Claritect reads your schema automatically — no manual cataloguing, no setup calls required.</p>
+        <div class="step-detail">Supports Postgres, MySQL, and more</div>
+      </div>
+
+      <div class="step-item reveal d1">
+        <div class="step-pill">02</div>
+        <!-- Chat icon -->
+        <div class="icon-wrap">
+          <svg viewBox="0 0 24 24" fill="none" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round">
+            <defs><linearGradient id="si2" x1="0" y1="0" x2="24" y2="24" gradientUnits="userSpaceOnUse"><stop stop-color="#7C3AED"/><stop offset="1" stop-color="#EC4899"/></linearGradient></defs>
+            <path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z" stroke="url(#si2)"/>
+            <line x1="9" y1="10" x2="15" y2="10" stroke="url(#si2)"/>
+            <line x1="9" y1="13" x2="13" y2="13" stroke="url(#si2)"/>
+          </svg>
+        </div>
+        <h3>Ask in plain English</h3>
+        <p>Anyone on your team types a question the way they'd ask a colleague. Claritect asks a few clarifying questions, then builds the right query.</p>
+        <div class="step-detail">No SQL. No BI tool training.</div>
+      </div>
+
+      <div class="step-item reveal d2">
+        <div class="step-pill">03</div>
+        <!-- Document icon -->
+        <div class="icon-wrap">
+          <svg viewBox="0 0 24 24" fill="none" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round">
+            <defs><linearGradient id="si3" x1="0" y1="0" x2="24" y2="24" gradientUnits="userSpaceOnUse"><stop stop-color="#7C3AED"/><stop offset="1" stop-color="#EC4899"/></linearGradient></defs>
+            <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" stroke="url(#si3)"/>
+            <polyline points="14 2 14 8 20 8" stroke="url(#si3)"/>
+            <line x1="8" y1="13" x2="16" y2="13" stroke="url(#si3)"/>
+            <line x1="8" y1="17" x2="13" y2="17" stroke="url(#si3)"/>
+          </svg>
+        </div>
+        <h3>Get an executive report</h3>
+        <p>A structured report — with trends, anomalies, and written commentary — is generated in under an hour, ready to share or export as PDF.</p>
+        <div class="step-detail">Export to PDF · Share via link</div>
+      </div>
+
+    </div>
+  </div>
+</section>
+
+<!-- ═══════════════════════════════════════════ FEATURES -->
+<div class="divider"></div>
+<section class="section" id="features">
+  <div class="wrap">
+    <span class="eyebrow reveal">Built Different</span>
+    <h2 class="reveal d1">Not a dashboard.<br/><span class="grad-text">A thinking partner.</span></h2>
+    <p class="section-sub reveal d2">Purpose-built for the moment a business decision needs data — right now, in context, for the specific person asking.</p>
+
+    <!-- Feature 1 -->
+    <div class="feature-block">
+      <div class="feature-text reveal">
+        <span class="feature-tag">Adaptive Intelligence</span>
+        <h3>Speaks to executives the way executives think</h3>
+        <p>Claritect reads the room. When a CFO asks a question, the report is strategic and concise. When an analyst digs in, it goes deep with methodology and raw detail.</p>
+        <ul class="feat-bullets">
+          <li><div class="f-check">✓</div><span>Automatically adjusts depth and language to the audience</span></li>
+          <li><div class="f-check">✓</div><span>Business insight mode and data quality mode in the same tool</span></li>
+          <li><div class="f-check">✓</div><span>Reports include written commentary, not just numbers</span></li>
+        </ul>
+      </div>
+      <div class="feature-visual reveal d1">
+        <div class="fv-head">
+          <!-- Sparkle icon -->
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+            <defs><linearGradient id="fi1" x1="0" y1="0" x2="24" y2="24" gradientUnits="userSpaceOnUse"><stop stop-color="#7C3AED"/><stop offset="1" stop-color="#EC4899"/></linearGradient></defs>
+            <path d="M12 2l2.4 7.4H22l-6.2 4.5 2.4 7.4L12 17l-6.2 4.3 2.4-7.4L2 9.4h7.6z" stroke="url(#fi1)"/>
+          </svg>
+          <span class="fv-title">Same question. Two audiences.</span>
+        </div>
+        <div class="fv-body">
+          <div class="aud-card">
+            <div class="aud-head">
+              <span class="aud-persona">
+                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke-width="2" stroke-linecap="round"><defs><linearGradient id="ap1" x1="0" y1="0" x2="24" y2="24" gradientUnits="userSpaceOnUse"><stop stop-color="#7C3AED"/><stop offset="1" stop-color="#EC4899"/></linearGradient></defs><path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2" stroke="url(#ap1)"/><circle cx="12" cy="7" r="4" stroke="url(#ap1)"/></svg>
+                CEO / Board
+              </span>
+              <span class="aud-mode mode-exec">Executive</span>
+            </div>
+            <div class="aud-body">
+              <div class="aud-line"><strong>Revenue is up 18% QoQ</strong>, driven by Enterprise. Two segments need attention before Q4.</div>
+              <div class="aud-line" style="margin-top:5px;color:var(--muted);font-size:.72rem;">Concise · Strategic · Decision-ready</div>
+            </div>
+          </div>
+          <div class="aud-card">
+            <div class="aud-head">
+              <span class="aud-persona">
+                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke-width="2" stroke-linecap="round"><defs><linearGradient id="ap2" x1="0" y1="0" x2="24" y2="24" gradientUnits="userSpaceOnUse"><stop stop-color="#7C3AED"/><stop offset="1" stop-color="#EC4899"/></linearGradient></defs><rect x="3" y="12" width="4" height="9" rx="1" stroke="url(#ap2)"/><rect x="10" y="7" width="4" height="14" rx="1" stroke="url(#ap2)"/><rect x="17" y="3" width="4" height="18" rx="1" stroke="url(#ap2)"/></svg>
+                Ops / Analyst
+              </span>
+              <span class="aud-mode mode-data">Analyst</span>
+            </div>
+            <div class="aud-body">
+              <div class="aud-line"><strong>SMB churn rate:</strong> 21% QoQ vs 8% in Q2. 3-month cohorts most at risk.</div>
+              <div class="aud-line" style="margin-top:5px;color:var(--muted);font-size:.72rem;">Detailed · Methodical · Data-rich</div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Feature 2 -->
+    <div class="feature-block rev">
+      <div class="feature-text reveal">
+        <span class="feature-tag">Security &amp; Privacy</span>
+        <h3>Your data never leaves your environment</h3>
+        <p>Claritect queries your database directly — it doesn't copy, store, or transmit your data to any third-party system. Every query runs inside your own infrastructure.</p>
+        <ul class="feat-bullets">
+          <li><div class="f-check">✓</div><span>Read-only access — zero data replication</span></li>
+          <li><div class="f-check">✓</div><span>Only the generated SQL leaves your boundary, never your data</span></li>
+          <li><div class="f-check">✓</div><span>Works inside your VPC or private network</span></li>
+        </ul>
+      </div>
+      <div class="feature-visual reveal d1">
+        <div class="fv-head">
+          <!-- Shield icon -->
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+            <defs><linearGradient id="fi2" x1="0" y1="0" x2="24" y2="24" gradientUnits="userSpaceOnUse"><stop stop-color="#7C3AED"/><stop offset="1" stop-color="#EC4899"/></linearGradient></defs>
+            <path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z" stroke="url(#fi2)"/>
+            <polyline points="9 12 11 14 15 10" stroke="url(#fi2)"/>
+          </svg>
+          <span class="fv-title">Data flow — what actually moves</span>
+        </div>
+        <div class="fv-body">
+          <div class="sv-row">
+            <div class="icon-wrap" style="width:34px;height:34px;border-radius:8px;flex-shrink:0;">
+              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke-width="1.8" stroke-linecap="round"><defs><linearGradient id="sv1" x1="0" y1="0" x2="24" y2="24" gradientUnits="userSpaceOnUse"><stop stop-color="#7C3AED"/><stop offset="1" stop-color="#EC4899"/></linearGradient></defs><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z" stroke="url(#sv1)"/></svg>
+            </div>
+            <div class="sv-text"><div class="sv-label">Your question</div><div class="sv-desc">Plain English → Claritect</div></div>
+            <span class="sv-badge">Sends</span>
+          </div>
+          <div class="sv-row">
+            <div class="icon-wrap" style="width:34px;height:34px;border-radius:8px;flex-shrink:0;">
+              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke-width="1.8" stroke-linecap="round"><defs><linearGradient id="sv2" x1="0" y1="0" x2="24" y2="24" gradientUnits="userSpaceOnUse"><stop stop-color="#7C3AED"/><stop offset="1" stop-color="#EC4899"/></linearGradient></defs><ellipse cx="12" cy="5" rx="9" ry="3" stroke="url(#sv2)"/><path d="M21 12c0 1.66-4.03 3-9 3S3 13.66 3 12" stroke="url(#sv2)"/><path d="M3 5v14c0 1.66 4.03 3 9 3s9-1.34 9-3V5" stroke="url(#sv2)"/></svg>
+            </div>
+            <div class="sv-text"><div class="sv-label">SQL query generated</div><div class="sv-desc">Claritect → Your database</div></div>
+            <span class="sv-badge">Sends</span>
+          </div>
+          <div class="sv-row" style="border:1px solid rgba(16,185,129,.28);background:rgba(16,185,129,.04);">
+            <div class="icon-wrap" style="width:34px;height:34px;border-radius:8px;flex-shrink:0;background:rgba(16,185,129,.1);border-color:rgba(16,185,129,.25);">
+              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke-width="1.8" stroke-linecap="round"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z" stroke="#34D399"/><polyline points="9 12 11 14 15 10" stroke="#34D399"/></svg>
+            </div>
+            <div class="sv-text"><div class="sv-label">Your data stays here</div><div class="sv-desc">Never copied. Never stored externally.</div></div>
+            <span class="sv-badge">Protected</span>
+          </div>
+          <div class="sv-row">
+            <div class="icon-wrap" style="width:34px;height:34px;border-radius:8px;flex-shrink:0;">
+              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke-width="1.8" stroke-linecap="round"><defs><linearGradient id="sv4" x1="0" y1="0" x2="24" y2="24" gradientUnits="userSpaceOnUse"><stop stop-color="#7C3AED"/><stop offset="1" stop-color="#EC4899"/></linearGradient></defs><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" stroke="url(#sv4)"/><polyline points="14 2 14 8 20 8" stroke="url(#sv4)"/><line x1="8" y1="13" x2="16" y2="13" stroke="url(#sv4)"/></svg>
+            </div>
+            <div class="sv-text"><div class="sv-label">Aggregated results → Report</div><div class="sv-desc">Summarised numbers only, not raw rows</div></div>
+            <span class="sv-badge">Sends</span>
+          </div>
+        </div>
+      </div>
+    </div>
+
+  </div>
+</section>
+
+<!-- ═══════════════════════════════════════════ METRICS -->
+<div class="metrics-strip" aria-label="Key statistics">
+  <div class="metrics-grid">
+    <div class="metric-item reveal">
+      <span class="metric-big">~85%</span>
+      <div class="metric-label">Reduction in time from question to insight</div>
+    </div>
+    <div class="metric-item reveal d1">
+      <span class="metric-big">10×</span>
+      <div class="metric-label">More questions answered per analyst per week</div>
+    </div>
+    <div class="metric-item reveal d2">
+      <span class="metric-big">&lt; 1 hr</span>
+      <div class="metric-label">From business question to full report</div>
+    </div>
+    <div class="metric-item reveal d3">
+      <span class="metric-big">0</span>
+      <div class="metric-label">SQL knowledge needed from business teams</div>
+    </div>
+  </div>
+</div>
+
+<!-- ═══════════════════════════════════════════ BEFORE / AFTER -->
+<section class="section section-alt">
+  <div class="wrap">
+    <span class="eyebrow reveal">The Difference</span>
+    <h2 class="reveal d1">What changes when<br/>insights are instant</h2>
+    <div class="ba-grid">
+
+      <div class="ba-col ba-before reveal">
+        <div class="ba-head">
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke-width="2" stroke-linecap="round"><circle cx="12" cy="12" r="10" stroke="#F87171"/><line x1="15" y1="9" x2="9" y2="15" stroke="#F87171"/><line x1="9" y1="9" x2="15" y2="15" stroke="#F87171"/></svg>
+          <span class="ba-head-label">Without Claritect</span>
+        </div>
+        <div>
+          <div class="ba-item"><div class="icon-wrap" style="width:30px;height:30px;border-radius:7px;flex-shrink:0;background:rgba(248,113,113,.08);border-color:rgba(248,113,113,.2)"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke-width="2" stroke-linecap="round"><circle cx="12" cy="12" r="9.5" stroke="#F87171"/><polyline points="12 6.5 12 12 15.5 14.5" stroke="#F87171"/></svg></div><span class="ba-item-text"><strong>2–5 days</strong> to get a report back from the data team</span></div>
+          <div class="ba-item"><div class="icon-wrap" style="width:30px;height:30px;border-radius:7px;flex-shrink:0;background:rgba(248,113,113,.08);border-color:rgba(248,113,113,.2)"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke-width="2" stroke-linecap="round"><rect x="3" y="3" width="18" height="18" rx="2" stroke="#F87171"/><line x1="8" y1="12" x2="16" y2="12" stroke="#F87171"/></svg></div><span class="ba-item-text">Every question becomes a ticket in a backlog nobody can clear</span></div>
+          <div class="ba-item"><div class="icon-wrap" style="width:30px;height:30px;border-radius:7px;flex-shrink:0;background:rgba(248,113,113,.08);border-color:rgba(248,113,113,.2)"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke-width="2" stroke-linecap="round"><rect x="5" y="11" width="14" height="10" rx="2" stroke="#F87171"/><path d="M8 11V7a4 4 0 1 1 8 0v4" stroke="#F87171"/></svg></div><span class="ba-item-text">Non-technical stakeholders locked out of self-service data</span></div>
+          <div class="ba-item"><div class="icon-wrap" style="width:30px;height:30px;border-radius:7px;flex-shrink:0;background:rgba(248,113,113,.08);border-color:rgba(248,113,113,.2)"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke-width="2" stroke-linecap="round"><polyline points="23 6 13.5 15.5 8.5 10.5 1 18" stroke="#F87171"/><polyline points="17 6 23 6 23 12" stroke="#F87171"/></svg></div><span class="ba-item-text">Analysts spend 70% of time on repeatable, low-value requests</span></div>
+          <div class="ba-item"><div class="icon-wrap" style="width:30px;height:30px;border-radius:7px;flex-shrink:0;background:rgba(248,113,113,.08);border-color:rgba(248,113,113,.2)"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke-width="2" stroke-linecap="round"><circle cx="12" cy="12" r="10" stroke="#F87171"/><line x1="12" y1="8" x2="12" y2="12" stroke="#F87171"/><line x1="12" y1="16" x2="12.01" y2="16" stroke="#F87171" stroke-width="2.5"/></svg></div><span class="ba-item-text">Decisions made on gut feel when data takes too long to arrive</span></div>
+        </div>
+      </div>
+
+      <div class="ba-col ba-after reveal d1">
+        <div class="ba-head">
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke-width="2" stroke-linecap="round"><circle cx="12" cy="12" r="10" stroke="#34D399"/><polyline points="9 12 11 14 15 10" stroke="#34D399"/></svg>
+          <span class="ba-head-label">With Claritect</span>
+        </div>
+        <div>
+          <div class="ba-item"><div class="icon-wrap" style="width:30px;height:30px;border-radius:7px;flex-shrink:0;background:rgba(16,185,129,.08);border-color:rgba(16,185,129,.22)"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke-width="2" stroke-linecap="round"><path d="M13 2L3 14h9l-1 8 10-12h-9l1-8z" stroke="#34D399"/></svg></div><span class="ba-item-text"><strong>Under an hour</strong> from question to a full, shareable report</span></div>
+          <div class="ba-item"><div class="icon-wrap" style="width:30px;height:30px;border-radius:7px;flex-shrink:0;background:rgba(16,185,129,.08);border-color:rgba(16,185,129,.22)"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke-width="2" stroke-linecap="round"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z" stroke="#34D399"/></svg></div><span class="ba-item-text">Anyone on the team asks directly — no middleman, no waiting</span></div>
+          <div class="ba-item"><div class="icon-wrap" style="width:30px;height:30px;border-radius:7px;flex-shrink:0;background:rgba(16,185,129,.08);border-color:rgba(16,185,129,.22)"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke-width="2" stroke-linecap="round"><path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2" stroke="#34D399"/><circle cx="12" cy="7" r="4" stroke="#34D399"/></svg></div><span class="ba-item-text">Executives and ops leads get answers in their own language</span></div>
+          <div class="ba-item"><div class="icon-wrap" style="width:30px;height:30px;border-radius:7px;flex-shrink:0;background:rgba(16,185,129,.08);border-color:rgba(16,185,129,.22)"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke-width="2" stroke-linecap="round"><polygon points="12 2 15.09 8.26 22 9.27 17 14.14 18.18 21.02 12 17.77 5.82 21.02 7 14.14 2 9.27 8.91 8.26 12 2" stroke="#34D399"/></svg></div><span class="ba-item-text">Analysts focus on strategy, modelling, and high-value interpretation</span></div>
+          <div class="ba-item"><div class="icon-wrap" style="width:30px;height:30px;border-radius:7px;flex-shrink:0;background:rgba(16,185,129,.08);border-color:rgba(16,185,129,.22)"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke-width="2" stroke-linecap="round"><polyline points="22 7 13.5 15.5 8.5 10.5 2 17" stroke="#34D399"/><polyline points="16 7 22 7 22 13" stroke="#34D399"/></svg></div><span class="ba-item-text">Decisions backed by real data, made in hours instead of weeks</span></div>
+        </div>
+      </div>
+
+    </div>
+  </div>
+</section>
+
+<!-- ═══════════════════════════════════════════ TESTIMONIAL -->
+<div class="divider"></div>
+<section class="section">
+  <div class="wrap">
+    <div class="testi-wrap reveal">
+      <div class="testi-qmark">"</div>
+      <p class="testi-text">We don't need a bigger data team. We need the team we have to move faster. Claritect is exactly what that looks like in practice — our ops lead now gets answers before the meeting, not after.</p>
+      <div class="testi-info">
+        <div class="testi-av">PK</div>
+        <div>
+          <div class="testi-name">Early Pilot Customer</div>
+          <div class="testi-role">Operations Director, 65-person SaaS company</div>
+        </div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- ═══════════════════════════════════════════ WHO IT'S FOR -->
+<div class="divider"></div>
+<section class="section section-alt">
+  <div class="wrap">
+    <span class="eyebrow reveal">Who It's For</span>
+    <h2 class="reveal d1">Built for teams where<br/>data answers are slow</h2>
+    <p class="section-sub reveal d2">Designed for 20–300 person companies with real operational data but no dedicated BI team to serve the whole organisation.</p>
+
+    <div class="persona-grid">
+
+      <div class="persona-card reveal">
+        <div class="icon-wrap">
+          <svg viewBox="0 0 24 24" fill="none" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round">
+            <defs><linearGradient id="pi1" x1="0" y1="0" x2="24" y2="24" gradientUnits="userSpaceOnUse"><stop stop-color="#7C3AED"/><stop offset="1" stop-color="#EC4899"/></linearGradient></defs>
+            <line x1="12" y1="1" x2="12" y2="23" stroke="url(#pi1)"/><path d="M17 5H9.5a3.5 3.5 0 0 0 0 7h5a3.5 3.5 0 0 1 0 7H6" stroke="url(#pi1)"/>
+          </svg>
+        </div>
+        <h4>Finance &amp; Revenue</h4>
+        <p>Monthly closes, revenue analysis, and cost breakdowns — without waiting on engineering or a BI analyst.</p>
+        <span class="persona-outcome">→ Reports in hours, not days</span>
+      </div>
+
+      <div class="persona-card reveal d1">
+        <div class="icon-wrap">
+          <svg viewBox="0 0 24 24" fill="none" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round">
+            <defs><linearGradient id="pi2" x1="0" y1="0" x2="24" y2="24" gradientUnits="userSpaceOnUse"><stop stop-color="#7C3AED"/><stop offset="1" stop-color="#EC4899"/></linearGradient></defs>
+            <circle cx="12" cy="12" r="3" stroke="url(#pi2)"/>
+            <path d="M19.07 4.93a10 10 0 0 1 0 14.14M4.93 4.93a10 10 0 0 0 0 14.14" stroke="url(#pi2)" stroke-opacity=".5"/>
+            <path d="M15.54 8.46a5 5 0 0 1 0 7.07M8.46 8.46a5 5 0 0 0 0 7.07" stroke="url(#pi2)"/>
+          </svg>
+        </div>
+        <h4>Operations</h4>
+        <p>Track team performance, surface operational bottlenecks, and monitor KPIs in real time with zero SQL.</p>
+        <span class="persona-outcome">→ Self-service ops intelligence</span>
+      </div>
+
+      <div class="persona-card reveal d2">
+        <div class="icon-wrap">
+          <svg viewBox="0 0 24 24" fill="none" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round">
+            <defs><linearGradient id="pi3" x1="0" y1="0" x2="24" y2="24" gradientUnits="userSpaceOnUse"><stop stop-color="#7C3AED"/><stop offset="1" stop-color="#EC4899"/></linearGradient></defs>
+            <polyline points="22 7 13.5 15.5 8.5 10.5 1 18" stroke="url(#pi3)"/>
+            <polyline points="16 7 22 7 22 13" stroke="url(#pi3)"/>
+          </svg>
+        </div>
+        <h4>Sales &amp; GTM</h4>
+        <p>Pipeline analysis, win/loss breakdowns, and territory performance — on demand, for any time period.</p>
+        <span class="persona-outcome">→ Data-led sales reviews</span>
+      </div>
+
+      <div class="persona-card reveal d3">
+        <div class="icon-wrap">
+          <svg viewBox="0 0 24 24" fill="none" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round">
+            <defs><linearGradient id="pi4" x1="0" y1="0" x2="24" y2="24" gradientUnits="userSpaceOnUse"><stop stop-color="#7C3AED"/><stop offset="1" stop-color="#EC4899"/></linearGradient></defs>
+            <polygon points="12 2 15.09 8.26 22 9.27 17 14.14 18.18 21.02 12 17.77 5.82 21.02 7 14.14 2 9.27 8.91 8.26 12 2" stroke="url(#pi4)"/>
+          </svg>
+        </div>
+        <h4>Founders &amp; Executives</h4>
+        <p>Ask the hard questions about your business and get straight answers — not spreadsheets or waiting games.</p>
+        <span class="persona-outcome">→ Board-ready insights instantly</span>
+      </div>
+
+    </div>
+  </div>
+</section>
+
+<!-- ═══════════════════════════════════════════ CTA -->
+<div class="divider"></div>
+<section class="cta-section" id="pilot">
+  <div class="wrap">
+    <div class="cta-inner reveal">
+      <div style="margin-bottom:24px;">
+        <span class="badge"><span class="badge-dot"></span>Limited pilot spots — currently open</span>
+      </div>
+      <h2>Get the insights your team<br/><span class="grad-text">has been waiting months for</span></h2>
+      <p>Free, hands-on pilot with a small group of companies. You connect your database — we make sure you get real, demonstrable value. No credit card, no commitment.</p>
+      <form class="pilot-form" id="pilotForm" novalidate>
+        <input class="pilot-input" type="email" name="email" placeholder="your@company.com" autocomplete="email" required aria-label="Work email address" />
+        <button class="btn-primary" type="submit">Request Pilot Access →</button>
+      </form>
+      <p class="pilot-note" id="formNote">No credit card. No commitment. Setup in under 30 minutes.</p>
+      <div class="pilot-perks">
+        <div class="perk"><div class="perk-tick">✓</div>Completely free during pilot</div>
+        <div class="perk"><div class="perk-tick">✓</div>Your data stays in your database</div>
+        <div class="perk"><div class="perk-tick">✓</div>Onboarding call included</div>
+        <div class="perk"><div class="perk-tick">✓</div>Direct line to the founders</div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- ═══════════════════════════════════════════ FOOTER -->
+<footer>
+  <div class="footer-inner">
+    <a class="logo" href="#">
+      <div class="logo-mark">
+        <svg width="18" height="18" viewBox="0 0 64 64" fill="none">
+          <circle cx="21" cy="32" r="6.5" fill="url(#fg)"/>
+          <path d="M14 27.5H30.5" stroke="#F0ECFF" stroke-width="3.2" stroke-linecap="round"/>
+          <path d="M10.5 32H30.5"  stroke="#F0ECFF" stroke-width="3.2" stroke-linecap="round"/>
+          <path d="M13 36.5H30.5" stroke="#F0ECFF" stroke-width="3.2" stroke-linecap="round"/>
+          <path d="M33 25.5H49.5V38.5H33" stroke="#F0ECFF" stroke-width="3.2" stroke-linecap="round" stroke-linejoin="round"/>
+          <path d="M39.5 21.5L47.5 21.5" stroke="#EC4899" stroke-width="2.4" stroke-linecap="round"/>
+          <defs>
+            <radialGradient id="fg" cx="0" cy="0" r="1" gradientUnits="userSpaceOnUse" gradientTransform="translate(21 32) rotate(49.4) scale(10.8)">
+              <stop stop-color="#FFB7D7"/><stop offset="1" stop-color="#7C3AED"/>
+            </radialGradient>
+          </defs>
+        </svg>
+      </div>
+      Claritect
+    </a>
+    <div class="footer-links">
+      <a href="#pain">Problem</a>
+      <a href="#how">How It Works</a>
+      <a href="#features">Features</a>
+      <a href="/blog.html">Blog</a>
+      <a href="#pilot">Apply</a>
+      <a href="/privacy-policy.html">Privacy Policy</a>
+      <a href="/terms-of-service.html">Terms of Service</a>
+    </div>
+    <p>© 2025 Claritect. All rights reserved.</p>
+  </div>
+</footer>
+
+<script>
+  /* ── Scroll reveal ── */
+  const ro = new IntersectionObserver(
+    entries => entries.forEach(e => { if(e.isIntersecting) e.target.classList.add("in"); }),
+    { threshold: 0.07, rootMargin: "0px 0px -36px 0px" }
+  );
+  document.querySelectorAll(".reveal").forEach(el => ro.observe(el));
+
+  /* ── Bar chart animation ── */
+  const barObs = new IntersectionObserver(entries => {
+    entries.forEach(e => {
+      if(!e.isIntersecting) return;
+      e.target.querySelectorAll(".bar-fill").forEach(b => {
+        const w = b.style.width; b.style.width = "0";
+        requestAnimationFrame(() => setTimeout(() => { b.style.width = w; }, 60));
+      });
+      barObs.unobserve(e.target);
+    });
+  }, { threshold: 0.3 });
+  document.querySelectorAll(".report-card").forEach(c => barObs.observe(c));
+
+  /* ── 3D card tilt ── */
+  document.querySelectorAll(".pain-card, .persona-card").forEach(card => {
+    card.addEventListener("mousemove", e => {
+      const r = card.getBoundingClientRect();
+      const x = (e.clientX - r.left) / r.width  - 0.5;
+      const y = (e.clientY - r.top)  / r.height - 0.5;
+      card.style.transform = `perspective(700px) rotateX(${-y*7}deg) rotateY(${x*7}deg) translateY(-4px)`;
+    });
+    card.addEventListener("mouseleave", () => { card.style.transform = ""; });
+  });
+
+  /* ── Mobile nav ── */
+  const btn  = document.getElementById("menuBtn");
+  const menu = document.getElementById("mobileMenu");
+  btn.addEventListener("click", () => {
+    const open = menu.classList.toggle("open");
+    btn.classList.toggle("open", open);
+    btn.setAttribute("aria-expanded", open);
+  });
+  menu.querySelectorAll("a").forEach(a => a.addEventListener("click", () => {
+    menu.classList.remove("open"); btn.classList.remove("open"); btn.setAttribute("aria-expanded","false");
+  }));
+
+  /* ── Pilot form ── */
+  document.getElementById("pilotForm").addEventListener("submit", function(e) {
+    e.preventDefault();
+    const email = this.querySelector("input").value.trim();
+    if(!email) return;
+    const note = document.getElementById("formNote");
+    note.textContent = "✓ Got it! We'll be in touch at " + email + " within 24 hours.";
+    note.style.color = "#34D399";
+    const btn = this.querySelector("button");
+    btn.disabled = true; btn.textContent = "Request Sent ✓";
+    btn.style.opacity = ".7"; btn.style.cursor = "default";
+    // TODO: POST to your waitlist endpoint
+  });
+</script>
+</body>
+</html>

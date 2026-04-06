@@ -1,0 +1,229 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Privacy Policy — Claritect</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&display=swap" rel="stylesheet" />
+  <style>
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+    :root {
+      --bg: #0A0714; --bg2: #110E22; --bg3: #19153A;
+      --purple: #7C3AED; --purple-light: #A78BFA; --pink: #EC4899;
+      --text: #F0ECFF; --text2: #C4BBEA; --muted: #7B72A8;
+      --border: rgba(124,58,237,0.18); --border2: rgba(124,58,237,0.32);
+      --grad: linear-gradient(135deg, #7C3AED, #EC4899);
+    }
+    html { scroll-behavior: smooth; }
+    body { font-family: "Inter", system-ui, sans-serif; background: var(--bg); color: var(--text); -webkit-font-smoothing: antialiased; }
+    .bg-grid {
+      position: fixed; inset: 0; z-index: 0; pointer-events: none;
+      background-image: linear-gradient(rgba(124,58,237,0.03) 1px, transparent 1px), linear-gradient(90deg, rgba(124,58,237,0.03) 1px, transparent 1px);
+      background-size: 52px 52px;
+    }
+    nav {
+      position: sticky; top: 0; z-index: 100;
+      background: rgba(10,7,20,0.85); backdrop-filter: blur(20px);
+      border-bottom: 1px solid var(--border);
+    }
+    .nav-inner {
+      display: flex; align-items: center; justify-content: space-between;
+      padding: 0 40px; height: 60px; max-width: 1100px; margin: 0 auto;
+    }
+    .logo { display: flex; align-items: center; gap: 9px; text-decoration: none; color: var(--text); font-size: 1rem; font-weight: 700; letter-spacing: -.02em; }
+    .logo-mark { width: 30px; height: 30px; border-radius: 8px; background: var(--bg); border: 1px solid rgba(124,58,237,.5); display: flex; align-items: center; justify-content: center; }
+    .btn-back { color: var(--muted); text-decoration: none; font-size: .82rem; font-weight: 600; padding: 7px 14px; border-radius: 7px; border: 1px solid var(--border2); transition: color .18s, border-color .18s; }
+    .btn-back:hover { color: var(--text); border-color: var(--purple); }
+    main { position: relative; z-index: 1; max-width: 760px; margin: 0 auto; padding: 72px 40px 100px; }
+    .doc-header { margin-bottom: 52px; padding-bottom: 32px; border-bottom: 1px solid var(--border); }
+    .doc-label { display: inline-block; font-size: .72rem; font-weight: 700; text-transform: uppercase; letter-spacing: .1em; color: var(--pink); margin-bottom: 14px; }
+    .doc-header h1 { font-size: clamp(1.8rem, 3vw, 2.4rem); font-weight: 900; letter-spacing: -.035em; margin-bottom: 12px; }
+    .doc-meta { font-size: .82rem; color: var(--muted); display: flex; gap: 20px; flex-wrap: wrap; }
+    .notice {
+      background: rgba(124,58,237,.08); border: 1px solid rgba(124,58,237,.22);
+      border-radius: 12px; padding: 16px 20px; margin-bottom: 40px;
+      font-size: .85rem; color: var(--text2); line-height: 1.65;
+    }
+    .notice strong { color: var(--purple-light); }
+    h2 { font-size: 1.15rem; font-weight: 700; margin: 40px 0 14px; color: var(--text); padding-top: 8px; border-top: 1px solid var(--border); }
+    h2:first-of-type { border-top: none; margin-top: 0; }
+    p { font-size: .92rem; color: var(--text2); line-height: 1.78; margin-bottom: 14px; }
+    ul { list-style: none; padding: 0; margin: 0 0 14px; }
+    ul li { font-size: .92rem; color: var(--text2); line-height: 1.78; padding: 4px 0 4px 22px; position: relative; }
+    ul li::before { content: "—"; position: absolute; left: 0; color: var(--purple-light); font-weight: 600; }
+    strong { color: var(--text); font-weight: 600; }
+    a { color: var(--purple-light); text-decoration: none; }
+    a:hover { text-decoration: underline; }
+    .contact-box {
+      background: var(--bg2); border: 1px solid var(--border2); border-radius: 14px;
+      padding: 24px 28px; margin-top: 40px;
+    }
+    .contact-box p { margin: 0; }
+    footer { border-top: 1px solid var(--border); padding: 28px 40px; position: relative; z-index: 1; }
+    .footer-inner { max-width: 1100px; margin: 0 auto; display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 12px; }
+    footer p { font-size: .78rem; color: var(--muted); }
+    .footer-links { display: flex; gap: 18px; flex-wrap: wrap; }
+    .footer-links a { font-size: .78rem; color: var(--muted); text-decoration: none; transition: color .18s; }
+    .footer-links a:hover { color: var(--text); }
+    @media(max-width:600px){ main { padding: 48px 20px 80px; } .nav-inner { padding: 0 20px; } footer { padding: 24px 20px; } }
+  </style>
+</head>
+<body>
+<div class="bg-grid" aria-hidden="true"></div>
+
+<nav>
+  <div class="nav-inner">
+    <a class="logo" href="/pitch.html">
+      <div class="logo-mark">
+        <svg width="18" height="18" viewBox="0 0 64 64" fill="none">
+          <circle cx="21" cy="32" r="6.5" fill="url(#lg)"/>
+          <path d="M14 27.5H30.5" stroke="#F0ECFF" stroke-width="3.2" stroke-linecap="round"/>
+          <path d="M10.5 32H30.5" stroke="#F0ECFF" stroke-width="3.2" stroke-linecap="round"/>
+          <path d="M13 36.5H30.5" stroke="#F0ECFF" stroke-width="3.2" stroke-linecap="round"/>
+          <path d="M33 25.5H49.5V38.5H33" stroke="#F0ECFF" stroke-width="3.2" stroke-linecap="round" stroke-linejoin="round"/>
+          <path d="M39.5 21.5L47.5 21.5" stroke="#EC4899" stroke-width="2.4" stroke-linecap="round"/>
+          <defs><radialGradient id="lg" cx="0" cy="0" r="1" gradientUnits="userSpaceOnUse" gradientTransform="translate(21 32) rotate(49.4) scale(10.8)"><stop stop-color="#FFB7D7"/><stop offset="1" stop-color="#7C3AED"/></radialGradient></defs>
+        </svg>
+      </div>
+      Claritect
+    </a>
+    <a class="btn-back" href="/pitch.html">← Back to Home</a>
+  </div>
+</nav>
+
+<main>
+  <div class="doc-header">
+    <span class="doc-label">Legal</span>
+    <h1>Privacy Policy</h1>
+    <div class="doc-meta">
+      <span>Effective: 1 January 2025</span>
+      <span>Last updated: April 2025</span>
+    </div>
+  </div>
+
+  <div class="notice">
+    <strong>Note:</strong> This Privacy Policy is provided for transparency and general guidance. Claritect is currently in an early pilot stage. If you have any questions or concerns, please contact us directly at <a href="mailto:privacy@claritect.io">privacy@claritect.io</a>.
+  </div>
+
+  <h2>1. Who We Are</h2>
+  <p>Claritect ("we", "our", or "us") is a data intelligence platform that enables business teams to query their own databases using plain-English questions and generate structured reports. Claritect operates as a business registered in India.</p>
+  <p>This Privacy Policy explains how we collect, use, store, and protect information about you when you visit our website, apply for our pilot programme, or use our platform.</p>
+
+  <h2>2. Information We Collect</h2>
+  <p><strong>Information you provide directly:</strong></p>
+  <ul>
+    <li>Email address (when you submit a pilot application or contact form)</li>
+    <li>Name and company name (when provided during onboarding)</li>
+    <li>Communications you send us via email or chat</li>
+  </ul>
+  <p><strong>Information collected automatically:</strong></p>
+  <ul>
+    <li>Browser type, operating system, and device type</li>
+    <li>IP address and general geographic region</li>
+    <li>Pages visited and time spent on this website</li>
+    <li>Referral source (how you found us)</li>
+  </ul>
+  <p><strong>What we do NOT collect:</strong></p>
+  <ul>
+    <li>We do not copy, store, or transmit the contents of your database</li>
+    <li>We do not retain the raw data rows returned by queries run through our platform</li>
+    <li>We do not sell your data to any third party, ever</li>
+  </ul>
+
+  <h2>3. How We Use Your Information</h2>
+  <ul>
+    <li>To contact you about your pilot application and onboarding</li>
+    <li>To send product updates and release notes (you may opt out at any time)</li>
+    <li>To improve our product based on usage patterns and feedback</li>
+    <li>To comply with legal obligations</li>
+    <li>To detect and prevent fraud or abuse</li>
+  </ul>
+  <p>We do not use your information for automated decision-making or profiling that produces legal effects.</p>
+
+  <h2>4. Database Access &amp; Your Business Data</h2>
+  <p>When you connect a database to Claritect, we access it using read-only credentials you provide. Our platform:</p>
+  <ul>
+    <li>Reads your database schema (table names, column names, types) to understand your data structure</li>
+    <li>Executes SQL queries generated by our AI on your database, on your infrastructure</li>
+    <li>Returns aggregated or summarised results to generate your report</li>
+    <li>Does <strong>not</strong> store raw query results beyond the duration of a single report session</li>
+  </ul>
+  <p>Your database credentials are stored encrypted. We treat your business data as strictly confidential and will not use it for any purpose other than generating the reports you request.</p>
+
+  <h2>5. Data Storage &amp; Security</h2>
+  <p>We take reasonable technical and organisational measures to protect your information, including:</p>
+  <ul>
+    <li>Encryption of credentials and sensitive data at rest</li>
+    <li>HTTPS-only data transmission</li>
+    <li>Access controls limiting who within our team can access customer data</li>
+    <li>Regular review of security practices</li>
+  </ul>
+  <p>No system is completely secure. If you believe your data has been compromised, please contact us immediately at <a href="mailto:security@claritect.io">security@claritect.io</a>.</p>
+
+  <h2>6. Third-Party Services</h2>
+  <p>We use a small number of trusted third-party services to operate our platform:</p>
+  <ul>
+    <li><strong>AI inference providers</strong> — to generate SQL queries and report commentary. We pass only the minimum necessary context (your question and schema metadata). No raw data rows are shared.</li>
+    <li><strong>Hosting and infrastructure providers</strong> — for platform deployment and uptime.</li>
+    <li><strong>Analytics</strong> — basic, privacy-respecting analytics to understand website traffic.</li>
+  </ul>
+  <p>We do not share your personal information with advertisers or data brokers.</p>
+
+  <h2>7. Data Retention</h2>
+  <p>We retain your contact information for as long as you are a customer or pilot participant, and for a reasonable period thereafter. You may request deletion of your data at any time by contacting us (see Section 10). We will process deletion requests within 30 days.</p>
+
+  <h2>8. Your Rights</h2>
+  <p>Depending on your jurisdiction, you may have the right to:</p>
+  <ul>
+    <li>Access the personal information we hold about you</li>
+    <li>Correct inaccurate information</li>
+    <li>Request deletion of your information ("right to be forgotten")</li>
+    <li>Object to or restrict certain processing activities</li>
+    <li>Data portability — receive your data in a structured format</li>
+    <li>Withdraw consent where processing is based on consent</li>
+  </ul>
+  <p>If you are located in the European Economic Area, you also have rights under the General Data Protection Regulation (GDPR). If you are located in India, this policy is consistent with the Digital Personal Data Protection Act (DPDPA) 2023.</p>
+
+  <h2>9. Cookies</h2>
+  <p>Our website uses minimal cookies, primarily for session management and basic analytics. We do not use advertising or third-party tracking cookies. You can disable cookies in your browser settings, though some features may not function correctly.</p>
+
+  <h2>10. Changes to This Policy</h2>
+  <p>We may update this Privacy Policy from time to time. When we make material changes, we will update the "Last updated" date at the top of this page and, where appropriate, notify pilot customers by email. Continued use of the platform after changes constitutes acceptance of the updated policy.</p>
+
+  <div class="contact-box">
+    <h2 style="margin-top:0;border-top:none;">11. Contact Us</h2>
+    <p>For any questions, concerns, or requests regarding this Privacy Policy or your personal data, please contact us:</p>
+    <p style="margin-top:10px;"><strong>Email:</strong> <a href="mailto:privacy@claritect.io">privacy@claritect.io</a><br/>
+    <strong>General:</strong> <a href="mailto:hello@claritect.io">hello@claritect.io</a></p>
+    <p style="margin-top:8px;">We aim to respond to all privacy-related enquiries within 5 business days.</p>
+  </div>
+</main>
+
+<footer>
+  <div class="footer-inner">
+    <a class="logo" href="/pitch.html">
+      <div class="logo-mark">
+        <svg width="18" height="18" viewBox="0 0 64 64" fill="none">
+          <circle cx="21" cy="32" r="6.5" fill="url(#fg)"/>
+          <path d="M14 27.5H30.5" stroke="#F0ECFF" stroke-width="3.2" stroke-linecap="round"/>
+          <path d="M10.5 32H30.5" stroke="#F0ECFF" stroke-width="3.2" stroke-linecap="round"/>
+          <path d="M13 36.5H30.5" stroke="#F0ECFF" stroke-width="3.2" stroke-linecap="round"/>
+          <path d="M33 25.5H49.5V38.5H33" stroke="#F0ECFF" stroke-width="3.2" stroke-linecap="round" stroke-linejoin="round"/>
+          <path d="M39.5 21.5L47.5 21.5" stroke="#EC4899" stroke-width="2.4" stroke-linecap="round"/>
+          <defs><radialGradient id="fg" cx="0" cy="0" r="1" gradientUnits="userSpaceOnUse" gradientTransform="translate(21 32) rotate(49.4) scale(10.8)"><stop stop-color="#FFB7D7"/><stop offset="1" stop-color="#7C3AED"/></radialGradient></defs>
+        </svg>
+      </div>
+      Claritect
+    </a>
+    <div class="footer-links">
+      <a href="/privacy-policy.html">Privacy Policy</a>
+      <a href="/terms-of-service.html">Terms of Service</a>
+      <a href="/blog.html">Blog</a>
+    </div>
+    <p>© 2025 Claritect. All rights reserved.</p>
+  </div>
+</footer>
+</body>
+</html>
