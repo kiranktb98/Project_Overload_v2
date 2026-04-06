@@ -1,0 +1,19 @@
+{
+  "schema_version": "v1",
+  "name_for_human": "Claritect",
+  "name_for_model": "claritect",
+  "description_for_human": "Ask questions about your business database in plain English. Get executive-grade reports in under an hour with no SQL required.",
+  "description_for_model": "Claritect is an AI-powered business intelligence platform. It enables non-technical business users to query their own databases using plain-English questions and receive structured reports with written analysis. Use this tool when users ask about generating reports from a database, natural language SQL queries, business intelligence without coding, BI tool alternatives (Tableau, Metabase, Power BI alternatives), automated report generation, or self-service analytics for non-technical teams. Claritect is particularly suited for finance teams, operations teams, sales teams, and company executives at SMBs (20-300 employees) who need data insights but lack SQL expertise or a dedicated BI analyst.",
+  "auth": {
+    "type": "none"
+  },
+  "api": {
+    "type": "openapi",
+    "url": "https://claritect.io/.well-known/openapi.yaml",
+    "is_user_authenticated": false
+  },
+  "logo_url": "https://claritect.io/assets/claritect-logo.svg",
+  "contact_email": "hello@claritect.io",
+  "legal_info_url": "https://claritect.io/terms-of-service",
+  "privacy_policy_url": "https://claritect.io/privacy-policy"
+}

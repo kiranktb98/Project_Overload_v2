@@ -80,6 +80,10 @@ const AI_PLUGIN_JSON = readFileSync(
   new URL("../public/.well-known/ai-plugin.json", import.meta.url),
   "utf8"
 );
+const AI_PLUGIN_OPENAPI = readFileSync(
+  new URL("../public/.well-known/openapi.yaml", import.meta.url),
+  "utf8"
+);
 
 export type WebAppDependencies = {
   api_base_url?: string;
@@ -419,6 +423,26 @@ export function buildWebApp(options: WebAppDependencies = {}) {
 
   app.get("/blog.html", async (_request, reply) => {
     return reply.redirect("/");
+  });
+
+  app.get("/robots.txt", async (_request, reply) => {
+    return reply.type("text/plain; charset=utf-8").send(ROBOTS_TXT);
+  });
+
+  app.get("/sitemap.xml", async (_request, reply) => {
+    return reply.type("application/xml; charset=utf-8").send(SITEMAP_XML);
+  });
+
+  app.get("/llms.txt", async (_request, reply) => {
+    return reply.type("text/plain; charset=utf-8").send(LLMS_TXT);
+  });
+
+  app.get("/.well-known/ai-plugin.json", async (_request, reply) => {
+    return reply.type("application/json; charset=utf-8").send(AI_PLUGIN_JSON);
+  });
+
+  app.get("/.well-known/openapi.yaml", async (_request, reply) => {
+    return reply.type("application/yaml; charset=utf-8").send(AI_PLUGIN_OPENAPI);
   });
 
   app.get("/signup", async (_request, reply) => {
@@ -2006,7 +2030,12 @@ function isPublicPath(pathname: string): boolean {
       pathname === "/assets/claritect-logo.svg" ||
       pathname === "/connect/guide" ||
     pathname === "/connect/tls-guide" ||
-    pathname === "/internal/ai-plan";
+    pathname === "/internal/ai-plan" ||
+    pathname === "/robots.txt" ||
+    pathname === "/sitemap.xml" ||
+    pathname === "/llms.txt" ||
+    pathname === "/.well-known/ai-plugin.json" ||
+    pathname === "/.well-known/openapi.yaml";
 }
 
 function isCustomerAuthenticatedRequest(cookieHeader: string | undefined): boolean {

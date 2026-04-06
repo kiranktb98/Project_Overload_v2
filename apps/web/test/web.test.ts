@@ -117,6 +117,31 @@ describe("web chat interface", () => {
     expect(blogPage.statusCode).toBe(302);
     expect(blogPage.headers.location).toBe("/");
 
+    const robotsPage = await app.inject({ method: "GET", url: "/robots.txt" });
+    expect(robotsPage.statusCode).toBe(200);
+    expect(robotsPage.headers["content-type"]).toContain("text/plain");
+    expect(robotsPage.body).toContain("Sitemap: https://claritect.io/sitemap.xml");
+
+    const sitemapPage = await app.inject({ method: "GET", url: "/sitemap.xml" });
+    expect(sitemapPage.statusCode).toBe(200);
+    expect(sitemapPage.headers["content-type"]).toContain("application/xml");
+    expect(sitemapPage.body).toContain("https://claritect.io/privacy-policy");
+
+    const llmsPage = await app.inject({ method: "GET", url: "/llms.txt" });
+    expect(llmsPage.statusCode).toBe(200);
+    expect(llmsPage.headers["content-type"]).toContain("text/plain");
+    expect(llmsPage.body).toContain("Claritect is an AI-powered data intelligence platform");
+
+    const aiPluginPage = await app.inject({ method: "GET", url: "/.well-known/ai-plugin.json" });
+    expect(aiPluginPage.statusCode).toBe(200);
+    expect(aiPluginPage.headers["content-type"]).toContain("application/json");
+    expect(aiPluginPage.body).toContain("\"contact_email\": \"hello@claritect.io\"");
+
+    const openapiPage = await app.inject({ method: "GET", url: "/.well-known/openapi.yaml" });
+    expect(openapiPage.statusCode).toBe(200);
+    expect(openapiPage.headers["content-type"]).toContain("application/yaml");
+    expect(openapiPage.body).toContain("openapi: 3.1.0");
+
     const signupPage = await app.inject({ method: "GET", url: "/signup" });
     expect(signupPage.statusCode).toBe(200);
     expect(signupPage.body).toContain("Sign up form");

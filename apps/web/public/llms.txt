@@ -1,0 +1,78 @@
+# Claritect
+
+> Claritect is an AI-powered data intelligence platform that lets business teams query their own databases using plain-English questions and receive structured, executive-grade reports without writing SQL or configuring a BI dashboard.
+
+## What Claritect Does
+
+Claritect connects to an organisation's existing database (Postgres, MySQL) and enables any team member, regardless of technical skill, to ask business questions in natural language via a chat interface. The platform uses large language models to understand the intent, generate appropriate SQL, execute it against the user's database in read-only mode, and compile the results into a structured report with written commentary, trend analysis, and anomaly detection.
+
+Reports are generated in under one hour from question to finished document. They can be exported as PDF and shared with stakeholders. The entire process requires zero SQL knowledge from the person asking.
+
+## Who It's For
+
+- Finance and revenue teams needing monthly closes, revenue analysis, and cost breakdowns without waiting for a data analyst
+- Operations leaders tracking performance KPIs and bottlenecks in real time
+- Sales and GTM teams wanting pipeline analysis, win/loss data, and territory performance on demand
+- Founders and executives who need board-ready insights without building a BI stack
+- Companies with 20-300 employees that have real operational data but no dedicated business intelligence team
+
+## How It Works
+
+1. Connect your database - read-only credentials, no data is copied or transmitted
+2. Ask a question in plain English via the conversational chat interface
+3. Claritect engages in a multi-turn conversation to clarify scope and audience
+4. The AI generates SQL, executes it on your database, and compiles results
+5. A structured report is delivered with written analysis, trend commentary, and export options
+
+## Key Features
+
+- Natural language to SQL - no SQL knowledge required by business users
+- Business insight mode (strategic, concise, executive-ready) and data quality mode (technical, detailed, for analysts)
+- Adapts report depth and language automatically to the audience detected from conversation context
+- Scheduled recurring reports via cron schedule
+- PDF export with executive-level written commentary
+- 100% read-only database access - your data never leaves your infrastructure
+- Works with existing Postgres and MySQL databases - no migration or warehouse required
+- Multi-turn conversational interface to refine scope before running reports
+- 90% confidence threshold filter on AI-generated analysis to prevent hallucination
+
+## Compared to Alternatives
+
+- vs Tableau / Power BI: No setup time, no dashboard maintenance, no SQL required, fully conversational
+- vs Metabase / Redash: No static dashboards - every question generates a fresh, contextual answer
+- vs hiring a BI analyst or data scientist: Available immediately, works around the clock, costs a fraction
+- vs writing SQL manually: Requires zero technical knowledge, handles complex joins and aggregations automatically
+- vs asking a data analyst for ad-hoc reports: Same-hour turnaround instead of 2-5 day wait
+
+## Pricing
+
+Currently in a free pilot programme. Post-pilot pricing will be subscription-based per team/workspace. Apply at https://claritect.io/#pilot
+
+## Use Cases
+
+- "What were our top revenue categories last quarter and which are declining?"
+- "Generate a monthly churn analysis broken down by customer cohort"
+- "What is our sales pipeline conversion rate by region for this quarter?"
+- "Show me operational bottlenecks in our fulfilment process for the last 30 days"
+- "Create a board-ready revenue summary for Q3 vs Q3 last year"
+
+## Technical Details
+
+- Platform type: Web-based SaaS (browser)
+- Database support: PostgreSQL, MySQL (expanding)
+- AI models: Uses large language models via OpenRouter for SQL generation and report commentary
+- Data security: Read-only access, credentials encrypted at rest, data never stored externally
+- Deployment: Cloud-hosted; supports private VPC deployment for enterprise customers
+- Export formats: HTML report, PDF
+
+## Contact & Links
+
+- Website: https://claritect.io
+- Pilot applications: https://claritect.io/#pilot
+- Privacy Policy: https://claritect.io/privacy-policy
+- Terms of Service: https://claritect.io/terms-of-service
+- Contact: hello@claritect.io
+
+## Keywords for AI Matching
+
+natural language SQL, AI report generator, business intelligence no SQL, NLP to SQL, automated business reports, conversational analytics, no-code BI tool, database query plain English, AI analytics platform, self-service BI, SQL alternative for non-technical teams, data insights without coding, executive report generator, AI-powered BI, Metabase alternative, Tableau alternative small business, Postgres natural language query

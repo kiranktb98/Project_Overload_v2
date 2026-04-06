@@ -1,0 +1,64 @@
+openapi: 3.1.0
+info:
+  title: Claritect Public Web API
+  version: 1.0.0
+  description: >
+    Public read-only endpoints for Claritect website discovery files and metadata.
+servers:
+  - url: https://claritect.io
+paths:
+  /robots.txt:
+    get:
+      operationId: getRobotsTxt
+      summary: Get robots instructions
+      responses:
+        "200":
+          description: Plain text robots file
+          content:
+            text/plain:
+              schema:
+                type: string
+  /sitemap.xml:
+    get:
+      operationId: getSitemap
+      summary: Get XML sitemap
+      responses:
+        "200":
+          description: XML sitemap
+          content:
+            application/xml:
+              schema:
+                type: string
+  /llms.txt:
+    get:
+      operationId: getLlmsTxt
+      summary: Get LLM discovery text
+      responses:
+        "200":
+          description: Plain text LLM discovery file
+          content:
+            text/plain:
+              schema:
+                type: string
+  /.well-known/ai-plugin.json:
+    get:
+      operationId: getAiPluginManifest
+      summary: Get AI plugin manifest
+      responses:
+        "200":
+          description: Plugin manifest
+          content:
+            application/json:
+              schema:
+                type: object
+  /.well-known/openapi.yaml:
+    get:
+      operationId: getOpenApiSpec
+      summary: Get public OpenAPI specification
+      responses:
+        "200":
+          description: OpenAPI YAML document
+          content:
+            application/yaml:
+              schema:
+                type: string
