@@ -83,6 +83,19 @@ export function buildWebApp(options: WebAppDependencies = {}) {
       level: process.env.LOG_LEVEL ?? "info"
     }
   });
+  const contentSecurityPolicy = [
+    "default-src 'self' https:",
+    "img-src 'self' data: https:",
+    "style-src 'self' 'unsafe-inline' https:",
+    "script-src 'self' 'unsafe-inline' https:",
+    "font-src 'self' data: https:",
+    "connect-src 'self' https:",
+    "frame-ancestors 'self'",
+    "base-uri 'self'",
+    "form-action 'self'",
+    "upgrade-insecure-requests",
+    "block-all-mixed-content"
+  ].join("; ");
   const apiBaseUrl = normalizeApiBaseUrl(
     options.api_base_url ?? process.env.WEB_API_BASE_URL ?? process.env.NEXT_PUBLIC_API_URL ?? "http://127.0.0.1:4000"
   );
@@ -108,6 +121,16 @@ export function buildWebApp(options: WebAppDependencies = {}) {
   // Allow HTML form POSTs (e.g. logout buttons) without body parsing
   app.addContentTypeParser("application/x-www-form-urlencoded", (_request, _payload, done) => {
     done(null, {});
+  });
+
+  app.addHook("onSend", async (_request, reply, payload) => {
+    reply.header("Content-Security-Policy", contentSecurityPolicy);
+    reply.header("Referrer-Policy", "strict-origin-when-cross-origin");
+    reply.header("X-Content-Type-Options", "nosniff");
+    reply.header("X-Frame-Options", "SAMEORIGIN");
+    reply.header("Permissions-Policy", "camera=(), microphone=(), geolocation=()");
+    reply.header("Strict-Transport-Security", "max-age=31536000; includeSubDomains; preload");
+    return payload;
   });
 
   // Thread user identity into AsyncLocalStorage so apiClient headers resolve per-user
