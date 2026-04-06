@@ -87,12 +87,22 @@ describe("web chat interface", () => {
     expect(health.json()).toEqual({ status: "ok", service: "web" });
 
     const rootPage = await app.inject({ method: "GET", url: "/" });
-    expect(rootPage.statusCode).toBe(302);
-    expect(rootPage.headers.location).toBe("/app");
+    expect(rootPage.statusCode).toBe(200);
+    expect(rootPage.body).toContain("Home page");
+    expect(rootPage.body).toContain("<title>Claritect | Home page</title>");
 
     const pricingPage = await app.inject({ method: "GET", url: "/pricing" });
-    expect(pricingPage.statusCode).toBe(302);
-    expect(pricingPage.headers.location).toBe("/");
+    expect(pricingPage.statusCode).toBe(200);
+    expect(pricingPage.body).toContain("Pricing page");
+    expect(pricingPage.body).toContain("<title>Claritect | Pricing page</title>");
+
+    const signupPage = await app.inject({ method: "GET", url: "/signup" });
+    expect(signupPage.statusCode).toBe(200);
+    expect(signupPage.body).toContain("Sign up form");
+    expect(signupPage.body).toContain('action="/signup"');
+    expect(signupPage.body).toContain('name="name"');
+    expect(signupPage.body).toContain('name="email"');
+    expect(signupPage.body).toContain('name="company"');
 
     const loginPage = await app.inject({ method: "GET", url: "/login" });
     expect(loginPage.statusCode).toBe(200);

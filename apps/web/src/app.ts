@@ -28,6 +28,7 @@ import { renderConnectionPage } from "./connect-page";
 import { renderLoginPage } from "./login-page";
 import { renderAdminLoggedOutPage, renderCustomerLoggedOutPage } from "./logout-page";
 import { renderUsageMetricsPage } from "./usage-page";
+import { renderHomePage, renderPricingPage, renderSignupPage } from "./public-page";
 import { renderGlobalConfigPage } from "./config-page";
 import { renderScheduledReportsPage } from "./scheduled-page";
 import {
@@ -334,20 +335,15 @@ export function buildWebApp(options: WebAppDependencies = {}) {
   });
 
   app.get("/", async (request, reply) => {
-    if (!authEnabled) {
-      return reply.redirect("/app");
-    }
-    if (isAdminAuthenticatedRequest(request.headers.cookie)) {
-      return reply.redirect("/admin");
-    }
-    if (isCustomerAuthenticatedRequest(request.headers.cookie)) {
-      return reply.redirect("/app");
-    }
-    return reply.redirect("/login");
+    return reply.type("text/html; charset=utf-8").send(renderHomePage());
   });
 
   app.get("/pricing", async (_request, reply) => {
-    return reply.redirect("/");
+    return reply.type("text/html; charset=utf-8").send(renderPricingPage());
+  });
+
+  app.get("/signup", async (_request, reply) => {
+    return reply.type("text/html; charset=utf-8").send(renderSignupPage());
   });
 
   app.get("/connect/guide", async (_request, reply) => {
@@ -1911,6 +1907,7 @@ function isUiAuthEnabled(): boolean {
 function isPublicPath(pathname: string): boolean {
   return pathname === "/" ||
     pathname === "/pricing" ||
+    pathname === "/signup" ||
     pathname === "/health" ||
     pathname === "/login" ||
     pathname === "/logout" ||
