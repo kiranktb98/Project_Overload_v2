@@ -71,6 +71,20 @@ function renderPublicLayout(title: string, body: string): string {
         font-weight: 600;
         cursor: pointer;
       }
+
+      a.button-link {
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        width: fit-content;
+        border-radius: 12px;
+        background: #6c3aed;
+        color: #f5f3ff;
+        padding: 12px 16px;
+        font: inherit;
+        font-weight: 600;
+        text-decoration: none;
+      }
     </style>
   </head>
   <body>
@@ -80,7 +94,11 @@ function renderPublicLayout(title: string, body: string): string {
 }
 
 export function renderHomePage(): string {
-  return renderPublicLayout("Claritect | Home page", "<h1>Home page</h1>");
+  return renderPublicLayout(
+    "Claritect | Home page",
+    `<h1>Home page</h1>
+    <a class="button-link" href="/signup">Sign up</a>`
+  );
 }
 
 export function renderPricingPage(): string {
