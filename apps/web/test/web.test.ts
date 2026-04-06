@@ -91,7 +91,6 @@ describe("web chat interface", () => {
     expect(rootPage.body).toContain("Claritect — Your Data Answers Itself");
     expect(rootPage.body).toContain('rel="icon"');
     expect(rootPage.body).toContain('href="/favicon.svg"');
-    expect(rootPage.body).toContain('href="/blog"');
     expect(rootPage.body).toContain('href="/privacy-policy"');
     expect(rootPage.body).toContain('href="/terms-of-service"');
 
@@ -115,9 +114,8 @@ describe("web chat interface", () => {
     expect(termsPage.body).toContain("hello@claritect.io");
 
     const blogPage = await app.inject({ method: "GET", url: "/blog" });
-    expect(blogPage.statusCode).toBe(200);
-    expect(blogPage.body).toContain("Claritect Blog | AI Reporting, SQL, and Decision Intelligence");
-    expect(blogPage.body).toContain("AI business analyst");
+    expect(blogPage.statusCode).toBe(302);
+    expect(blogPage.headers.location).toBe("/");
 
     const signupPage = await app.inject({ method: "GET", url: "/signup" });
     expect(signupPage.statusCode).toBe(200);

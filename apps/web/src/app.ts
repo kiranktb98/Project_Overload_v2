@@ -29,7 +29,6 @@ import { renderLoginPage } from "./login-page";
 import { renderAdminLoggedOutPage, renderCustomerLoggedOutPage } from "./logout-page";
 import { renderUsageMetricsPage } from "./usage-page";
 import {
-  renderBlogPage,
   renderHomePage,
   renderPitchPage,
   renderPricingPage,
@@ -63,6 +62,22 @@ const AI_DISCOVERABILITY_PLAN_HTML = readFileSync(
 );
 const CLARITECT_LOGO_SVG = readFileSync(
   new URL("./assets/claritect-logo.svg", import.meta.url),
+  "utf8"
+);
+const ROBOTS_TXT = readFileSync(
+  new URL("../public/robots.txt", import.meta.url),
+  "utf8"
+);
+const SITEMAP_XML = readFileSync(
+  new URL("../public/sitemap.xml", import.meta.url),
+  "utf8"
+);
+const LLMS_TXT = readFileSync(
+  new URL("../public/llms.txt", import.meta.url),
+  "utf8"
+);
+const AI_PLUGIN_JSON = readFileSync(
+  new URL("../public/.well-known/ai-plugin.json", import.meta.url),
   "utf8"
 );
 
@@ -399,11 +414,11 @@ export function buildWebApp(options: WebAppDependencies = {}) {
   });
 
   app.get("/blog", async (_request, reply) => {
-    return reply.type("text/html; charset=utf-8").send(renderBlogPage());
+    return reply.redirect("/");
   });
 
   app.get("/blog.html", async (_request, reply) => {
-    return reply.type("text/html; charset=utf-8").send(renderBlogPage());
+    return reply.redirect("/");
   });
 
   app.get("/signup", async (_request, reply) => {
