@@ -492,7 +492,12 @@ export function renderHelpWidget(): string {
       var el = document.createElement("div");
       el.className = "help-bubble " + role;
       if (role === "assistant") {
-        el.innerHTML = formatMarkdown(text);
+        try {
+          el.innerHTML = formatMarkdown(text);
+        } catch (formatError) {
+          console.error("[help-chat] markdown render failed:", formatError);
+          el.textContent = text;
+        }
       } else {
         el.textContent = text;
       }
@@ -593,11 +598,11 @@ export function renderHelpWidget(): string {
     }
 
     // Lightweight markdown renderer (escaped first, then small safe markdown subset).
-    var rBold = new RegExp("\\*\\*(.+?)\\*\\*", "g");
+    var rBold = /\\*\\*(.+?)\\*\\*/g;
     var rCode = new RegExp("\\x60([^\\x60]+)\\x60", "g");
-    var rHeading = new RegExp("^(#{1,4})\\s+(.+)$");
-    var rBulletLine = new RegExp("^[-\\u2022]\\s+(.+)$");
-    var rNumberLine = new RegExp("^\\d+[\\.)]\\s+(.+)$");
+    var rHeading = /^(#{1,4})\\s+(.+)$/;
+    var rBulletLine = /^[-\\u2022]\\s+(.+)$/;
+    var rNumberLine = /^\\d+[\\.)]\\s+(.+)$/;
     function formatMarkdown(text) {
       var lines = String(text || "").replace(/\\r\\n/g, "\\n").split("\\n");
       var html = [];
