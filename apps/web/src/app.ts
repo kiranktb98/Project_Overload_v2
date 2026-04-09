@@ -534,7 +534,10 @@ Response rules:
 - Answer the exact question first.
 - Use the provided current screen context. Do not give generic onboarding steps unless relevant.
 - Do not use markdown headings unless the user asks for a checklist.
-- Never make up features. If unsure, point to /connect/guide or /connect/tls-guide.`;
+- Only answer questions about how to use Claritect or how to raise a support ticket.
+- Do not disclose backend architecture, infrastructure, codebase, vendors, model providers, APIs, API keys, deployment details, databases, repositories, environment variables, or internal tools.
+- If asked about internal implementation, refuse briefly and redirect to product usage or support.
+- Never make up features. If unsure, point to /connect/guide or ask the user to contact hello@claritect.io.`;
 
   const HelpChatSchema = z.object({
     message: z.string().trim().min(1).max(2000),
@@ -556,6 +559,12 @@ Response rules:
       return reply.code(400).send({ reply: "Invalid request." });
     }
     const body = parsed.data;
+    if (isHelpInternalDetailsQuestion(body.message)) {
+      return {
+        reply: HELP_SCOPE_REPLY,
+        session_id: body.session_id ?? randomUUID()
+      };
+    }
     const openrouterKey = process.env.OPENROUTER_API_KEY;
     if (!openrouterKey) {
       return {
@@ -599,7 +608,8 @@ Response rules:
       }
 
       const data = await response.json() as { choices?: Array<{ message?: { content?: string } }> };
-      const text = data.choices?.[0]?.message?.content?.trim() ?? "Sorry, I didn't get a response. Try rephrasing your question.";
+      const rawText = data.choices?.[0]?.message?.content?.trim() ?? "Sorry, I didn't get a response. Try rephrasing your question.";
+      const text = containsHelpInternalDetails(rawText) ? HELP_SCOPE_REPLY : rawText;
 
       // Persist conversation to DB — fire and forget, don't block the response
       const updatedMessages = [
@@ -2106,6 +2116,25 @@ function formatHelpScreenContext(screenContext: { path?: string; title?: string;
   return `Current user screen: ${screen}\nCurrent path: ${path}${titleLine}\nUse this screen context to answer narrowly and avoid generic product tours.`;
 }
 
+const HELP_SCOPE_REPLY = "I can only help with using Claritect or raising a support ticket. For support, send the issue, screenshot, and page URL to hello@claritect.io.";
+
+function isHelpInternalDetailsQuestion(message: string): boolean {
+  const lower = message.toLowerCase();
+  const asksImplementation =
+    /\b(backend|infra|infrastructure|architecture|stack|codebase|repo|repository|source code|deployment|hosting|server|database|db|env|environment variable|secret|api key|token|provider|vendor|model|llm|ai model|which ai|what ai|openrouter|openai|anthropic|claude|railway|neon|fastify|node|typescript)\b/.test(lower) ||
+    /\b(which|what|where|how)\b.*\b(api|apis|app|apps|tool|tools|service|services|model|models|ai|llm|backend|database|hosting|deployment)\b/.test(lower);
+
+  const clearlyProductUsage =
+    /\b(how do i|how to|where do i|connect|query|report|schedule|usage|balance|credits|ticket|support|login|logout|open|download|data source|allowlist|ssl|tls)\b/.test(lower) &&
+    !/\b(which|what)\b.*\b(api|apis|app|apps|tool|tools|model|models|ai|llm|backend|hosting|deployment)\b/.test(lower);
+
+  return asksImplementation && !clearlyProductUsage;
+}
+
+function containsHelpInternalDetails(message: string): boolean {
+  return /\b(openrouter|openai|anthropic|claude|railway|neon|fastify|api key|environment variable|source code|repository|typescript|node\.?js)\b/i.test(message);
+}
+
 function buildHelpFallbackReply(message: string, screenContext: { path?: string; title?: string; screen?: string } | undefined): string {
   const lower = message.toLowerCase();
   const screen = normalizeOptionalFormText(screenContext?.screen)?.toLowerCase() ?? "";
@@ -2125,7 +2154,7 @@ function buildHelpFallbackReply(message: string, screenContext: { path?: string;
   }
 
   if (/\b(usage|credits|balance|openrouter|tokens)\b/.test(lower)) {
-    return "Open Usage & AI to see query activity, report runs, AI usage, and the latest available OpenRouter balance.";
+    return "Open Usage & AI to see query activity, report runs, AI usage, and the latest available AI balance.";
   }
 
   if (onChatExplorer) {

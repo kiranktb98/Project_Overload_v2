@@ -404,6 +404,88 @@ describe("web chat interface", () => {
     await app.close();
   });
 
+  it("refuses help chat questions about internal stack details before calling the provider", async () => {
+    vi.stubEnv("OPENROUTER_API_KEY", "test-openrouter-key");
+
+    const fetchMock = vi.spyOn(globalThis, "fetch").mockResolvedValue(new Response(JSON.stringify({
+      choices: [{ message: { content: "internal details" } }]
+    }), {
+      status: 200,
+      headers: { "content-type": "application/json" }
+    }));
+
+    const app = buildWebApp({
+      api_base_url: "http://api.local",
+      conversation_client: createPassthroughConversationClient()
+    });
+
+    const response = await app.inject({
+      method: "POST",
+      url: "/api/help/chat",
+      payload: {
+        message: "Which apps, APIs, and AI models are you using in the backend?",
+        screen_context: {
+          path: "/app",
+          screen: "Chat Explorer"
+        }
+      }
+    });
+
+    expect(response.statusCode).toBe(200);
+    expect(response.json().reply).toBe("I can only help with using Claritect or raising a support ticket. For support, send the issue, screenshot, and page URL to hello@claritect.io.");
+    expect(fetchMock).not.toHaveBeenCalled();
+
+    await app.close();
+  });
+
+  it("replaces leaked implementation details in help chat provider responses", async () => {
+    vi.stubEnv("OPENROUTER_API_KEY", "test-openrouter-key");
+
+    const fetchMock = vi.spyOn(globalThis, "fetch").mockImplementation(async (input) => {
+      const url = typeof input === "string" ? input : input instanceof URL ? input.toString() : input.url;
+
+      if (url === "https://openrouter.ai/api/v1/chat/completions") {
+        return new Response(JSON.stringify({
+          choices: [{ message: { content: "This uses OpenRouter and Claude behind the scenes." } }]
+        }), {
+          status: 200,
+          headers: { "content-type": "application/json" }
+        });
+      }
+
+      return new Response(JSON.stringify({ ok: true }), {
+        status: 200,
+        headers: { "content-type": "application/json" }
+      });
+    });
+
+    const app = buildWebApp({
+      api_base_url: "http://api.local",
+      conversation_client: createPassthroughConversationClient()
+    });
+
+    const response = await app.inject({
+      method: "POST",
+      url: "/api/help/chat",
+      payload: {
+        message: "How do I ask a better data question?",
+        screen_context: {
+          path: "/app",
+          screen: "Chat Explorer"
+        }
+      }
+    });
+
+    expect(response.statusCode).toBe(200);
+    expect(response.json().reply).toBe("I can only help with using Claritect or raising a support ticket. For support, send the issue, screenshot, and page URL to hello@claritect.io.");
+    expect(fetchMock).toHaveBeenCalledWith(
+      "https://openrouter.ai/api/v1/chat/completions",
+      expect.objectContaining({ method: "POST" })
+    );
+
+    await app.close();
+  });
+
   it("redirects logout posts to dedicated signed-out pages", async () => {
     const app = buildWebApp({
       conversation_client: createPassthroughConversationClient()
