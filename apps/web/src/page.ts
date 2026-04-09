@@ -52,6 +52,7 @@ export function renderChatPage(): string {
         content: "";
         position: fixed;
         inset: 0;
+        z-index: 0;
         pointer-events: none;
         background-image: linear-gradient(
           to right,
@@ -60,21 +61,25 @@ export function renderChatPage(): string {
         );
         background-size: 60px 60px;
         mask-image: radial-gradient(circle at 50% 45%, rgba(0, 0, 0, 0.86), transparent 92%);
+        opacity: 0.52;
       }
 
       body::after {
         content: "";
         position: fixed;
         inset: 0;
+        z-index: 0;
         pointer-events: none;
         background:
           radial-gradient(circle at 18% 22%, rgba(108, 58, 237, 0.18), transparent 20%),
           radial-gradient(circle at 78% 16%, rgba(236, 72, 153, 0.18), transparent 24%);
-        filter: blur(34px);
-        opacity: 0.9;
+        filter: none;
+        opacity: 0.38;
       }
 
       .page {
+        position: relative;
+        z-index: 1;
         width: 100%;
         margin: 0;
         min-height: 100vh;
@@ -324,7 +329,7 @@ export function renderChatPage(): string {
         border-radius: 28px;
         background: linear-gradient(180deg, rgba(20, 15, 34, 0.98), rgba(17, 12, 28, 0.98));
         box-shadow: var(--shadow);
-        backdrop-filter: blur(16px);
+        backdrop-filter: none;
         display: flex;
         flex-direction: column;
         gap: 12px;
@@ -566,7 +571,7 @@ export function renderChatPage(): string {
           linear-gradient(180deg, rgba(5, 12, 34, 0.98), rgba(3, 10, 26, 0.99)),
           radial-gradient(circle at 80% 0%, rgba(113, 122, 255, 0.12), transparent 24%);
         box-shadow: var(--shadow);
-        backdrop-filter: blur(16px);
+        backdrop-filter: none;
         display: grid;
         grid-template-rows: auto 1fr auto;
         min-height: calc(100vh - 28px);
