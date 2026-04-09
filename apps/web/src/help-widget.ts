@@ -29,17 +29,21 @@ export const HELP_WIDGET_STYLES = `
 
   #help-panel {
     position: fixed;
-    bottom: 0;
-    right: 0;
+    top: 12px;
+    right: 12px;
+    bottom: 12px;
     width: 380px;
-    height: 100dvh;
+    max-width: calc(100vw - 24px);
+    max-height: calc(100dvh - 24px);
     z-index: 8999;
     display: flex;
     flex-direction: column;
     background: #0d1a32;
-    border-left: 1px solid rgba(140, 173, 255, 0.18);
-    box-shadow: -8px 0 40px rgba(0, 0, 0, 0.4);
-    transform: translateX(100%);
+    border: 1px solid rgba(140, 173, 255, 0.18);
+    border-radius: 22px;
+    box-shadow: -8px 0 40px rgba(0, 0, 0, 0.4), 0 24px 70px rgba(7, 12, 30, 0.55);
+    overflow: hidden;
+    transform: translateX(calc(100% + 24px));
     transition: transform 0.28s cubic-bezier(0.4, 0, 0.2, 1);
   }
   #help-panel.open { transform: translateX(0); }
@@ -72,16 +76,21 @@ export const HELP_WIDGET_STYLES = `
 
   .help-messages {
     flex: 1;
+    min-height: 0;
     overflow-y: auto;
     padding: 16px 14px;
     display: flex;
     flex-direction: column;
     gap: 12px;
     scroll-behavior: smooth;
+    overscroll-behavior: contain;
   }
 
   .help-bubble {
     max-width: 92%;
+    width: fit-content;
+    min-height: 0;
+    flex: 0 0 auto;
     padding: 10px 13px;
     border-radius: 14px;
     font-size: 13.5px;
@@ -240,6 +249,39 @@ export const HELP_WIDGET_STYLES = `
   [data-theme="light"] .help-typing { background: #ede9ff; border-color: rgba(107,92,138,0.22); }
   [data-theme="light"] .help-welcome p { color: #5a4d7a; }
   [data-theme="light"] #help-fab { box-shadow: 0 4px 18px rgba(108,58,237,0.3); }
+
+  @media (max-width: 520px) {
+    #help-fab {
+      right: 18px;
+      bottom: 18px;
+    }
+
+    #help-panel {
+      top: 0;
+      right: 0;
+      bottom: 0;
+      width: 100vw;
+      max-width: 100vw;
+      max-height: 100dvh;
+      border-radius: 0;
+      border-right: 0;
+      border-top: 0;
+      border-bottom: 0;
+      transform: translateX(100%);
+    }
+
+    #help-panel.open {
+      transform: translateX(0);
+    }
+
+    .help-messages {
+      padding: 18px 14px;
+    }
+
+    .help-bubble {
+      max-width: 88%;
+    }
+  }
 `;
 
 export function renderHelpWidget(): string {
