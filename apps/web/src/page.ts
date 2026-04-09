@@ -4801,6 +4801,12 @@ export function renderChatPage(): string {
           setBusy(true);
           const isRunConfirm = /^(confirm|yes|go ahead|proceed|looks good|lgtm|run it|do it|execute|approved|ok|okay|sure|start)\\b/i.test(value);
           showThinking(isRunConfirm ? "planning" : "chatting");
+          const controller = typeof AbortController !== "undefined" ? new AbortController() : null;
+          const timeoutId = setTimeout(function () {
+            if (controller) {
+              controller.abort();
+            }
+          }, 120000);
 
           try {
             const response = await fetch("/api/chat", {
@@ -4810,12 +4816,14 @@ export function renderChatPage(): string {
                 message: value,
                 chat_session_id: targetChatId,
                 state: requestStateSnapshot
-              })
+              }),
+              signal: controller ? controller.signal : undefined
             });
 
             let payload;
             try {
-              payload = JSON.parse(await response.text());
+              const rawResponse = await response.text();
+              payload = rawResponse.trim().length > 0 ? JSON.parse(rawResponse) : {};
             } catch {
               appendMessage("assistant", "Server error — please try again in a moment.", null, null, {
                 chatId: targetChatId,
@@ -4833,12 +4841,26 @@ export function renderChatPage(): string {
             }
 
             setChatState(targetChatId, payload.state);
-            appendMessage("assistant", payload.assistant_message, payload.pdf_download_url, payload.exec_brief_html, {
+            const assistantMessage =
+              typeof payload.assistant_message === "string" && payload.assistant_message.trim().length > 0
+                ? payload.assistant_message.trim()
+                : "I got your question, but the assistant returned an empty response. Please try once more.";
+            appendMessage("assistant", assistantMessage, payload.pdf_download_url, payload.exec_brief_html, {
               chatId: targetChatId,
               trackForNaming: false,
               prepared_payloads: Array.isArray(payload.prepared_payloads) ? payload.prepared_payloads : (payload.state && Array.isArray(payload.state.prepared_payloads) ? payload.state.prepared_payloads : null)
             });
           } catch (error) {
+            if (error && error.name === "AbortError") {
+              appendMessage(
+                "assistant",
+                "This is taking too long. Please try again with a shorter question, or refresh and retry.",
+                null,
+                null,
+                { chatId: targetChatId, trackForNaming: false }
+              );
+              return;
+            }
             const errorText = error instanceof Error ? error.message : "Unknown error";
             if (/unexpected token|doctype|not valid json|non-json/i.test(errorText)) {
               appendMessage(
@@ -4855,6 +4877,7 @@ export function renderChatPage(): string {
               trackForNaming: false
             });
           } finally {
+            clearTimeout(timeoutId);
             hideThinking();
             setBusy(false);
             if (!composerStateRef.locked) {
