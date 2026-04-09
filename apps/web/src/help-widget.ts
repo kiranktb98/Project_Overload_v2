@@ -491,32 +491,52 @@ export function renderHelpWidget(): string {
       // Keep last 8 exchanges (16 messages) to control costs
       var historyToSend = history.slice(-16);
 
-      fetch("/api/help/chat", {
-        method: "POST",
-        credentials: "same-origin",
-        headers: { "content-type": "application/json" },
-        body: JSON.stringify(Object.assign({ message: message, history: historyToSend, screen_context: getScreenContext() }, sessionId ? { session_id: sessionId } : {}))
-      })
+      var controller = typeof AbortController !== "undefined" ? new AbortController() : null;
+      var timeoutId = setTimeout(function() {
+        if (controller) controller.abort();
+      }, 30000);
+
+      Promise.resolve()
+        .then(function() {
+          return fetch("/api/help/chat", {
+            method: "POST",
+            credentials: "same-origin",
+            headers: { "content-type": "application/json" },
+            body: JSON.stringify(Object.assign({ message: message, history: historyToSend, screen_context: getScreenContext() }, sessionId ? { session_id: sessionId } : {})),
+            signal: controller ? controller.signal : undefined
+          });
+        })
         .then(function(r) {
-          if (r.status === 401) { return Promise.reject("auth"); }
-          return r.json().then(function(data) {
-            if (!r.ok) { return Promise.reject(data.reply || r.status); }
+          return r.text().then(function(rawText) {
+            var data = {};
+            if (rawText && rawText.trim().length > 0) {
+              try {
+                data = JSON.parse(rawText);
+              } catch (parseError) {
+                console.error("[help-chat] invalid JSON:", parseError, rawText);
+                data = { reply: "I got an unreadable response. Please try once more." };
+              }
+            }
+            if (r.status === 401) { return Promise.reject("auth"); }
+            if (!r.ok) { return Promise.reject(data.reply || data.message || r.status); }
             return data;
           });
         })
         .then(function(data) {
-          removeTyping();
-          var reply = data.reply || "Sorry, something went wrong.";
+          var reply = typeof data.reply === "string" && data.reply.trim().length > 0
+            ? data.reply.trim()
+            : "I got your question, but the assistant returned an empty response. Please try once more.";
           if (data.session_id) sessionId = data.session_id;
           addBubble("assistant", reply);
           history.push({ role: "user", content: message });
           history.push({ role: "assistant", content: reply });
         })
         .catch(function(err) {
-          removeTyping();
           console.error("[help-chat] error:", err);
           if (err === "auth") {
             addBubble("assistant", "Your session has expired. Please refresh the page and log in again.");
+          } else if (err && err.name === "AbortError") {
+            addBubble("assistant", "The assistant took too long to answer. Please try again.");
           } else if (typeof err === "string" && err.length > 0 && err.length < 300) {
             addBubble("assistant", err);
           } else {
@@ -524,6 +544,8 @@ export function renderHelpWidget(): string {
           }
         })
         .finally(function() {
+          clearTimeout(timeoutId);
+          removeTyping();
           setBusy(false);
         });
     }
