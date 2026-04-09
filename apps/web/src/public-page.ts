@@ -853,19 +853,26 @@ export function renderSignupPage(): string {
         font-weight: 600;
         cursor: pointer;
       }
+
+      .form-note {
+        margin: 0;
+        min-height: 20px;
+        font-size: 14px;
+        color: #d7cff8;
+      }
     </style>
   </head>
   <body>
     <main>
       <h1>Sign up form</h1>
-      <form method="get" action="/signup">
+      <form id="signupForm" novalidate>
         <label>
           Name
           <input name="name" type="text" />
         </label>
         <label>
-          Email
-          <input name="email" type="email" />
+          Work email
+          <input name="email" type="email" required />
         </label>
         <label>
           Company
@@ -873,7 +880,65 @@ export function renderSignupPage(): string {
         </label>
         <button type="submit">Submit</button>
       </form>
+      <p class="form-note" id="signupNote">We will save your request and follow up by email.</p>
     </main>
+    <script>
+      const signupForm = document.getElementById("signupForm");
+      const signupNote = document.getElementById("signupNote");
+
+      signupForm.addEventListener("submit", async (event) => {
+        event.preventDefault();
+
+        const formData = new FormData(signupForm);
+        const payload = {
+          source: "signup",
+          name: String(formData.get("name") ?? "").trim(),
+          email: String(formData.get("email") ?? "").trim(),
+          company: String(formData.get("company") ?? "").trim(),
+          referrer: window.location.href
+        };
+
+        if (!payload.email) {
+          signupNote.textContent = "Please enter a valid work email.";
+          signupNote.style.color = "#f87171";
+          return;
+        }
+
+        const submitButton = signupForm.querySelector("button");
+        submitButton.disabled = true;
+        submitButton.textContent = "Submitting...";
+        signupNote.textContent = "Saving your early-access request...";
+        signupNote.style.color = "#d7cff8";
+
+        try {
+          const response = await fetch("/api/public/early-access", {
+            method: "POST",
+            headers: {
+              "content-type": "application/json"
+            },
+            body: JSON.stringify(payload)
+          });
+          const result = await response.json().catch(() => ({ ok: false, message: "Request failed." }));
+
+          if (!response.ok || !result.ok) {
+            throw new Error(result.message || "Request failed.");
+          }
+
+          signupNote.textContent = result.message;
+          signupNote.style.color = "#34d399";
+          submitButton.textContent = "Submitted";
+          signupForm.reset();
+          return;
+        } catch (error) {
+          signupNote.textContent = error instanceof Error
+            ? error.message
+            : "We could not save your request right now.";
+          signupNote.style.color = "#f87171";
+          submitButton.disabled = false;
+          submitButton.textContent = "Submit";
+        }
+      });
+    </script>
   </body>
 </html>`;
 }

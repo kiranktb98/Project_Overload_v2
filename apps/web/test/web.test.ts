@@ -1,8 +1,13 @@
-import { describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { buildWebApp } from "../src/app";
 import { createPassthroughConversationClient } from "../src/conversation";
 import type { QueryRouterClient } from "../src/query-router";
 import { applyLlmDraftUpdates, createInitialChatState, handleChatTurn, parseChatState } from "../src/chat";
+
+afterEach(() => {
+  vi.unstubAllEnvs();
+  vi.restoreAllMocks();
+});
 
 describe("web chat interface", () => {
   const createScopeVerificationFetchImpl = (rowCount: number): typeof fetch => {
@@ -89,6 +94,7 @@ describe("web chat interface", () => {
     const rootPage = await app.inject({ method: "GET", url: "/" });
     expect(rootPage.statusCode).toBe(200);
     expect(rootPage.body).toContain("Claritect — Your Data Answers Itself");
+    expect(rootPage.body).toContain('fetch("/api/public/early-access"');
     expect(rootPage.body).toContain('rel="icon"');
     expect(rootPage.body).toContain('href="/favicon.svg"');
     expect(rootPage.body).toContain('href="/privacy-policy"');
@@ -145,7 +151,8 @@ describe("web chat interface", () => {
     const signupPage = await app.inject({ method: "GET", url: "/signup" });
     expect(signupPage.statusCode).toBe(200);
     expect(signupPage.body).toContain("Sign up form");
-    expect(signupPage.body).toContain('action="/signup"');
+    expect(signupPage.body).toContain('id="signupForm"');
+    expect(signupPage.body).toContain('fetch("/api/public/early-access"');
     expect(signupPage.body).toContain('name="name"');
     expect(signupPage.body).toContain('name="email"');
     expect(signupPage.body).toContain('name="company"');
@@ -261,6 +268,94 @@ describe("web chat interface", () => {
 
     await app.close();
   }, 20000);
+
+  it("renders the help widget with screen-aware context and markdown formatting support", async () => {
+    const app = buildWebApp({
+      conversation_client: createPassthroughConversationClient()
+    });
+
+    const connectPage = await app.inject({ method: "GET", url: "/connect" });
+
+    expect(connectPage.statusCode).toBe(200);
+    expect(connectPage.body).toContain("screen_context: getScreenContext()");
+    expect(connectPage.body).toContain("function formatMarkdown");
+    expect(connectPage.body).toContain("help-md-list");
+    expect(connectPage.body).toContain("What should I enter here?");
+    expect(connectPage.body).toContain("Which SSL mode should I use?");
+
+    await app.close();
+  });
+
+  it("sends current screen context and compact response settings to help chat", async () => {
+    vi.stubEnv("OPENROUTER_API_KEY", "test-openrouter-key");
+
+    const fetchMock = vi.spyOn(globalThis, "fetch").mockImplementation(async (input, init) => {
+      const url = typeof input === "string" ? input : input instanceof URL ? input.toString() : input.url;
+
+      if (url === "https://openrouter.ai/api/v1/chat/completions") {
+        expect(init?.method).toBe("POST");
+        const payload = JSON.parse(String(init?.body ?? "{}")) as {
+          max_tokens?: number;
+          temperature?: number;
+          messages?: Array<{ role: string; content: string }>;
+        };
+        expect(payload.max_tokens).toBe(240);
+        expect(payload.temperature).toBe(0.25);
+        expect(payload.messages?.some((message) => message.content.includes("Current user screen: Data Sources"))).toBe(true);
+        expect(payload.messages?.some((message) => message.content.includes("Current path: /connect"))).toBe(true);
+        expect(payload.messages?.some((message) => message.content.includes("Keep replies short"))).toBe(true);
+
+        return new Response(JSON.stringify({
+          choices: [{ message: { content: "Use Auto SSL for most cloud databases." } }]
+        }), {
+          status: 200,
+          headers: { "content-type": "application/json" }
+        });
+      }
+
+      if (url === "http://api.local/help-chat/sessions") {
+        return new Response(JSON.stringify({ ok: true }), {
+          status: 200,
+          headers: { "content-type": "application/json" }
+        });
+      }
+
+      return new Response(JSON.stringify({ message: `Unhandled request: ${url}` }), {
+        status: 404,
+        headers: { "content-type": "application/json" }
+      });
+    });
+
+    const app = buildWebApp({
+      api_base_url: "http://api.local",
+      conversation_client: createPassthroughConversationClient()
+    });
+
+    const response = await app.inject({
+      method: "POST",
+      url: "/api/help/chat",
+      payload: {
+        message: "Which SSL mode should I use?",
+        screen_context: {
+          path: "/connect",
+          title: "Claritect | Data Sources",
+          screen: "Data Sources"
+        },
+        history: [{ role: "assistant", content: "Previous short answer." }]
+      }
+    });
+
+    expect(response.statusCode).toBe(200);
+    expect(response.json()).toMatchObject({
+      reply: "Use Auto SSL for most cloud databases."
+    });
+    expect(fetchMock).toHaveBeenCalledWith(
+      "https://openrouter.ai/api/v1/chat/completions",
+      expect.objectContaining({ method: "POST" })
+    );
+
+    await app.close();
+  });
 
   it("redirects logout posts to dedicated signed-out pages", async () => {
     const app = buildWebApp({
@@ -10434,6 +10529,115 @@ describe("web chat interface", () => {
     expect(body.state.prep_complete).toBe(false);
     expect(body.state.prep_pending).toBe(true);
     expect(body.assistant_message).toContain("Scope is locked for");
+
+    await app.close();
+  });
+
+  it("rejects early-access capture when Zoho Sheet is not configured", async () => {
+    const app = buildWebApp({
+      conversation_client: createPassthroughConversationClient()
+    });
+
+    const response = await app.inject({
+      method: "POST",
+      url: "/api/public/early-access",
+      payload: {
+        source: "home",
+        email: "team@claritect.io"
+      }
+    });
+
+    expect(response.statusCode).toBe(503);
+    expect(response.json()).toEqual({
+      ok: false,
+      message: "Early-access capture is not configured yet. Please email hello@claritect.io."
+    });
+
+    await app.close();
+  });
+
+  it("writes early-access submissions to Zoho Sheet", async () => {
+    vi.stubEnv("ZOHO_SHEET_CLIENT_ID", "client-id");
+    vi.stubEnv("ZOHO_SHEET_CLIENT_SECRET", "client-secret");
+    vi.stubEnv("ZOHO_SHEET_REFRESH_TOKEN", "refresh-token");
+    vi.stubEnv("ZOHO_SHEET_RESOURCE_ID", "sheet-resource");
+    vi.stubEnv("ZOHO_SHEET_WORKSHEET_NAME", "Waitlist");
+    vi.stubEnv("ZOHO_SHEET_HEADER_ROW", "1");
+    vi.stubEnv("ZOHO_ACCOUNTS_BASE_URL", "https://accounts.zoho.test");
+    vi.stubEnv("ZOHO_SHEET_API_BASE_URL", "https://sheet.zoho.test");
+
+    const fetchMock: typeof fetch = vi.fn(async (input, init) => {
+      const url = typeof input === "string" ? input : input instanceof URL ? input.toString() : input.url;
+
+      if (url === "https://accounts.zoho.test/oauth/v2/token") {
+        expect(init?.method).toBe("POST");
+        expect(init?.headers).toMatchObject({
+          "Content-Type": "application/x-www-form-urlencoded"
+        });
+        return new Response(JSON.stringify({
+          access_token: "access-token"
+        }), {
+          status: 200,
+          headers: { "content-type": "application/json" }
+        });
+      }
+
+      if (url === "https://sheet.zoho.test/api/v2/sheet-resource") {
+        expect(init?.method).toBe("POST");
+        expect(init?.headers).toMatchObject({
+          "Authorization": "Zoho-oauthtoken access-token",
+          "Content-Type": "application/x-www-form-urlencoded"
+        });
+        const params = new URLSearchParams(String(init?.body ?? ""));
+        expect(params.get("method")).toBe("worksheet.jsondata.append");
+        expect(params.get("resource_id")).toBe("sheet-resource");
+        expect(params.get("worksheet_name")).toBe("Waitlist");
+        expect(params.get("header_row")).toBe("1");
+        expect(params.get("json_data")).toContain("\"Source\":\"signup\"");
+        expect(params.get("json_data")).toContain("\"Email\":\"team@claritect.io\"");
+        expect(params.get("json_data")).toContain("\"Name\":\"Claritect Team\"");
+        expect(params.get("json_data")).toContain("\"Company\":\"Claritect\"");
+        return new Response(JSON.stringify({
+          status: "success",
+          method: "worksheet.jsondata.append"
+        }), {
+          status: 200,
+          headers: { "content-type": "application/json" }
+        });
+      }
+
+      return new Response(JSON.stringify({ message: `Unhandled request: ${url}` }), {
+        status: 404,
+        headers: { "content-type": "application/json" }
+      });
+    }) as typeof fetch;
+
+    const app = buildWebApp({
+      conversation_client: createPassthroughConversationClient(),
+      fetch_impl: fetchMock
+    });
+
+    const response = await app.inject({
+      method: "POST",
+      url: "/api/public/early-access",
+      headers: {
+        "user-agent": "vitest-browser"
+      },
+      payload: {
+        source: "signup",
+        email: "team@claritect.io",
+        name: "Claritect Team",
+        company: "Claritect",
+        referrer: "https://claritect.io/signup"
+      }
+    });
+
+    expect(response.statusCode).toBe(200);
+    expect(response.json()).toEqual({
+      ok: true,
+      message: "Thanks. We have your early-access request and will reach out soon."
+    });
+    expect(fetchMock).toHaveBeenCalledTimes(2);
 
     await app.close();
   });

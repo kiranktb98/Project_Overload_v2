@@ -1,7 +1,7 @@
 // ─────────────────────────────────────────────────────────────────────────────
 // Help Chat Widget
 // Floating button + slide-out panel injected into every post-login page.
-// Calls POST /api/help/chat  { message, history } → { reply }
+// Calls POST /api/help/chat  { message, history, screen_context } -> { reply }
 // ─────────────────────────────────────────────────────────────────────────────
 
 export const HELP_WIDGET_STYLES = `
@@ -117,6 +117,23 @@ export const HELP_WIDGET_STYLES = `
   }
   .help-bubble.assistant li { margin-bottom: 4px; }
   .help-bubble.assistant strong { color: #e8eefc; }
+  .help-bubble.assistant h1,
+  .help-bubble.assistant h2,
+  .help-bubble.assistant h3,
+  .help-bubble.assistant h4 {
+    margin: 0 0 7px;
+    color: #f8fbff;
+    font-weight: 700;
+    line-height: 1.25;
+  }
+  .help-bubble.assistant h1 { font-size: 15px; }
+  .help-bubble.assistant h2 { font-size: 14.5px; }
+  .help-bubble.assistant h3,
+  .help-bubble.assistant h4 { font-size: 14px; }
+  .help-bubble.assistant .help-md-list {
+    margin: 6px 0 0 16px;
+    padding: 0;
+  }
 
   .help-typing {
     display: flex; align-items: center; gap: 4px;
@@ -210,6 +227,10 @@ export const HELP_WIDGET_STYLES = `
   [data-theme="light"] .help-bubble.assistant { background: #ede9ff; border-color: rgba(107, 92, 138, 0.22); color: #1A1533; }
   [data-theme="light"] .help-bubble.assistant p, [data-theme="light"] .help-bubble.assistant li { color: #2D1F56; }
   [data-theme="light"] .help-bubble.assistant strong { color: #1A1533; }
+  [data-theme="light"] .help-bubble.assistant h1,
+  [data-theme="light"] .help-bubble.assistant h2,
+  [data-theme="light"] .help-bubble.assistant h3,
+  [data-theme="light"] .help-bubble.assistant h4 { color: #1A1533; }
   [data-theme="light"] .help-bubble.assistant code { background: rgba(107,92,138,0.1); color: #3b0764; border-color: rgba(107,92,138,0.25); }
   [data-theme="light"] .help-suggestion { background: #ede9ff; border-color: rgba(107,92,138,0.22); color: #2D1F56; }
   [data-theme="light"] .help-suggestion:hover { background: rgba(108,58,237,0.12); }
@@ -260,7 +281,7 @@ export function renderHelpWidget(): string {
       <div class="help-welcome">
         <div class="help-welcome-icon">✦</div>
         <strong>Hi, I'm your Claritect assistant</strong>
-        <p>Ask me anything about connecting your database, SSL settings, governance, or using the chat explorer.</p>
+        <p id="help-welcome-copy">Ask me anything about connecting your database, SSL settings, governance, or using the chat explorer.</p>
       </div>
       <div class="help-suggestions" id="help-suggestions">
         <button class="help-suggestion" type="button">How do I connect my Postgres database?</button>
@@ -273,7 +294,7 @@ export function renderHelpWidget(): string {
 
     <div class="help-input-area">
       <div class="help-input-row">
-        <textarea id="help-input" placeholder="Ask anything…" rows="1" aria-label="Message"></textarea>
+        <textarea id="help-input" placeholder="Ask anything..." rows="1" aria-label="Message"></textarea>
         <button id="help-send" type="button" aria-label="Send" disabled>
           <svg viewBox="0 0 24 24"><line x1="22" y1="2" x2="11" y2="13"/><polygon points="22 2 15 22 11 13 2 9 22 2"/></svg>
         </button>
@@ -290,10 +311,92 @@ export function renderHelpWidget(): string {
     var inputEl = document.getElementById("help-input");
     var sendBtn = document.getElementById("help-send");
     var suggestionsEl = document.getElementById("help-suggestions");
+    var welcomeCopyEl = document.getElementById("help-welcome-copy");
 
     var history = [];
     var sessionId = null;
     var busy = false;
+
+    var screenMap = {
+      "/connect": {
+        screen: "Data Sources",
+        copy: "You are on Data Sources. I can help with connection setup, SSL, and allowlists.",
+        suggestions: [
+          "What should I enter here?",
+          "Which SSL mode should I use?",
+          "Why do I need an allowlist?",
+          "How do I test this connection?"
+        ]
+      },
+      "/usage": {
+        screen: "Usage & AI",
+        copy: "You are on Usage & AI. I can explain activity, report usage, and AI balance.",
+        suggestions: [
+          "What does this usage number mean?",
+          "How are report runs counted?",
+          "Where do AI credits show up?",
+          "Why did a run fail?"
+        ]
+      },
+      "/scheduled": {
+        screen: "Scheduled Reports",
+        copy: "You are on Scheduled Reports. I can help with cadence, timezone, and next-run behavior.",
+        suggestions: [
+          "How do scheduled reports work?",
+          "Which timezone is used?",
+          "How do I pause a schedule?",
+          "What happens on the next run?"
+        ]
+      },
+      "/config": {
+        screen: "Global Config",
+        copy: "You are on Global Config. I can help explain tenant settings and platform defaults.",
+        suggestions: [
+          "What should I configure first?",
+          "What settings affect reports?",
+          "How should I set global defaults?"
+        ]
+      },
+      "/app": {
+        screen: "Chat Explorer",
+        copy: "You are in Chat Explorer. I can help write better questions and explain report flow.",
+        suggestions: [
+          "How should I ask a data question?",
+          "What is a multi-query report?",
+          "Why is Claritect asking for clarification?",
+          "How do I open the finished report?"
+        ]
+      }
+    };
+
+    function getScreenContext() {
+      var path = window.location.pathname || "/";
+      var match = screenMap[path] || screenMap["/app"] || { screen: "Claritect app", copy: "", suggestions: [] };
+      return {
+        path: path,
+        title: document.title || "",
+        screen: match.screen
+      };
+    }
+
+    function configureScreenHelp() {
+      var context = getScreenContext();
+      var match = screenMap[context.path];
+      if (!match) return;
+      if (welcomeCopyEl) welcomeCopyEl.textContent = match.copy;
+      if (suggestionsEl && Array.isArray(match.suggestions)) {
+        suggestionsEl.innerHTML = "";
+        match.suggestions.forEach(function(label) {
+          var button = document.createElement("button");
+          button.className = "help-suggestion";
+          button.type = "button";
+          button.textContent = label;
+          suggestionsEl.appendChild(button);
+        });
+      }
+    }
+
+    configureScreenHelp();
 
     function openPanel() {
       panel.classList.add("open");
@@ -392,7 +495,7 @@ export function renderHelpWidget(): string {
         method: "POST",
         credentials: "same-origin",
         headers: { "content-type": "application/json" },
-        body: JSON.stringify(Object.assign({ message: message, history: historyToSend }, sessionId ? { session_id: sessionId } : {}))
+        body: JSON.stringify(Object.assign({ message: message, history: historyToSend, screen_context: getScreenContext() }, sessionId ? { session_id: sessionId } : {}))
       })
         .then(function(r) {
           if (r.status === 401) { return Promise.reject("auth"); }
@@ -425,20 +528,69 @@ export function renderHelpWidget(): string {
         });
     }
 
-    // Lightweight markdown renderer (all regex built at runtime to avoid template-literal escape issues)
+    // Lightweight markdown renderer (escaped first, then small safe markdown subset).
     var rBold = new RegExp("\\*\\*(.+?)\\*\\*", "g");
     var rCode = new RegExp("\\x60([^\\x60]+)\\x60", "g");
-    var rBullet = new RegExp("^[-\\u2022]\\s+(.+)$", "gm");
-    var rNL2 = new RegExp("\\n\\n+", "g");
-    var rNL1 = new RegExp("\\n", "g");
+    var rHeading = new RegExp("^(#{1,4})\\s+(.+)$");
+    var rBulletLine = new RegExp("^[-\\u2022]\\s+(.+)$");
+    var rNumberLine = new RegExp("^\\d+[\\.)]\\s+(.+)$");
     function formatMarkdown(text) {
-      var safe = text.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
-      safe = safe.replace(rBold, "<strong>$1</strong>");
-      safe = safe.replace(rCode, "<code>$1</code>");
-      safe = safe.replace(rBullet, "<li>$1</li>");
-      safe = safe.replace(rNL2, "</p><p>");
-      safe = safe.replace(rNL1, "<br>");
-      return "<p>" + safe + "</p>";
+      var lines = String(text || "").replace(/\\r\\n/g, "\\n").split("\\n");
+      var html = [];
+      var paragraph = [];
+      var listType = null;
+      function escapeHtml(value) {
+        return String(value).replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+      }
+      function inline(value) {
+        return escapeHtml(value)
+          .replace(rCode, "<code>$1</code>")
+          .replace(rBold, "<strong>$1</strong>");
+      }
+      function flushParagraph() {
+        if (paragraph.length === 0) return;
+        html.push("<p>" + paragraph.join("<br>") + "</p>");
+        paragraph = [];
+      }
+      function closeList() {
+        if (!listType) return;
+        html.push("</" + listType + ">");
+        listType = null;
+      }
+      lines.forEach(function(rawLine) {
+        var line = rawLine.trim();
+        var heading = rHeading.exec(line);
+        var bullet = rBulletLine.exec(line);
+        var number = rNumberLine.exec(line);
+        if (!line) {
+          flushParagraph();
+          closeList();
+          return;
+        }
+        if (heading) {
+          flushParagraph();
+          closeList();
+          var level = Math.min(4, heading[1].length);
+          html.push("<h" + level + ">" + inline(heading[2]) + "</h" + level + ">");
+          return;
+        }
+        if (bullet || number) {
+          flushParagraph();
+          var nextListType = bullet ? "ul" : "ol";
+          if (listType !== nextListType) {
+            closeList();
+            html.push("<" + nextListType + " class=\\"help-md-list\\">");
+            listType = nextListType;
+          }
+          html.push("<li>" + inline((bullet || number)[1]) + "</li>");
+          return;
+        }
+        closeList();
+        paragraph.push(inline(line));
+      });
+      flushParagraph();
+      closeList();
+      return html.join("");
     }
   })();
   </script>
