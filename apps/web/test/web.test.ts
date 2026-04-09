@@ -357,6 +357,53 @@ describe("web chat interface", () => {
     await app.close();
   });
 
+  it("returns a screen-aware fallback when help chat provider is unavailable", async () => {
+    vi.stubEnv("OPENROUTER_API_KEY", "test-openrouter-key");
+
+    const fetchMock = vi.spyOn(globalThis, "fetch").mockImplementation(async (input) => {
+      const url = typeof input === "string" ? input : input instanceof URL ? input.toString() : input.url;
+
+      if (url === "https://openrouter.ai/api/v1/chat/completions") {
+        return new Response(JSON.stringify({ message: "provider down" }), {
+          status: 503,
+          headers: { "content-type": "application/json" }
+        });
+      }
+
+      return new Response(JSON.stringify({ ok: true }), {
+        status: 200,
+        headers: { "content-type": "application/json" }
+      });
+    });
+
+    const app = buildWebApp({
+      api_base_url: "http://api.local",
+      conversation_client: createPassthroughConversationClient()
+    });
+
+    const response = await app.inject({
+      method: "POST",
+      url: "/api/help/chat",
+      payload: {
+        message: "How do I open the finished report?",
+        screen_context: {
+          path: "/app",
+          title: "Claritect | Decision workspace",
+          screen: "Chat Explorer"
+        }
+      }
+    });
+
+    expect(response.statusCode).toBe(200);
+    expect(response.json().reply).toContain("Open report in new tab");
+    expect(fetchMock).toHaveBeenCalledWith(
+      "https://openrouter.ai/api/v1/chat/completions",
+      expect.objectContaining({ method: "POST" })
+    );
+
+    await app.close();
+  });
+
   it("redirects logout posts to dedicated signed-out pages", async () => {
     const app = buildWebApp({
       conversation_client: createPassthroughConversationClient()

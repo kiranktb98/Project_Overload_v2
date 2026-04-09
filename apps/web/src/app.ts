@@ -558,7 +558,10 @@ Response rules:
     const body = parsed.data;
     const openrouterKey = process.env.OPENROUTER_API_KEY;
     if (!openrouterKey) {
-      return reply.code(503).send({ reply: "Help chat is not configured. Check your guides at /connect/guide." });
+      return {
+        reply: buildHelpFallbackReply(body.message, body.screen_context),
+        session_id: body.session_id ?? randomUUID()
+      };
     }
 
     try {
@@ -584,11 +587,15 @@ Response rules:
           max_tokens: 240,
           temperature: 0.25
         }),
-        signal: AbortSignal.timeout(15000)
+        signal: AbortSignal.timeout(8000)
       });
 
       if (!response.ok) {
-        return reply.code(502).send({ reply: "Couldn't reach the assistant right now. Try the guides at /connect/guide." });
+        request.log.warn({ statusCode: response.status }, "help-chat provider failed; using fallback reply");
+        return {
+          reply: buildHelpFallbackReply(body.message, body.screen_context),
+          session_id: body.session_id ?? randomUUID()
+        };
       }
 
       const data = await response.json() as { choices?: Array<{ message?: { content?: string } }> };
@@ -617,9 +624,11 @@ Response rules:
 
       return { reply: text, session_id: sessionId };
     } catch (err) {
-      const msg = err instanceof Error ? err.message : String(err);
       request.log.error({ err }, "help-chat error");
-      return reply.code(500).send({ reply: `Something went wrong: ${msg}` });
+      return {
+        reply: buildHelpFallbackReply(body.message, body.screen_context),
+        session_id: body.session_id ?? randomUUID()
+      };
     }
   });
 
@@ -2095,6 +2104,35 @@ function formatHelpScreenContext(screenContext: { path?: string; title?: string;
   const title = normalizeOptionalFormText(screenContext?.title);
   const titleLine = title ? `\nBrowser title: ${title}` : "";
   return `Current user screen: ${screen}\nCurrent path: ${path}${titleLine}\nUse this screen context to answer narrowly and avoid generic product tours.`;
+}
+
+function buildHelpFallbackReply(message: string, screenContext: { path?: string; title?: string; screen?: string } | undefined): string {
+  const lower = message.toLowerCase();
+  const screen = normalizeOptionalFormText(screenContext?.screen)?.toLowerCase() ?? "";
+  const path = normalizeOptionalFormText(screenContext?.path)?.toLowerCase() ?? "";
+  const onChatExplorer = screen.includes("chat") || path === "/app";
+
+  if (onChatExplorer && /\b(open|view|see|finished|completed|html|report|new tab)\b/.test(lower)) {
+    return "When the run finishes, use Open report in new tab below the assistant response. If you only see Download PDF, generate the PDF first and the HTML report link will appear beside it.";
+  }
+
+  if (/\b(connect|database|db|credentials|tables|allowlist)\b/.test(lower)) {
+    return "Go to Data Sources, enter the database details, test the connection, then select the tables Claritect is allowed to read.";
+  }
+
+  if (/\b(schedule|scheduled|recurring|cadence)\b/.test(lower)) {
+    return "Open Scheduled Reports, choose the saved report, set cadence plus timezone, then review the next-run summary before saving.";
+  }
+
+  if (/\b(usage|credits|balance|openrouter|tokens)\b/.test(lower)) {
+    return "Open Usage & AI to see query activity, report runs, AI usage, and the latest available OpenRouter balance.";
+  }
+
+  if (onChatExplorer) {
+    return "In Chat Explorer, ask one clear business question first. Claritect will scope it, prepare data, then show the run/report actions when analysis is ready.";
+  }
+
+  return "I can help with this screen. Ask what you want to do next, and I will keep it short.";
 }
 
 function isCustomerAuthenticatedRequest(cookieHeader: string | undefined): boolean {
