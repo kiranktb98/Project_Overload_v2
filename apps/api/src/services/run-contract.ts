@@ -12,7 +12,8 @@ import {
   GlobalConfigSchema,
   GLOBAL_CONFIG_STATE_KEY,
   type MetricDefinition,
-  migrateMetricDefinition
+  migrateMetricDefinition,
+  type ExecutionContext
 } from "@project-overload/shared";
 import { renderExecBriefHtml } from "@project-overload/report-render";
 import type { DataPlane } from "@project-overload/dataplane";
@@ -36,6 +37,7 @@ import type {
   SqlDialect
 } from "@project-overload/shared";
 import type { MetadataStore } from "../store";
+import { preparePowerBiSemanticContractData } from "./powerbi-semantic";
 
 const PREPARATION_ROW_CAP = 10_000;
 const PREPARATION_LOCAL_CAP = 1_000;
@@ -502,6 +504,7 @@ export async function prepareReportContractData(input: {
   planner_client: PlannerClient;
   catalog_summary: string;
   sql_dialect?: SqlDialect;
+  execution_context?: ExecutionContext;
   scheduled_profile?: ScheduledReportProfile | null;
 }): Promise<DataPreparationResult> {
   const tenantId = input.tenant_id ?? input.contract.tenant_id ?? "default";
@@ -509,6 +512,15 @@ export async function prepareReportContractData(input: {
   const contract = buildEffectiveScheduledContract(input.contract, input.scheduled_profile ?? null);
   const insightMode = contract.insight_mode ?? "business";
   const sqlDialect = normalizeSqlDialect(input.sql_dialect);
+  const executionContext = input.execution_context;
+
+  if (executionContext?.query_family === "powerbi_semantic") {
+    return preparePowerBiSemanticContractData({
+      contract,
+      execution_context: executionContext
+    });
+  }
+
   const catalogModel = parseCatalogSummary(input.catalog_summary);
 
   const storeContext = { tenant_id: tenantId };
@@ -667,6 +679,7 @@ export async function runReportContractPipeline(input: {
   planner_client: PlannerClient;
   catalog_summary: string;
   sql_dialect?: SqlDialect;
+  execution_context?: ExecutionContext;
   scheduled_profile?: ScheduledReportProfile | null;
 }): Promise<RunReportContractResult> {
   const tenantId = input.tenant_id ?? input.contract.tenant_id ?? "default";
@@ -685,6 +698,7 @@ export async function runReportContractPipeline(input: {
     planner_client: input.planner_client,
     catalog_summary: input.catalog_summary,
     sql_dialect: normalizeSqlDialect(input.sql_dialect),
+    execution_context: input.execution_context,
     scheduled_profile: scheduledProfile
   });
   tokenUsage.addReport(preparation.token_usage);

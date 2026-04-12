@@ -4811,7 +4811,7 @@ export function renderChatPage(): string {
             if (controller) {
               controller.abort();
             }
-          }, 120000);
+          }, 14 * 60 * 1000);
 
           try {
             const response = await fetch("/api/chat", {
@@ -4859,7 +4859,7 @@ export function renderChatPage(): string {
             if (error && error.name === "AbortError") {
               appendMessage(
                 "assistant",
-                "This is taking too long. Please try again with a shorter question, or refresh and retry.",
+                "This request took longer than expected. On larger prep or analysis steps, please wait a few minutes and try again.",
                 null,
                 null,
                 { chatId: targetChatId, trackForNaming: false }

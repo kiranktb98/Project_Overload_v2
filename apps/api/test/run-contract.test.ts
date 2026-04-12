@@ -180,6 +180,55 @@ describe("run pipeline", () => {
     expect(result.prepared_payloads).toHaveLength(2);
   });
 
+  it("uses the Power BI semantic preparation path only when semantic execution is active", async () => {
+    const strategist: QueryStrategistClient = {
+      provider: "stub",
+      async planQueries() {
+        throw new Error("SQL strategist should not run for Power BI semantic preparation.");
+      }
+    };
+
+    const planner = {
+      provider: "stub" as const,
+      async explore() {
+        throw new Error("SQL planner explore should not run for Power BI semantic preparation.");
+      },
+      async plan() {
+        throw new Error("SQL planner plan should not run for Power BI semantic preparation.");
+      }
+    };
+
+    const result = await prepareReportContractData({
+      contract: makeContract(),
+      store: new InMemoryMetadataStore(),
+      data_plane: new LocalStubDataPlane({ row_provider: () => makeRows(25) }),
+      query_strategist: strategist,
+      planner_client: planner,
+      catalog_summary: "semantic.sales [VIEW]: Region, Revenue",
+      execution_context: {
+        query_family: "powerbi_semantic",
+        powerbi_semantic_model: {
+          workspace_id: "finance-workspace",
+          workspace_name: "Finance",
+          model_id: "executive-model",
+          model_name: "Executive P&L",
+          entities: ["Sales"],
+          measures: ["Revenue", "Margin"],
+          dimensions: ["Region", "Month"],
+          preview_rows: [
+            { Region: "NA", Month: "2026-03", Revenue: 1250, Margin: 380 },
+            { Region: "EU", Month: "2026-03", Revenue: 980, Margin: 290 }
+          ]
+        }
+      }
+    });
+
+    expect(result.planner_summary).toMatch(/Power BI semantic planner/i);
+    expect(result.prepared_payloads).toHaveLength(1);
+    expect(result.prepared_payloads[0]?.prepared_row_count).toBe(2);
+    expect(result.query_details[0]?.sql).toMatch(/^POWERBI_SEMANTIC::/);
+  });
+
   it("lets batch analyst request additional queries and re-runs analysis with supplemental evidence", async () => {
     let analystCalls = 0;
     const analystClient: AnalystClient = {

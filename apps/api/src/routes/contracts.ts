@@ -270,8 +270,10 @@ export function registerContractRoutes(
     // Fire pipeline in the background — no await so the HTTP response returns instantly.
     void (async () => {
       try {
-        const catalogSummary = buildCatalogSummary(connectionRegistry.resolveForRequest(), contract.guardrails.allowed_relations);
-        const sqlDialect = resolveSqlDialect(connectionRegistry.resolveForRequest());
+        const connectionManager = connectionRegistry.resolveForRequest();
+        const catalogSummary = buildCatalogSummary(connectionManager, contract.guardrails.allowed_relations);
+        const sqlDialect = resolveSqlDialect(connectionManager);
+        const executionContext = connectionManager.getExecutionContext();
 
         const result = await runReportContractPipeline({
           run_id: runId,
@@ -289,6 +291,7 @@ export function registerContractRoutes(
           planner_client: plannerClient,
           catalog_summary: catalogSummary,
           sql_dialect: sqlDialect,
+          execution_context: executionContext,
           scheduled_profile: scheduledProfile
         });
 
@@ -352,8 +355,10 @@ export function registerContractRoutes(
     }
 
     try {
-      const catalogSummary = buildCatalogSummary(connectionRegistry.resolveForRequest(), contract.guardrails.allowed_relations);
-      const sqlDialect = resolveSqlDialect(connectionRegistry.resolveForRequest());
+      const connectionManager = connectionRegistry.resolveForRequest();
+      const catalogSummary = buildCatalogSummary(connectionManager, contract.guardrails.allowed_relations);
+      const sqlDialect = resolveSqlDialect(connectionManager);
+      const executionContext = connectionManager.getExecutionContext();
       const result = await prepareReportContractData({
         contract,
         tenant_id: context.tenant_id,
@@ -362,7 +367,8 @@ export function registerContractRoutes(
         query_strategist: queryStrategist,
         planner_client: plannerClient,
         catalog_summary: catalogSummary,
-        sql_dialect: sqlDialect
+        sql_dialect: sqlDialect,
+        execution_context: executionContext
       });
 
       return reply.code(200).send({

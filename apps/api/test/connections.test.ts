@@ -107,4 +107,61 @@ describe("api connection routes", () => {
 
     await app.close();
   });
+
+  it("supports Power BI semantic connections and keeps SQL query mode disabled", async () => {
+    const app = await buildApiApp({
+      store: new InMemoryMetadataStore(),
+      analyst_client: createStubAnalystClient()
+    });
+
+    const connectionString = [
+      "powerbi+semantic://finance-workspace/executive-model",
+      "?workspace_name=Finance",
+      "&model_name=Executive%20P%26L",
+      "&entities=Sales",
+      "&measures=Revenue,Margin",
+      "&dimensions=Region,Month",
+      "&preview_rows_json=%5B%7B%22Region%22%3A%22NA%22%2C%22Revenue%22%3A1250%7D%5D"
+    ].join("");
+
+    const testResult = await app.inject({
+      method: "POST",
+      url: "/connections/test",
+      payload: {
+        provider: "powerbi_semantic",
+        connection_string: connectionString
+      }
+    });
+
+    expect(testResult.statusCode).toBe(200);
+    expect(testResult.json().provider).toBe("powerbi_semantic");
+
+    const connectResult = await app.inject({
+      method: "POST",
+      url: "/connections/connect",
+      payload: {
+        provider: "powerbi_semantic",
+        name: "Finance semantic model",
+        connection_string: connectionString
+      }
+    });
+
+    expect(connectResult.statusCode).toBe(200);
+    expect(connectResult.json().provider).toBe("powerbi_semantic");
+    expect(connectResult.json().query_family).toBe("powerbi_semantic");
+
+    const queryResult = await app.inject({
+      method: "POST",
+      url: "/connections/query",
+      payload: {
+        sql: "SELECT * FROM semantic.sales",
+        limit: 25
+      }
+    });
+
+    expect(queryResult.statusCode).toBe(400);
+    expect(queryResult.json().message).toMatch(/semantic planner\/executor path/i);
+
+    await app.close();
+  });
 });

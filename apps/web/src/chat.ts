@@ -6,6 +6,8 @@ import {
   ExecBriefSchema,
   ReportClarificationOutputSchema,
   ReportContractSchema,
+  QueryFamilySchema,
+  type ConnectionProvider,
   type ConversationOrchestratorDecision
 } from "@project-overload/shared";
 import { z } from "zod";
@@ -515,7 +517,8 @@ const BusinessCaseCandidatesResponseSchema = z.object({
 
 const ConnectionContextSchema = z.object({
   connected: z.boolean(),
-  provider: z.enum(["postgres", "supabase", "neon", "mysql", "snowflake", "bigquery"]).nullable().optional(),
+  provider: z.enum(["postgres", "supabase", "neon", "mysql", "snowflake", "bigquery", "powerbi_semantic"]).nullable().optional(),
+  query_family: QueryFamilySchema.default("sql"),
   name: z.string().nullable().optional(),
   database: z.string().nullable().optional(),
   connected_at: z.string().nullable().optional(),
@@ -3550,7 +3553,7 @@ async function maybeCompileSqlForExecution(input: {
 }
 
 function mapProviderToSqlDialect(
-  provider: ConnectionContextRecord["provider"] | null | undefined
+  provider: ConnectionProvider | ConnectionContextRecord["provider"] | null | undefined
 ): SqlDialect {
   if (provider === "mysql") {
     return "mysql";

@@ -1,8 +1,9 @@
 import type { FastifyInstance, FastifyRequest } from "fastify";
 import { z } from "zod";
+import { ConnectionProviderSchema } from "@project-overload/shared";
 import type { UserConnectionRegistry } from "../dataplane/user-connection-registry";
 
-const ProviderSchema = z.enum(["postgres", "supabase", "neon", "mysql", "snowflake", "bigquery"]);
+const ProviderSchema = ConnectionProviderSchema;
 
 const TestConnectionPayloadSchema = z.object({
   connection_string: z.string().trim().min(1),

@@ -1509,6 +1509,10 @@ export function renderConnectionPage(): string {
                 <strong>BigQuery</strong>
                 <span>Use a BigQuery project and dataset connection string so we can validate the dataset, catalog it, and activate safe queries.</span>
               </button>
+              <button class="source-option" data-provider="powerbi_semantic" type="button">
+                <strong>Power BI semantic</strong>
+                <span>Connect a Power BI semantic model when your business logic depends on curated measures and dimensions instead of raw SQL tables.</span>
+              </button>
             </div>
             <div class="actions" style="margin-top: 16px;">
               <button class="primary" id="source-kind-continue" type="button">Continue to connection details</button>
@@ -1542,6 +1546,7 @@ export function renderConnectionPage(): string {
                 <option value="mysql">MySQL</option>
                 <option value="snowflake">Snowflake</option>
                 <option value="bigquery">BigQuery</option>
+                <option value="powerbi_semantic">Power BI semantic</option>
               </select>
             </div>
 
@@ -2016,6 +2021,12 @@ export function renderConnectionPage(): string {
             note: "Use a BigQuery project and dataset connection string so we can validate the dataset, catalogue it, and activate safe queries.",
             placeholder: "bigquery://my-project-123/analytics",
             help: "We will validate the dataset first, then move into allowlist governance and safe-query activation."
+          },
+          powerbi_semantic: {
+            label: "Power BI semantic",
+            note: "Use a Power BI semantic-model connection string when the governed source should follow measures, dimensions, and semantic relationships instead of raw SQL tables.",
+            placeholder: "powerbi+semantic://workspace-id/model-id?workspace_name=Finance%20Workspace&model_name=Executive%20P%26L&entities=Sales,Customers&measures=Revenue,Margin&dimensions=Region,Month",
+            help: "Power BI semantic connections are manual-only. They route into a separate backend planner/executor path and disable direct SQL safe-query access."
           }
         };
 
@@ -2097,14 +2108,22 @@ export function renderConnectionPage(): string {
         }
 
         function setConnectionEntryMode(mode) {
+          const provider = state.selectedProvider in PROVIDER_CONFIG ? state.selectedProvider : "postgres";
+          const forceManual = provider === "powerbi_semantic";
           state.connectionEntryMode = mode === "manual" ? "manual" : "guided";
+          if (forceManual) {
+            state.connectionEntryMode = "manual";
+          }
           const guided = state.connectionEntryMode === "guided";
           elements.setupModeGuidedBtn.classList.toggle("active", guided);
           elements.setupModeManualBtn.classList.toggle("active", !guided);
+          elements.setupModeGuidedBtn.disabled = forceManual;
           elements.guidedFields.classList.toggle("panel-hidden", !guided);
           elements.manualConnectionFields.classList.toggle("panel-hidden", guided);
           const providerLabel = elements.selectedProviderName.textContent || "selected";
-          elements.setupModeNote.textContent = guided
+          elements.setupModeNote.textContent = forceManual
+            ? providerLabel + " uses manual connection strings only so the backend can route into the semantic-model planner/executor path."
+            : guided
             ? "Guided setup builds the " + providerLabel + " connection string for you, URL-encodes credentials safely, and only asks for the fields this database actually needs."
             : "If you already have a full " + providerLabel + " connection string from your database console or secret manager, paste it here exactly as provided.";
         }
@@ -2115,8 +2134,9 @@ export function renderConnectionPage(): string {
           const isMySql = provider === "mysql";
           const isSnowflake = provider === "snowflake";
           const isBigQuery = provider === "bigquery";
+          const isPowerBiSemantic = provider === "powerbi_semantic";
 
-          elements.guidedAuthRow.classList.toggle("panel-hidden", isBigQuery);
+          elements.guidedAuthRow.classList.toggle("panel-hidden", isBigQuery || isPowerBiSemantic);
           elements.guidedPortWrap.classList.toggle("panel-hidden", !(isPostgres || isMySql));
           elements.guidedSchemaWrap.classList.toggle("panel-hidden", !isSnowflake);
           elements.guidedSnowflakeRow.classList.toggle("panel-hidden", !isSnowflake);
@@ -2187,7 +2207,7 @@ export function renderConnectionPage(): string {
             elements.name.placeholder = "Snowflake Analytics Reader";
             elements.guidedUsername.placeholder = "reader";
             elements.guidedPassword.placeholder = "********";
-          } else {
+          } else if (isBigQuery) {
             elements.sourceDetailsTitle.textContent = "Step A2 - Set up your BigQuery connection";
             elements.sourceDetailsSub.textContent = "Fill in the BigQuery project details, validate access, and connect the source before you govern the allowlist.";
             elements.guidedFormTitle.textContent = "BigQuery connection details";
@@ -2202,6 +2222,21 @@ export function renderConnectionPage(): string {
             elements.testBtn.textContent = "Test BigQuery connection";
             elements.connectSourceBtn.textContent = "Connect BigQuery source";
             elements.name.placeholder = "BigQuery Marketing Dataset";
+          } else {
+            elements.sourceDetailsTitle.textContent = "Step A2 - Set up your Power BI semantic connection";
+            elements.sourceDetailsSub.textContent = "Paste the semantic-model connection string, validate the model metadata, and connect it before you govern the semantic entities.";
+            elements.guidedFormTitle.textContent = "Power BI semantic connection";
+            elements.guidedFormSubtitle.textContent = "Semantic models are manual-only in this version. Paste the workspace/model URI and optional entities, measures, dimensions, and preview rows.";
+            elements.guidedHostLabel.textContent = "Workspace";
+            elements.guidedHost.placeholder = "workspace-id";
+            elements.guidedDbLabel.textContent = "Model";
+            elements.guidedDb.placeholder = "model-id";
+            elements.guidedBuilderTip.textContent = "Use a powerbi+semantic:// connection string from your connector setup. This path routes into the backend semantic planner instead of SQL.";
+            elements.guidedProviderQuickstart.textContent = "Example: powerbi+semantic://workspace-id/model-id?workspace_name=Finance&model_name=Exec%20P%26L&entities=Sales&measures=Revenue,Margin&dimensions=Region,Month";
+            elements.guidedTlsQuickstart.textContent = "Power BI semantic connections do not use the SQL TLS controls on this screen.";
+            elements.testBtn.textContent = "Test Power BI semantic connection";
+            elements.connectSourceBtn.textContent = "Connect Power BI semantic source";
+            elements.name.placeholder = "Power BI Executive Model";
           }
           setConnectionEntryMode(state.connectionEntryMode || "guided");
         }

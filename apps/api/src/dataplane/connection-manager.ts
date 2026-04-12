@@ -9,6 +9,13 @@ import snowflakeSdk, {
   type StatementOption as SnowflakeStatementOption
 } from "snowflake-sdk";
 import {
+  ExecutionContextSchema,
+  PowerBiSemanticModelSchema,
+  type ExecutionContext,
+  type PowerBiSemanticModel,
+  type QueryFamily
+} from "@project-overload/shared";
+import {
   assertAllowlistedRelations,
   assertAllowlistedSchemas,
   assertSelectOnly,
@@ -40,12 +47,20 @@ const EXCLUDED_SCHEMAS = [
   "_analytics"
 ];
 
-export type ConnectionProvider = "postgres" | "supabase" | "neon" | "mysql" | "snowflake" | "bigquery";
+export type ConnectionProvider =
+  | "postgres"
+  | "supabase"
+  | "neon"
+  | "mysql"
+  | "snowflake"
+  | "bigquery"
+  | "powerbi_semantic";
 
 const POSTGRES_COMPATIBLE_PROVIDERS = new Set<ConnectionProvider>(["postgres", "supabase", "neon"]);
 const MYSQL_COMPATIBLE_PROVIDERS = new Set<ConnectionProvider>(["mysql"]);
 const SNOWFLAKE_COMPATIBLE_PROVIDERS = new Set<ConnectionProvider>(["snowflake"]);
 const BIGQUERY_COMPATIBLE_PROVIDERS = new Set<ConnectionProvider>(["bigquery"]);
+const POWERBI_SEMANTIC_PROVIDERS = new Set<ConnectionProvider>(["powerbi_semantic"]);
 
 export type RelationHealthStatus = "OK" | "NO_SELECT_GRANT" | "RLS_NO_POLICY";
 
@@ -85,6 +100,7 @@ export type ConnectionContext = {
   connected: boolean;
   connection_id: string | null;
   provider: ConnectionProvider | null;
+  query_family: QueryFamily;
   name: string | null;
   database: string | null;
   connected_at: string | null;
@@ -193,6 +209,7 @@ export type AllowlistValidationResult = {
 type ActiveConnection = {
   id: string;
   provider: ConnectionProvider;
+  query_family: QueryFamily;
   business_id: string;
   name: string;
   database: string;
@@ -201,7 +218,7 @@ type ActiveConnection = {
   encrypted_connection_string: string;
   encrypted_iv: string;
   encrypted_tag: string;
-  pool: Pool | MySqlPool | SnowflakeConnection | BigQuery;
+  pool: Pool | MySqlPool | SnowflakeConnection | BigQuery | PowerBiSemanticRuntime;
   connected_at: string;
   allowed_relations: string[];
   relations_health: RelationHealth[];
@@ -248,6 +265,13 @@ type BigQueryRuntimeConfig = {
     [key: string]: unknown;
   };
   key_filename?: string;
+};
+
+type PowerBiSemanticRuntimeConfig = PowerBiSemanticModel;
+
+type PowerBiSemanticRuntime = {
+  kind: "powerbi_semantic";
+  model: PowerBiSemanticModel;
 };
 
 const CONNECTION_STATE_KEY = "runtime_connection_v1";
@@ -316,6 +340,48 @@ export class RuntimeConnectionManager {
 
     const warnings = [...normalized.warnings];
     const recommendations = [...normalized.recommendations];
+
+    if (isPowerBiSemanticProvider(normalized.provider)) {
+      const config = parsePowerBiSemanticConnectionString(normalized.normalized_connection_string);
+      const metadata: ConnectionMetadata = {
+        current_user: "powerbi-semantic",
+        current_database: config.model_name,
+        version: "powerbi-semantic-beta"
+      };
+      const relations = buildPowerBiSemanticRelationHealth(config);
+      const recommendedAllowlist = selectRecommendedAllowlist(relations);
+      warnings.push(
+        "Power BI semantic connector is in beta mode. SQL execution stays disabled and only the semantic-model path will be used."
+      );
+      recommendations.push(
+        "Use a semantic model that exposes the key measures and dimensions you want the planner to reference."
+      );
+
+      const result: ConnectionTestResult = {
+        ok: true,
+        provider: normalized.provider,
+        metadata,
+        relations,
+        recommended_allowlist: recommendedAllowlist,
+        warnings,
+        recommendations,
+        permissions_missing: false,
+        setup_script: null
+      };
+
+      this.lastTest = {
+        provider: normalized.provider,
+        tested_at: new Date().toISOString(),
+        metadata,
+        relations,
+        recommended_allowlist: recommendedAllowlist,
+        warnings,
+        recommendations,
+        permissions_missing: false
+      };
+
+      return result;
+    }
 
     if (isSnowflakeProvider(normalized.provider)) {
       const config = parseSnowflakeConnectionString(normalized.normalized_connection_string);
@@ -534,6 +600,56 @@ export class RuntimeConnectionManager {
   async connect(input: ConnectInput, source: "runtime" | "env" = "runtime"): Promise<ConnectionContext> {
     const normalized = normalizeConnectionString(input.connection_string, input.provider);
     const parsed = safeParseDbUrl(normalized.normalized_connection_string);
+    if (isPowerBiSemanticProvider(normalized.provider)) {
+      const semanticConfig = parsePowerBiSemanticConnectionString(normalized.normalized_connection_string);
+      const previous = this.active;
+      const relations = buildPowerBiSemanticRelationHealth(semanticConfig);
+      const availableRelations = relations.map((entry) => entry.qualified_name);
+      const requestedAllowlist = Array.isArray(input.allowed_relations) && input.allowed_relations.length > 0
+        ? input.allowed_relations
+        : availableRelations;
+      const allowed = normalizeAllowlist(requestedAllowlist, availableRelations);
+      const businessId = generateBusinessId();
+      const encrypted = encryptConnectionString(normalized.normalized_connection_string, this.encryptionKey);
+
+      this.active = {
+        id: randomUUID(),
+        provider: normalized.provider,
+        query_family: resolveQueryFamily(normalized.provider),
+        business_id: businessId,
+        name: input.name?.trim().length ? input.name.trim() : semanticConfig.model_name,
+        database: semanticConfig.model_name,
+        server_version: "powerbi-semantic-beta",
+        user: "powerbi-semantic",
+        encrypted_connection_string: encrypted.payload,
+        encrypted_iv: encrypted.iv,
+        encrypted_tag: encrypted.tag,
+        pool: {
+          kind: "powerbi_semantic",
+          model: semanticConfig
+        },
+        connected_at: new Date().toISOString(),
+        allowed_relations: allowed,
+        relations_health: relations,
+        source,
+        catalog: buildDataCatalogPowerBiSemantic(
+          businessId,
+          allowed,
+          relations,
+          input.business_context ?? "",
+          semanticConfig
+        ),
+        query_location: null
+      };
+
+      if (previous) {
+        await closeProviderPool(previous.provider, previous.pool);
+      }
+
+      await this.persistActiveConnectionState();
+      return this.getContext();
+    }
+
     const snowflakeConfig = isSnowflakeProvider(normalized.provider)
       ? parseSnowflakeConnectionString(normalized.normalized_connection_string)
       : null;
@@ -596,6 +712,7 @@ export class RuntimeConnectionManager {
       this.active = {
         id: randomUUID(),
         provider: normalized.provider,
+        query_family: resolveQueryFamily(normalized.provider),
         business_id: businessId,
         name: connectionName,
         database: metadata.current_database,
@@ -682,6 +799,7 @@ export class RuntimeConnectionManager {
         connected: true,
         connection_id: this.active.id,
         provider: this.active.provider,
+        query_family: this.active.query_family,
         name: this.active.name,
         database: this.active.database,
         connected_at: this.active.connected_at,
@@ -700,6 +818,7 @@ export class RuntimeConnectionManager {
         connected: this.fallbackSource === "postgres",
         connection_id: "fallback",
         provider: null,
+        query_family: "sql",
         name: null,
         database: null,
         connected_at: null,
@@ -717,6 +836,7 @@ export class RuntimeConnectionManager {
       connected: false,
       connection_id: null,
       provider: null,
+      query_family: "sql",
       name: null,
       database: null,
       connected_at: null,
@@ -728,6 +848,23 @@ export class RuntimeConnectionManager {
       select_only_enforced: true,
       catalog: null
     };
+  }
+
+  getExecutionContext(): ExecutionContext {
+    const context = this.active
+      ? {
+          query_family: this.active.query_family,
+          powerbi_semantic_model:
+            this.active.query_family === "powerbi_semantic"
+              ? (this.active.pool as PowerBiSemanticRuntime).model
+              : null
+        }
+      : {
+          query_family: "sql" as const,
+          powerbi_semantic_model: null
+        };
+
+    return ExecutionContextSchema.parse(context);
   }
 
   getCatalog(): DataCatalog | null {
@@ -745,6 +882,19 @@ export class RuntimeConnectionManager {
   async refreshCatalog(): Promise<DataCatalog | null> {
     if (!this.active) {
       throw new Error("No active database connection.");
+    }
+    if (isPowerBiSemanticProvider(this.active.provider)) {
+      const model = (this.active.pool as PowerBiSemanticRuntime).model;
+      const catalog = buildDataCatalogPowerBiSemantic(
+        this.active.business_id,
+        this.active.allowed_relations,
+        this.active.relations_health,
+        this.active.catalog?.business_context ?? "",
+        model
+      );
+      this.active.catalog = catalog;
+      await this.persistActiveConnectionState();
+      return catalog;
     }
     const bigQueryConfig = isBigQueryProvider(this.active.provider)
       ? parseBigQueryConnectionString(
@@ -830,6 +980,25 @@ export class RuntimeConnectionManager {
   async validateAllowlistAccess(): Promise<AllowlistValidationResult> {
     if (!this.active) {
       throw new Error("No active database connection.");
+    }
+
+    if (isPowerBiSemanticProvider(this.active.provider)) {
+      const model = (this.active.pool as PowerBiSemanticRuntime).model;
+      const columns = collectPowerBiSemanticColumns(model);
+      const tables = this.active.allowed_relations.map((name) => ({
+        name,
+        accessible: true,
+        columns: columns.map((column) => ({
+          name: column.column_name,
+          data_type: column.data_type,
+          accessible: true
+        }))
+      }));
+      return {
+        ok: true,
+        tables,
+        summary: `${tables.length}/${tables.length} semantic entities accessible`
+      };
     }
 
     if (isMySqlProvider(this.active.provider)) {
@@ -975,6 +1144,10 @@ export class RuntimeConnectionManager {
     const started = Date.now();
 
     if (this.active) {
+      if (isPowerBiSemanticProvider(this.active.provider)) {
+        throw new Error("SQL safe-query is disabled for Power BI semantic connections. Use the semantic planner/executor path instead.");
+      }
+
       const allowedRelations = this.active.allowed_relations;
       const allowedSchemas = deriveSchemas(allowedRelations);
 
@@ -1076,6 +1249,10 @@ export class RuntimeConnectionManager {
 
   async rowProvider(sql: string): Promise<Record<string, unknown>[]> {
     if (this.active) {
+      if (isPowerBiSemanticProvider(this.active.provider)) {
+        return ((this.active.pool as PowerBiSemanticRuntime).model.preview_rows ?? []).slice(0, 200);
+      }
+
       if (isMySqlProvider(this.active.provider)) {
         return withTimeout(
           (this.active.pool as MySqlPool)
@@ -1432,6 +1609,7 @@ function normalizeConnectionString(
 ): NormalizedConnection {
   const provider = parseProvider(providerInput);
   if (
+    !POWERBI_SEMANTIC_PROVIDERS.has(provider) &&
     !POSTGRES_COMPATIBLE_PROVIDERS.has(provider) &&
     !MYSQL_COMPATIBLE_PROVIDERS.has(provider) &&
     !SNOWFLAKE_COMPATIBLE_PROVIDERS.has(provider) &&
@@ -1443,6 +1621,31 @@ function normalizeConnectionString(
   const raw = rawConnectionString.trim();
   if (!raw) {
     throw new Error("Connection string is required.");
+  }
+
+  if (isPowerBiSemanticProvider(provider)) {
+    let url: URL;
+    try {
+      const normalizedInput = raw.startsWith("powerbi+semantic://")
+        ? raw
+        : `powerbi+semantic://${raw.replace(/^\/+/, "")}`;
+      url = new URL(normalizedInput);
+    } catch {
+      throw new Error("Invalid Power BI semantic connection string.");
+    }
+
+    if (url.protocol !== "powerbi+semantic:") {
+      throw new Error("Connection string must use powerbi+semantic://");
+    }
+
+    return {
+      provider,
+      normalized_connection_string: url.toString(),
+      warnings: [],
+      recommendations: [
+        "Use a semantic model connection only when business logic depends on curated measures, dimensions, or model relationships."
+      ]
+    };
   }
 
   let url: URL;
@@ -1865,7 +2068,8 @@ function parseProvider(value: unknown): ConnectionProvider {
     normalized === "neon" ||
     normalized === "mysql" ||
     normalized === "snowflake" ||
-    normalized === "bigquery"
+    normalized === "bigquery" ||
+    normalized === "powerbi_semantic"
   ) {
     return normalized;
   }
@@ -1885,8 +2089,18 @@ function isBigQueryProvider(provider: ConnectionProvider): boolean {
   return BIGQUERY_COMPATIBLE_PROVIDERS.has(provider);
 }
 
+function isPowerBiSemanticProvider(provider: ConnectionProvider): boolean {
+  return POWERBI_SEMANTIC_PROVIDERS.has(provider);
+}
+
+function resolveQueryFamily(provider: ConnectionProvider): QueryFamily {
+  return isPowerBiSemanticProvider(provider) ? "powerbi_semantic" : "sql";
+}
+
 function formatProviderLabel(provider: ConnectionProvider): string {
   switch (provider) {
+    case "powerbi_semantic":
+      return "Power BI semantic";
     case "bigquery":
       return "BigQuery";
     case "snowflake":
@@ -2024,8 +2238,12 @@ function formatConnectionError(
 
 async function closeProviderPool(
   provider: ConnectionProvider,
-  pool: Pool | MySqlPool | SnowflakeConnection | BigQuery
+  pool: Pool | MySqlPool | SnowflakeConnection | BigQuery | PowerBiSemanticRuntime
 ): Promise<void> {
+  if (isPowerBiSemanticProvider(provider)) {
+    return;
+  }
+
   if (isBigQueryProvider(provider)) {
     return;
   }
@@ -3180,6 +3398,222 @@ async function buildDataCatalogBigQuery(
     business_context: businessContext,
     cataloged_at: new Date().toISOString()
   };
+}
+
+function parsePowerBiSemanticConnectionString(connectionString: string): PowerBiSemanticRuntimeConfig {
+  let url: URL;
+  try {
+    url = new URL(connectionString);
+  } catch {
+    throw new Error("Invalid Power BI semantic connection string.");
+  }
+
+  const workspaceId = decodeURIComponent(url.hostname || "").trim();
+  const modelId = decodeURIComponent(url.pathname.replace(/^\/+/, "")).trim();
+  const workspaceName = (url.searchParams.get("workspace_name") ?? workspaceId).trim();
+  const modelName = (url.searchParams.get("model_name") ?? modelId).trim();
+  const entities = parseDelimitedQueryParam(url.searchParams.get("entities"));
+  const measures = parseDelimitedQueryParam(url.searchParams.get("measures"));
+  const dimensions = parseDelimitedQueryParam(url.searchParams.get("dimensions"));
+  const previewRows = parsePowerBiPreviewRows(url);
+
+  if (!workspaceId) {
+    throw new Error("Power BI semantic connection string must include a workspace id in the host position.");
+  }
+
+  if (!modelId) {
+    throw new Error("Power BI semantic connection string must include a model id in the path position.");
+  }
+
+  const entityFallback = entities.length > 0 ? entities : [slugifyPowerBiName(modelName) || "semantic_model"];
+
+  return PowerBiSemanticModelSchema.parse({
+    workspace_id: workspaceId,
+    workspace_name: workspaceName || workspaceId,
+    model_id: modelId,
+    model_name: modelName || modelId,
+    entities: entityFallback,
+    measures,
+    dimensions,
+    preview_rows: previewRows
+  });
+}
+
+function parseDelimitedQueryParam(value: string | null): string[] {
+  if (!value) {
+    return [];
+  }
+  return Array.from(
+    new Set(
+      value
+        .split(",")
+        .map((entry) => entry.trim())
+        .filter((entry) => entry.length > 0)
+    )
+  );
+}
+
+function parsePowerBiPreviewRows(url: URL): Record<string, unknown>[] {
+  const rawBase64 = (url.searchParams.get("preview_rows_base64") ?? "").trim();
+  const rawJson = (url.searchParams.get("preview_rows_json") ?? "").trim();
+
+  if (!rawBase64 && !rawJson) {
+    return [];
+  }
+
+  try {
+    const payload = rawBase64.length > 0
+      ? Buffer.from(rawBase64, "base64").toString("utf8")
+      : rawJson;
+    const parsed = JSON.parse(payload);
+    if (!Array.isArray(parsed)) {
+      throw new Error("preview rows payload must be an array");
+    }
+    return parsed
+      .filter((row): row is Record<string, unknown> => typeof row === "object" && row !== null && !Array.isArray(row))
+      .slice(0, 200);
+  } catch (error) {
+    throw new Error(
+      `Invalid Power BI semantic preview rows payload: ${error instanceof Error ? error.message : "unknown error"}`
+    );
+  }
+}
+
+function buildPowerBiSemanticRelationHealth(model: PowerBiSemanticModel): RelationHealth[] {
+  return model.entities.map((entity) => {
+    const relationName = slugifyPowerBiName(entity) || "semantic_entity";
+    return {
+      schema_name: "semantic",
+      relation_name: relationName,
+      relation_type: "VIEW",
+      qualified_name: `semantic.${relationName}`,
+      has_select_privilege: true,
+      has_rls: false,
+      force_rls: false,
+      rls_active_for_me: false,
+      policies_count_for_me: 0,
+      status: "OK",
+      status_label: "OK"
+    };
+  });
+}
+
+function buildDataCatalogPowerBiSemantic(
+  businessId: string,
+  allowedRelations: string[],
+  relationsHealth: RelationHealth[],
+  businessContext: string,
+  model: PowerBiSemanticModel
+): DataCatalog {
+  const semanticColumns = collectPowerBiSemanticColumns(model);
+  const sampleRows = (model.preview_rows ?? []).slice(0, 5);
+  const lowCardinalityColumns = collectPowerBiLowCardinalityColumns(sampleRows, semanticColumns);
+
+  const tables = allowedRelations.slice(0, 30).map((qualifiedName) => {
+    const relation = relationsHealth.find((entry) => entry.qualified_name === qualifiedName);
+    const tableIndex = catalogAgentIndexTable({
+      business_id: businessId,
+      qualified_name: qualifiedName,
+      columns: semanticColumns.map((column) => ({
+        column_name: column.column_name,
+        data_type: column.data_type
+      })),
+      sample_rows: sampleRows,
+      low_cardinality_columns: lowCardinalityColumns
+    });
+
+    return {
+      table_id: tableIndex.table_id,
+      qualified_name: qualifiedName,
+      relation_type: relation?.relation_type ?? "VIEW",
+      summary: tableIndex.summary,
+      columns: semanticColumns,
+      low_cardinality_columns: lowCardinalityColumns,
+      sample_rows: sampleRows,
+      row_count_estimate: model.preview_rows.length
+    };
+  });
+
+  return {
+    business_id: businessId,
+    tables,
+    business_context: businessContext,
+    cataloged_at: new Date().toISOString()
+  };
+}
+
+function collectPowerBiSemanticColumns(model: PowerBiSemanticModel): TableColumnInfo[] {
+  const discovered = new Map<string, TableColumnInfo>();
+  for (const dimension of model.dimensions) {
+    discovered.set(dimension.toLowerCase(), {
+      column_name: dimension,
+      data_type: "dimension",
+      is_nullable: true
+    });
+  }
+  for (const measure of model.measures) {
+    discovered.set(measure.toLowerCase(), {
+      column_name: measure,
+      data_type: "measure",
+      is_nullable: true
+    });
+  }
+  for (const row of model.preview_rows) {
+    for (const [key, value] of Object.entries(row)) {
+      const normalizedKey = key.trim();
+      if (!normalizedKey || discovered.has(normalizedKey.toLowerCase())) {
+        continue;
+      }
+      discovered.set(normalizedKey.toLowerCase(), {
+        column_name: normalizedKey,
+        data_type: inferPreviewValueType(value),
+        is_nullable: value === null
+      });
+    }
+  }
+  return Array.from(discovered.values());
+}
+
+function collectPowerBiLowCardinalityColumns(
+  rows: Record<string, unknown>[],
+  columns: TableColumnInfo[]
+): LowCardinalityColumn[] {
+  return columns.flatMap((column) => {
+    const distinctValues = Array.from(
+      new Set(
+        rows
+          .map((row) => row[column.column_name])
+          .filter((value) => value !== null && value !== undefined)
+          .map((value) => String(value))
+      )
+    ).slice(0, 10);
+
+    if (distinctValues.length === 0 || distinctValues.length > 10) {
+      return [];
+    }
+
+    return [{
+      column_name: column.column_name,
+      distinct_values: distinctValues
+    }];
+  });
+}
+
+function inferPreviewValueType(value: unknown): string {
+  if (typeof value === "number") {
+    return Number.isInteger(value) ? "integer" : "number";
+  }
+  if (typeof value === "boolean") {
+    return "boolean";
+  }
+  if (typeof value === "string") {
+    return /^\d{4}-\d{2}-\d{2}/.test(value) ? "datetime" : "string";
+  }
+  return "unknown";
+}
+
+function slugifyPowerBiName(value: string): string {
+  return value.trim().toLowerCase().replace(/[^a-z0-9]+/g, "_").replace(/^_+|_+$/g, "");
 }
 
 const LOW_CARDINALITY_LIMIT = 20;
