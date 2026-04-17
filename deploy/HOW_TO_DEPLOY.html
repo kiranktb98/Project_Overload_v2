@@ -1,0 +1,221 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Project Overload v2 — Deployment Guide</title>
+  <style>
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; background: #0f1117; color: #e2e8f0; line-height: 1.7; padding: 40px 20px; }
+    .container { max-width: 860px; margin: 0 auto; }
+    h1 { font-size: 2rem; color: #f8fafc; margin-bottom: 8px; }
+    .subtitle { color: #94a3b8; margin-bottom: 40px; font-size: 1rem; }
+    h2 { font-size: 1.2rem; color: #f8fafc; margin: 36px 0 12px; padding-left: 12px; border-left: 3px solid #6366f1; }
+    h3 { font-size: 1rem; color: #cbd5e1; margin: 20px 0 8px; }
+    p { color: #94a3b8; margin-bottom: 12px; }
+    code { background: #1e293b; color: #a5f3fc; padding: 2px 6px; border-radius: 4px; font-family: "Fira Code", "Cascadia Code", monospace; font-size: 0.88em; }
+    pre { background: #1e293b; border: 1px solid #334155; border-radius: 8px; padding: 16px 20px; overflow-x: auto; margin: 12px 0 20px; }
+    pre code { background: none; padding: 0; color: #e2e8f0; font-size: 0.9em; line-height: 1.6; }
+    .step { background: #161b27; border: 1px solid #1e293b; border-radius: 10px; padding: 20px 24px; margin-bottom: 16px; }
+    .step-number { display: inline-block; background: #6366f1; color: white; font-size: 0.75rem; font-weight: 700; width: 24px; height: 24px; border-radius: 50%; text-align: center; line-height: 24px; margin-right: 8px; }
+    .badge { display: inline-block; font-size: 0.72rem; font-weight: 600; padding: 2px 8px; border-radius: 20px; margin-right: 6px; }
+    .badge-required { background: #7f1d1d; color: #fca5a5; }
+    .badge-optional { background: #1e3a5f; color: #93c5fd; }
+    .badge-warning { background: #78350f; color: #fcd34d; }
+    .env-table { width: 100%; border-collapse: collapse; margin: 12px 0 20px; font-size: 0.88em; }
+    .env-table th { text-align: left; padding: 8px 12px; background: #1e293b; color: #94a3b8; font-weight: 600; }
+    .env-table td { padding: 8px 12px; border-top: 1px solid #1e293b; vertical-align: top; }
+    .env-table td:first-child { color: #a5f3fc; font-family: monospace; white-space: nowrap; }
+    .env-table td:last-child { color: #94a3b8; }
+    .callout { border-radius: 8px; padding: 14px 18px; margin: 16px 0; font-size: 0.9rem; }
+    .callout-info { background: #0c1a2e; border-left: 3px solid #3b82f6; color: #93c5fd; }
+    .callout-warn { background: #1c1208; border-left: 3px solid #f59e0b; color: #fcd34d; }
+    .callout-success { background: #052e16; border-left: 3px solid #22c55e; color: #86efac; }
+    .file-list { list-style: none; padding: 0; }
+    .file-list li { padding: 6px 0; border-bottom: 1px solid #1e293b; font-family: monospace; font-size: 0.9em; color: #a5f3fc; }
+    .file-list li span { color: #64748b; font-family: sans-serif; font-size: 0.82em; margin-left: 12px; }
+    .port-grid { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 12px; margin: 12px 0; }
+    .port-card { background: #1e293b; border-radius: 8px; padding: 14px; text-align: center; }
+    .port-card .port { font-size: 1.4rem; font-weight: 700; color: #6366f1; }
+    .port-card .label { font-size: 0.8rem; color: #64748b; margin-top: 4px; }
+    .service-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; margin: 12px 0; }
+    .service-card { background: #1e293b; border-radius: 8px; padding: 14px 18px; }
+    .service-card .name { font-weight: 600; color: #f8fafc; margin-bottom: 4px; }
+    .service-card .desc { font-size: 0.85rem; color: #64748b; }
+    hr { border: none; border-top: 1px solid #1e293b; margin: 32px 0; }
+    @media (max-width: 600px) { .port-grid, .service-grid { grid-template-columns: 1fr 1fr; } }
+  </style>
+</head>
+<body>
+<div class="container">
+
+  <h1>Project Overload v2</h1>
+  <p class="subtitle">Self-hosted deployment guide &mdash; Docker Compose on a local server</p>
+
+  <!-- What's in this package -->
+  <h2>What's in this package</h2>
+  <ul class="file-list">
+    <li>docker-compose.yml <span>Wires all 5 services together</span></li>
+    <li>Dockerfile.api <span>API server + Chromium for PDF rendering</span></li>
+    <li>Dockerfile.web <span>Web frontend server</span></li>
+    <li>Dockerfile.worker <span>Background job worker</span></li>
+    <li>.dockerignore <span>Prevents secrets/node_modules from entering the build</span></li>
+    <li>HOW_TO_DEPLOY.html <span>This file</span></li>
+  </ul>
+
+  <div class="callout callout-info">
+    These files belong at the root of the <strong>Project Overload v2</strong> repository. They do not run standalone — they need the full source code beside them.
+  </div>
+
+  <!-- Services -->
+  <h2>Services overview</h2>
+  <div class="service-grid">
+    <div class="service-card"><div class="name">postgres</div><div class="desc">pgvector/pg16 — primary database</div></div>
+    <div class="service-card"><div class="name">redis</div><div class="desc">Redis 7 — job queue</div></div>
+    <div class="service-card"><div class="name">api</div><div class="desc">Fastify API on port 4000</div></div>
+    <div class="service-card"><div class="name">web</div><div class="desc">Fastify frontend on port 3000</div></div>
+    <div class="service-card"><div class="name">worker</div><div class="desc">Background queue consumer (no port)</div></div>
+  </div>
+
+  <div class="port-grid">
+    <div class="port-card"><div class="port">3000</div><div class="label">Web UI (open this)</div></div>
+    <div class="port-card"><div class="port">4000</div><div class="label">API</div></div>
+    <div class="port-card"><div class="port">54321</div><div class="label">Postgres (local only)</div></div>
+  </div>
+
+  <hr />
+
+  <!-- Prerequisites -->
+  <h2>Prerequisites</h2>
+  <div class="step">
+    <p>The server machine needs:</p>
+    <ul style="margin-left: 20px; color: #94a3b8;">
+      <li><strong style="color:#e2e8f0">Docker Desktop</strong> (Mac/Windows) or <strong style="color:#e2e8f0">Docker Engine + Docker Compose v2</strong> (Linux) — <code>docker compose version</code> must work</li>
+      <li><strong style="color:#e2e8f0">Git</strong> — to clone the repository</li>
+      <li><strong style="color:#e2e8f0">~4 GB free disk space</strong> — for images and Postgres data</li>
+      <li><strong style="color:#e2e8f0">An OpenRouter API key</strong> — required for LLM features</li>
+    </ul>
+  </div>
+
+  <hr />
+
+  <!-- Step-by-step -->
+  <h2>Step-by-step installation</h2>
+
+  <div class="step">
+    <p><span class="step-number">1</span> <strong>Get the source code</strong></p>
+    <pre><code>git clone &lt;repo-url&gt; project-overload-v2
+cd project-overload-v2</code></pre>
+    <p>If you received a zip instead of a git URL, unzip it and <code>cd</code> into the folder.</p>
+  </div>
+
+  <div class="step">
+    <p><span class="step-number">2</span> <strong>Place the Docker files</strong></p>
+    <p>Copy the files from this package into the repo root <strong>exactly</strong> as shown:</p>
+    <pre><code>project-overload-v2/
+├── docker-compose.yml        ← copy here
+├── .dockerignore             ← copy here
+└── apps/
+    ├── api/
+    │   └── Dockerfile        ← rename Dockerfile.api → Dockerfile, place here
+    ├── web/
+    │   └── Dockerfile        ← rename Dockerfile.web → Dockerfile, place here
+    └── worker/
+        └── Dockerfile        ← rename Dockerfile.worker → Dockerfile, place here</code></pre>
+    <div class="callout callout-warn">
+      The three Dockerfiles must be renamed to exactly <code>Dockerfile</code> (no extension) and placed inside their respective app folders.
+    </div>
+  </div>
+
+  <div class="step">
+    <p><span class="step-number">3</span> <strong>Create your <code>.env</code> file</strong></p>
+    <pre><code>cp .env.example .env</code></pre>
+    <p>Then open <code>.env</code> in any text editor and fill in the required values:</p>
+    <table class="env-table">
+      <tr><th>Variable</th><th>Required?</th><th>What to put</th></tr>
+      <tr><td>OPENROUTER_API_KEY</td><td><span class="badge badge-required">required</span></td><td>Your OpenRouter API key — get one at openrouter.ai</td></tr>
+      <tr><td>APP_ENCRYPTION_KEY</td><td><span class="badge badge-required">required</span></td><td>Any random 32-char string, e.g. run: <code>openssl rand -hex 16</code></td></tr>
+      <tr><td>SESSION_SECRET</td><td><span class="badge badge-required">required</span></td><td>Any random string, at least 32 characters</td></tr>
+      <tr><td>WEB_INTERNAL_API_KEY</td><td><span class="badge badge-required">required</span></td><td>Any random string — used internally between web and api</td></tr>
+      <tr><td>DATABASE_URL</td><td><span class="badge badge-optional">auto-set</span></td><td>Docker compose overrides this automatically — leave as-is</td></tr>
+      <tr><td>REDIS_URL</td><td><span class="badge badge-optional">auto-set</span></td><td>Docker compose overrides this automatically — leave as-is</td></tr>
+      <tr><td>WEB_API_BASE_URL</td><td><span class="badge badge-optional">auto-set</span></td><td>Docker compose overrides this automatically — leave as-is</td></tr>
+    </table>
+    <div class="callout callout-warn">
+      Never commit your <code>.env</code> file to git. It is already in <code>.gitignore</code>.
+    </div>
+  </div>
+
+  <div class="step">
+    <p><span class="step-number">4</span> <strong>Build the Docker images</strong></p>
+    <p>This takes 3–10 minutes on first run (downloads Node, Chromium, installs dependencies):</p>
+    <pre><code>docker compose build</code></pre>
+  </div>
+
+  <div class="step">
+    <p><span class="step-number">5</span> <strong>Run the database migration</strong> <span class="badge badge-warning">one-time only</span></p>
+    <p>This creates all tables. Only needed once (or after schema changes):</p>
+    <pre><code>docker compose run --rm api pnpm db:migrate</code></pre>
+  </div>
+
+  <div class="step">
+    <p><span class="step-number">6</span> <strong>Start all services</strong></p>
+    <pre><code>docker compose up -d</code></pre>
+    <p>Wait ~30 seconds for Postgres to initialize, then open:</p>
+    <pre><code>http://localhost:3000</code></pre>
+    <div class="callout callout-success">
+      If you see the Project Overload UI, you're done.
+    </div>
+  </div>
+
+  <hr />
+
+  <!-- Verify -->
+  <h2>Verify everything is running</h2>
+  <pre><code>docker compose ps</code></pre>
+  <p>All five services should show <code>running</code>. If any show <code>exited</code>, check logs:</p>
+  <pre><code>docker compose logs api
+docker compose logs web
+docker compose logs worker</code></pre>
+
+  <hr />
+
+  <!-- Common commands -->
+  <h2>Common commands</h2>
+  <table class="env-table">
+    <tr><th>What</th><th>Command</th></tr>
+    <tr><td>Start all</td><td><code>docker compose up -d</code></td></tr>
+    <tr><td>Stop all</td><td><code>docker compose down</code></td></tr>
+    <tr><td>Stop + wipe database</td><td><code>docker compose down -v</code></td></tr>
+    <tr><td>Rebuild after code change</td><td><code>docker compose build &amp;&amp; docker compose up -d</code></td></tr>
+    <tr><td>View live logs</td><td><code>docker compose logs -f</code></td></tr>
+    <tr><td>Run migration again</td><td><code>docker compose run --rm api pnpm db:migrate</code></td></tr>
+    <tr><td>Open Postgres shell</td><td><code>docker compose exec postgres psql -U po -d po_v2</code></td></tr>
+  </table>
+
+  <hr />
+
+  <!-- Troubleshooting -->
+  <h2>Troubleshooting</h2>
+
+  <h3>API container exits immediately</h3>
+  <p>Run <code>docker compose logs api</code>. Most likely cause: missing <code>APP_ENCRYPTION_KEY</code> or <code>DATABASE_URL</code> not reachable. Check your <code>.env</code>.</p>
+
+  <h3>Port already in use</h3>
+  <p>Something else is using port 3000 or 4000. Either stop that process or change the port mapping in <code>docker-compose.yml</code> (left side of the colon: <code>"3001:3000"</code>).</p>
+
+  <h3>PDF export not working</h3>
+  <p>The API image installs Chromium automatically. If it fails, check <code>docker compose logs api</code> for <code>Chrome not found</code>. Set <code>CHROME_PATH=/usr/bin/chromium</code> in your <code>.env</code>.</p>
+
+  <h3>LLM calls fail / no responses</h3>
+  <p>Verify <code>OPENROUTER_API_KEY</code> is set correctly in <code>.env</code> and your OpenRouter account has credits.</p>
+
+  <hr />
+
+  <p style="color:#475569; font-size:0.85rem; text-align:center; padding-top: 20px;">
+    Project Overload v2 &mdash; Internal deployment package &mdash; Not for redistribution
+  </p>
+
+</div>
+</body>
+</html>
