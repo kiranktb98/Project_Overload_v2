@@ -1,0 +1,77 @@
+services:
+  postgres:
+    image: pgvector/pgvector:pg16
+    container_name: po_v2_postgres
+    environment:
+      POSTGRES_USER: po
+      POSTGRES_PASSWORD: po
+      POSTGRES_DB: po_v2
+    ports:
+      - "54321:5432"
+    volumes:
+      - po_v2_pgdata:/var/lib/postgresql/data
+      - ./infra/postgres-init:/docker-entrypoint-initdb.d:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U po -d po_v2"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  redis:
+    image: redis:7
+    container_name: po_v2_redis
+    ports:
+      - "63791:6379"
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+  api:
+    build:
+      context: .
+      dockerfile: apps/api/Dockerfile
+    container_name: po_v2_api
+    ports:
+      - "4000:4000"
+    env_file: .env
+    environment:
+      DATABASE_URL: postgresql://po:po@postgres:5432/po_v2
+      REDIS_URL: redis://redis:6379
+      DATAPLANE_LOCAL_PG_URL: postgresql://po:po@postgres:5432/po_v2
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+
+  web:
+    build:
+      context: .
+      dockerfile: apps/web/Dockerfile
+    container_name: po_v2_web
+    ports:
+      - "3000:3000"
+    env_file: .env
+    environment:
+      WEB_API_BASE_URL: http://api:4000
+    depends_on:
+      - api
+
+  worker:
+    build:
+      context: .
+      dockerfile: apps/worker/Dockerfile
+    container_name: po_v2_worker
+    env_file: .env
+    environment:
+      DATABASE_URL: postgresql://po:po@postgres:5432/po_v2
+      REDIS_URL: redis://redis:6379
+      WORKER_API_BASE_URL: http://api:4000
+    depends_on:
+      - api
+      - redis
+
+volumes:
+  po_v2_pgdata:
